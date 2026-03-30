@@ -13,9 +13,10 @@ where b̃ ~ Dirichlet(alpha(x)) is the agent's belief over latent states.
 
 This module defines all tasks over the 4 binary latent dimensions:
   - 4 simple tasks (one dimension each)
-  - 12 composite 2-way tasks (all pairs × both polarities)
+  - 4 simple-flipped tasks (right = opposite polarity)
+  - 12 composite 2-way AND tasks (all pairs × both polarities)
   - 8 composite 3-way tasks (all triples, one polarity each)
-  Total: 24 tasks
+  Total: 28 tasks
 """
 
 from __future__ import annotations
@@ -96,14 +97,14 @@ def _task(name: str, condition) -> Task:
 # ---------------------------------------------------------------------------
 
 TASKS: Dict[str, Task] = {
-    # ---- simple tasks -------------------------------------------------------
+    # ---- simple (right = property present) ----------------------------------
     "front_back": _task(
         "front_back",
         lambda fb, sh, tr, gl: fb == 1,           # right = back
     ),
     "triangular": _task(
         "triangular",
-        lambda fb, sh, tr, gl: sh == 0,           # right = triangular-faced
+        lambda fb, sh, tr, gl: sh == 0,           # right = triangular
     ),
     "transparent": _task(
         "transparent",
@@ -112,6 +113,24 @@ TASKS: Dict[str, Task] = {
     "glossy": _task(
         "glossy",
         lambda fb, sh, tr, gl: gl == 1,           # right = glossy
+    ),
+
+    # ---- simple-flipped (right = property absent) ---------------------------
+    "front": _task(
+        "front",
+        lambda fb, sh, tr, gl: fb == 0,           # right = front
+    ),
+    "nontriangular": _task(
+        "nontriangular",
+        lambda fb, sh, tr, gl: sh == 1,           # right = non-triangular
+    ),
+    "opaque": _task(
+        "opaque",
+        lambda fb, sh, tr, gl: tr == 0,           # right = opaque
+    ),
+    "matte": _task(
+        "matte",
+        lambda fb, sh, tr, gl: gl == 0,           # right = matte (not glossy)
     ),
 
     # ---- 2-way: Location × Material -----------------------------------------

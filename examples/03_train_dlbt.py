@@ -31,6 +31,7 @@ Run from repo root:
     python examples/03_train_dlbt.py
 """
 
+import math
 import random
 from pathlib import Path
 import numpy as np
@@ -77,36 +78,38 @@ FREEZE_ENCODER     = True   # True → DLBT-frozen; False → DLBT-attnpool
 MAPPER_HIDDEN      = None   # None → linear mapper; MLP doesn't help when CLIP is the bottleneck
 WEIGHT_DECAY_SLDA  = 1e-4   # L2 regularisation for SLDA — prevents NLL divergence
 
-# 7 train / 3 val task split.
-# All 4 simple tasks stay in train (they are the only per-dimension signal).
-# Val spans two distinct dimension combinations for a broader generalization test.
+# Option B holdout: all shape × transparency conjunctions are held out.
+# Training includes pure shape tasks and pure transparency tasks separately,
+# so each dimension is learned — but their combination is never seen.
+# Val tests zero-shot compositional generalisation to that unseen conjunction.
 TRAIN_TASKS = [
-    # simple (2 of 4 — triangular and transparent held out for val)
-    "front_back", "glossy",
-    # 2-way: location × material
+    # all 4 simple (model must learn each dimension cleanly)
+    "front_back", "glossy", "triangular", "transparent",
+    # simple-flipped
+    "front", "nontriangular", "opaque", "matte",
+    # 2-way AND: location × material (no shape×transparency)
     "back_and_glossy", "front_and_glossy",
     "front_and_transparent", "back_and_transparent",
-    # 2-way: shape × material
-    "triangular_and_transparent", "nontriangular_and_transparent",
+    # 2-way AND: shape × glossiness  (shape without transparency)
     "triangular_and_glossy", "nontriangular_and_glossy",
-    # 2-way: shape × location
+    # 2-way AND: shape × location    (shape without transparency)
     "triangular_and_front", "nontriangular_and_front",
     "triangular_and_back", "nontriangular_and_back",
-    # 2-way: transparency × glossiness
+    # 2-way AND: transparency × glossiness (transparency without shape)
     "transparent_and_glossy",
-    # 3-way composites
+    # 3-way AND: no shape×transparency conjunction
     "front_and_transparent_and_glossy",
     "back_and_transparent_and_glossy",
-    "triangular_and_transparent_and_glossy",
-    "nontriangular_and_transparent_and_glossy",
-    "triangular_and_front_and_transparent",
     "triangular_and_front_and_glossy",
-    "nontriangular_and_front_and_transparent",
     "nontriangular_and_back_and_glossy",
 ]
 VAL_TASKS = [
-    "triangular",    # pure shape dimension — not in training
-    "transparent",   # pure transparency dimension — not in training
+    # 2-way shape × transparency — never seen in training
+    "triangular_and_transparent",
+    "nontriangular_and_transparent",
+    # 3-way extensions — also never seen
+    "triangular_and_front_and_transparent",
+    "triangular_and_transparent_and_glossy",
 ]
 
 # ---------------------------------------------------------------------------
@@ -488,16 +491,20 @@ plt.close()
 # ---------------------------------------------------------------------------
 # Plot 2: per-task grid — DLBT and SLDA overlaid in each panel
 # ---------------------------------------------------------------------------
-ALL_TASKS = TRAIN_TASKS + VAL_TASKS   # 10 tasks
-N_COLS    = 5
-N_ROWS    = 2
+ALL_TASKS = TRAIN_TASKS + VAL_TASKS
+N_COLS    = 8
+N_ROWS    = math.ceil(len(ALL_TASKS) / N_COLS)
 
 fig, axes = plt.subplots(
     N_ROWS, N_COLS,
-    figsize=(12, 5),
+    figsize=(N_COLS * 2.2, N_ROWS * 2.4),
     sharex=True, sharey=True,
-    gridspec_kw={"hspace": 0.48, "wspace": 0.08},
+    gridspec_kw={"hspace": 0.55, "wspace": 0.08},
 )
+
+# hide any unused panels
+for ax in axes.flat[len(ALL_TASKS):]:
+    ax.set_visible(False)
 
 for idx, (ax, task_name) in enumerate(zip(axes.flat, ALL_TASKS)):
     d_dlbt = per_task[task_name]
