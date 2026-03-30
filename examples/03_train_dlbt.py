@@ -145,52 +145,58 @@ def _sigmoid(x: float) -> float:
 
 def gt_alpha(uid: str) -> np.ndarray:
     """
-    Peaked Dirichlet centered on the true discrete latent state.
+    Structured Dirichlet with soft mean and clarity-scaled concentration.
 
-    Concentration scales with perceptual clarity — how far the image's
-    continuous properties are from their decision boundaries:
+    Mean belief q_k is the product of per-dimension soft marginals — peaked
+    near the true latent state but spread into neighbouring states in
+    proportion to how ambiguous each dimension is:
 
-        clarity_dim = |σ(BETA · (value − threshold)) − 0.5| · 2   ∈ [0, 1]
+        q_k(x) = Π_d  p_d(x)^[k_d=1] · (1 − p_d(x))^[k_d=0]
+        p_d(x) = σ(BETA · (value_d − threshold_d))
 
-    Overall clarity is the product across all dimensions.  The resulting
-    concentration on the true state is:
+    Total concentration λ(x) scales with overall perceptual clarity:
 
-        α_true  = BASE + PEAK · clarity
-        α_other = BASE
+        clarity(x) = Π_d  |p_d(x) − 0.5| · 2   ∈ [0, 1]
+        λ(x)       = BASE_CONCENTRATION + PEAK · clarity(x)
+
+    Final Dirichlet parameters:
+
+        α(x) = ε + λ(x) · q(x)
 
     This gives:
-      • clear image   → high concentration on true state → P(right) near 0/1
-      • ambiguous image → low concentration → P(right) near 0.5
-      • the target is always recoverable from the image (unlike variable-peak),
-        and the representation task is simply to predict state + clarity.
+      • clear image:     high λ, peaked near true state → P(right) near 0/1
+      • ambiguous image: low λ but q still structured (ambiguity spreads into
+                         neighbouring states, not uniformly over all 16)
+      • sum(α) ≈ λ(x) ∈ [BASE, BASE + PEAK] — same range as before
     """
     z = cont_meta[uid]
 
-    # Soft marginals for each dimension
     p_back   = _sigmoid(BETA * (z["y"]            - Y_THRESHOLD))
+    p_nontri = float(z["is_nontri"])                                 # discrete
     p_transp = _sigmoid(BETA * (z["transparency"] - TRANSP_THRESH))
     p_glossy = _sigmoid(BETA * (z["glossiness"]   - GLOSS_THRESH))
 
-    # True discrete latent state
-    true_k = (
-        (int(z["y"]            > Y_THRESHOLD)  << DIM_FRONT_BACK) |
-        (int(z["is_nontri"])                   << DIM_SHAPE)      |
-        (int(z["transparency"] > TRANSP_THRESH) << DIM_TRANSP)    |
-        (int(z["glossiness"]   > GLOSS_THRESH)  << DIM_GLOSS)
-    )
+    # Soft mean: product of per-dimension marginals
+    q = np.empty(K, dtype=np.float64)
+    for k in range(K):
+        k_back   = (k >> DIM_FRONT_BACK) & 1
+        k_nontri = (k >> DIM_SHAPE)      & 1
+        k_transp = (k >> DIM_TRANSP)     & 1
+        k_glossy = (k >> DIM_GLOSS)      & 1
+        q[k] = (
+            (p_back   if k_back   else (1.0 - p_back))   *
+            (p_nontri if k_nontri else (1.0 - p_nontri)) *
+            (p_transp if k_transp else (1.0 - p_transp)) *
+            (p_glossy if k_glossy else (1.0 - p_glossy))
+        )
 
-    # Per-dimension clarity: 0 at boundary, 1 far from boundary
-    clarity_back   = abs(p_back   - 0.5) * 2.0
-    clarity_transp = abs(p_transp - 0.5) * 2.0
-    clarity_glossy = abs(p_glossy - 0.5) * 2.0
-    clarity_shape  = 1.0   # shape is discrete → always clear
+    # Clarity: product of per-dimension distances from boundary (shape always clear)
+    clarity = (abs(p_back   - 0.5) * 2.0 *
+               abs(p_transp - 0.5) * 2.0 *
+               abs(p_glossy - 0.5) * 2.0)
 
-    clarity = clarity_back * clarity_shape * clarity_transp * clarity_glossy
-
-    alpha         = np.full(K, BASE_CONCENTRATION, dtype=np.float64)
-    alpha[true_k] = BASE_CONCENTRATION + PEAK * clarity
-
-    return alpha
+    lam = BASE_CONCENTRATION + PEAK * clarity   # total concentration
+    return 1e-6 + lam * q
 
 
 def gt_p_right(uid: str, task, n_mc: int = 2000, rng=None) -> float:

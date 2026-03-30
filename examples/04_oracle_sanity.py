@@ -6,19 +6,26 @@ the continuous metadata used to generate ground truth α*(x). Everything
 downstream (mapper, Dirichlet, SEU, training loop) is identical to the
 standard DLBT agent.
 
-Two oracle variants are tested:
-  • soft4   — 4D: [p_back, p_nontri, p_transp, p_glossy]
-               These are exactly the marginals that drive gt_alpha, so the
-               mapper only needs to learn the product-of-marginals rule.
-               Best-case scenario for a linear mapper.
-  • onehot  — 16D one-hot of the true discrete latent state.
-               Gives the mapper the answer directly; tests whether the
-               Dirichlet + SEU machinery can exploit perfect state information.
+Oracle hierarchy:
+
+  A. Head-only ceiling
+     oracle_prealpha — K=16D softplus_inv(gt_alpha(uid)).
+     Mapper just inverts Softplus; tests Dirichlet + SEU + loss + optimiser.
+
+  B. Sufficient statistics
+     oracle_interaction — K=16D: clarity at the true-state slot, zeros elsewhere.
+                          A Linear(K, K) can represent gt_alpha perfectly:
+                          α = BASE·1 + PEAK·v.  True linear sufficient stat.
+     oracle_soft4-MLP   — 4D soft marginals + 256-GELU MLP (nonlinear).
+     oracle_soft4-linear — 4D soft marginals + linear mapper (can't do products).
+     oracle_onehot-linear — 16D one-hot + linear (no clarity info).
+
+  C. Bottleneck (example 03) — frozen CLIP features.
 
 Interpretation:
-  If both oracle variants converge to (near) the noise floor, the training
-  loop and model head are sound. Any remaining gap in example 03 is purely
-  a representation bottleneck (CLIP cannot recover the relevant signal).
+  A should hit the noise floor. B-interaction and B-soft4-MLP should also
+  converge near the floor. Gaps in B-weak tiers and C isolate what is lost
+  at each level (mapper expressivity vs representation).
 
 Run from repo root:
     python examples/04_oracle_sanity.py
@@ -125,28 +132,39 @@ def _sigmoid(x: float) -> float:
 
 def gt_alpha(uid: str) -> np.ndarray:
     """
-    Peaked Dirichlet centered on the true discrete latent state, with
-    concentration scaled by perceptual clarity (same as example 03).
+    Structured Dirichlet with soft mean and clarity-scaled concentration.
+    Identical to example 03 — keep both in sync.
+
+        q_k(x) = product of per-dimension soft marginals
+        λ(x)   = BASE_CONCENTRATION + PEAK · clarity(x)
+        α(x)   = ε + λ(x) · q(x)
     """
     z = cont_meta[uid]
+
     p_back   = _sigmoid(BETA * (z["y"]            - Y_THRESHOLD))
+    p_nontri = float(z["is_nontri"])
     p_transp = _sigmoid(BETA * (z["transparency"] - TRANSP_THRESH))
     p_glossy = _sigmoid(BETA * (z["glossiness"]   - GLOSS_THRESH))
 
-    true_k = (
-        (int(z["y"]            > Y_THRESHOLD)  << DIM_FRONT_BACK) |
-        (int(z["is_nontri"])                   << DIM_SHAPE)      |
-        (int(z["transparency"] > TRANSP_THRESH) << DIM_TRANSP)    |
-        (int(z["glossiness"]   > GLOSS_THRESH)  << DIM_GLOSS)
-    )
+    q = np.empty(K, dtype=np.float64)
+    for k in range(K):
+        k_back   = (k >> DIM_FRONT_BACK) & 1
+        k_nontri = (k >> DIM_SHAPE)      & 1
+        k_transp = (k >> DIM_TRANSP)     & 1
+        k_glossy = (k >> DIM_GLOSS)      & 1
+        q[k] = (
+            (p_back   if k_back   else (1.0 - p_back))   *
+            (p_nontri if k_nontri else (1.0 - p_nontri)) *
+            (p_transp if k_transp else (1.0 - p_transp)) *
+            (p_glossy if k_glossy else (1.0 - p_glossy))
+        )
 
     clarity = (abs(p_back   - 0.5) * 2.0 *
                abs(p_transp - 0.5) * 2.0 *
-               abs(p_glossy - 0.5) * 2.0)   # shape always clear → ×1.0
+               abs(p_glossy - 0.5) * 2.0)
 
-    alpha         = np.full(K, BASE_CONCENTRATION, dtype=np.float64)
-    alpha[true_k] = BASE_CONCENTRATION + PEAK * clarity
-    return alpha
+    lam = BASE_CONCENTRATION + PEAK * clarity
+    return 1e-6 + lam * q
 
 
 def gt_p_right(uid: str, task, n_mc: int = 1000, rng=None) -> float:
@@ -164,38 +182,34 @@ def sample_behavior(ref, task, n_trials: int, rng) -> tuple[int, int]:
 
 # ---------------------------------------------------------------------------
 # Oracle feature constructors
-#
-# Three-level sanity-check hierarchy:
-#
-#   A. Head-only   — input is gt_alpha(uid) directly.
-#                    Mapper just needs to copy / rescale. Tests Dirichlet +
-#                    SEU + loss + optimiser in isolation. Should hit the floor.
-#
-#   B. Sufficient  — input encodes all information needed to compute gt_alpha,
-#                    but not gt_alpha itself.
-#                    oracle_full = [onehot(true_state), clarity]  (17D, linear)
-#                    oracle_soft4-MLP = soft marginals + nonlinear mapper
-#                    Both should also approach the floor.
-#
-#   C. Bottleneck  — frozen CLIP features (example 03).
-#                    Gap vs B is the representation bottleneck.
 # ---------------------------------------------------------------------------
 
-def oracle_alpha(uid: str) -> np.ndarray:
+def softplus_inv(y: np.ndarray) -> np.ndarray:
     """
-    [A — head-only] K=16 dimensional ground-truth α vector.
-    The mapper receives the answer; it only needs to learn identity / rescaling.
-    Tests Dirichlet + SEU + NLL loss + optimiser in isolation.
-    Should converge (near) to the noise floor.
+    Numerically stable inverse of Softplus: log(exp(y) - 1).
+    For y > 20 the function is nearly linear, so we use y directly to
+    avoid overflow in exp(y).
     """
-    return gt_alpha(uid).astype(np.float32)
+    y = np.asarray(y, dtype=np.float64)
+    return np.where(y > 20, y, np.log(np.expm1(y)))
+
+
+def oracle_prealpha(uid: str) -> np.ndarray:
+    """
+    [A — head-only ceiling] softplus_inv(gt_alpha(uid)), shape [K].
+
+    Feeding this to a Linear + Softplus mapper means the mapper only needs
+    to learn the identity map (Softplus ∘ softplus_inv = identity). Any
+    remaining loss is irreducible noise from the Dirichlet sampling + SEU.
+    """
+    return softplus_inv(gt_alpha(uid)).astype(np.float32)
 
 
 def oracle_soft4(uid: str) -> np.ndarray:
     """
     4D soft marginals [p_back, p_nontri, p_transp, p_glossy].
-    Exactly the quantities that drive gt_alpha — the mapper just has to learn
-    the product-of-marginals combination rule. Best-case for a linear mapper.
+    Exactly the quantities that drive gt_alpha, but the mapper still needs
+    to learn the nonlinear product-of-marginals combination rule.
     """
     z = cont_meta[uid]
     return np.array([
@@ -209,7 +223,6 @@ def oracle_soft4(uid: str) -> np.ndarray:
 def oracle_onehot(uid: str) -> np.ndarray:
     """
     16D one-hot of the true discrete latent state.
-    The mapper receives the answer directly; tests the Dirichlet + SEU head.
     Missing clarity → can't represent per-image concentration variation.
     """
     z = cont_meta[uid]
@@ -224,20 +237,36 @@ def oracle_onehot(uid: str) -> np.ndarray:
     return v
 
 
-def oracle_full(uid: str) -> np.ndarray:
+def oracle_interaction(uid: str) -> np.ndarray:
     """
-    17D: [16D one-hot of true state, 1D clarity scalar].
-    A Linear(17, 16) mapper can *perfectly* represent gt_alpha:
-        α_true_k = BASE + PEAK * clarity   (onehot selects k, clarity scales it)
-        α_other  = BASE
-    This is the theoretical ceiling — should converge to the noise floor.
+    [B — linear sufficient stat] K=16D vector: clarity at the true-state slot,
+    zeros everywhere else.
+
+    Why this is a true linear sufficient stat:
+        Let v = oracle_interaction(uid).
+        A Linear(K, K) with weight W and bias b can produce:
+            α_k = Softplus(b_k + W_k · v)
+                = Softplus(b_k + W_{k, true_k} * clarity)
+        Setting b_k = softplus_inv(BASE) and W_{k,k} = PEAK / Softplus'(...)
+        recovers gt_alpha exactly (up to the soft-q approximation).
+        This is linear in v — no products of input features are required.
     """
     z = cont_meta[uid]
     p_back   = _sigmoid(BETA * (z["y"]            - Y_THRESHOLD))
     p_transp = _sigmoid(BETA * (z["transparency"] - TRANSP_THRESH))
     p_glossy = _sigmoid(BETA * (z["glossiness"]   - GLOSS_THRESH))
-    clarity  = abs(p_back - 0.5) * 2.0 * abs(p_transp - 0.5) * 2.0 * abs(p_glossy - 0.5) * 2.0
-    return np.append(oracle_onehot(uid), clarity).astype(np.float32)
+    clarity  = (abs(p_back   - 0.5) * 2.0 *
+                abs(p_transp - 0.5) * 2.0 *
+                abs(p_glossy - 0.5) * 2.0)
+    k = (
+        (int(z["y"]            > Y_THRESHOLD)  << DIM_FRONT_BACK) |
+        (int(z["is_nontri"])                   << DIM_SHAPE)      |
+        (int(z["transparency"] > TRANSP_THRESH) << DIM_TRANSP)    |
+        (int(z["glossiness"]   > GLOSS_THRESH)  << DIM_GLOSS)
+    )
+    v    = np.zeros(K, dtype=np.float32)
+    v[k] = float(clarity)
+    return v
 
 
 # ---------------------------------------------------------------------------
@@ -352,19 +381,18 @@ print(f"Noise floor — train: {train_ds.noise_floor():.4f}  "
 # ---------------------------------------------------------------------------
 # Train both oracle variants
 # ---------------------------------------------------------------------------
-soft4_dict  = {uid: oracle_soft4(uid)  for uid in refs_dict}
-onehot_dict = {uid: oracle_onehot(uid) for uid in refs_dict}
-
-alpha_dict  = {uid: oracle_alpha(uid)  for uid in refs_dict}
-full_dict   = {uid: oracle_full(uid)   for uid in refs_dict}
+prealpha_dict    = {uid: oracle_prealpha(uid)    for uid in refs_dict}
+interaction_dict = {uid: oracle_interaction(uid) for uid in refs_dict}
+soft4_dict       = {uid: oracle_soft4(uid)       for uid in refs_dict}
+onehot_dict      = {uid: oracle_onehot(uid)      for uid in refs_dict}
 
 VARIANTS = [
-    # label                feat_dict    feat_dim  mapper_hidden  tier
-    ("A-alpha",            alpha_dict,  K,        None),    # A: head-only ceiling
-    ("B-full",             full_dict,   K + 1,    None),    # B: sufficient stats, linear
-    ("B-soft4-MLP",        soft4_dict,  4,        256),     # B: sufficient stats, MLP
-    ("B-soft4-linear",     soft4_dict,  4,        None),    # B-weak: linear (can't do products)
-    ("B-onehot-linear",    onehot_dict, K,        None),    # B-weak: no clarity
+    # label                  feat_dict         feat_dim  mapper_hidden
+    ("A-prealpha",           prealpha_dict,    K,        None),  # A: head-only ceiling
+    ("B-interaction",        interaction_dict, K,        None),  # B: linear sufficient stat
+    ("B-soft4-MLP",          soft4_dict,       4,        256),   # B: sufficient stats, MLP
+    ("B-soft4-linear",       soft4_dict,       4,        None),  # B-weak: linear (can't do products)
+    ("B-onehot-linear",      onehot_dict,      K,        None),  # B-weak: no clarity
 ]
 
 results    = {}
@@ -391,9 +419,9 @@ noise_train = train_ds.noise_floor()
 noise_val   = val_ds.noise_floor()
 
 COLORS = {
-    "A-alpha":           ("#000000", "#888888"),   # black  — head ceiling
-    "B-full":            ("#762a83", "#c2a5cf"),   # purple — sufficient stats (linear)
-    "B-soft4-MLP":       ("#1a9641", "#a6d96a"),   # green  — sufficient stats (MLP)
+    "A-prealpha":        ("#000000", "#888888"),   # black  — head-only ceiling
+    "B-interaction":     ("#762a83", "#c2a5cf"),   # purple — linear sufficient stat
+    "B-soft4-MLP":       ("#1a9641", "#a6d96a"),   # green  — sufficient stats, MLP
     "B-soft4-linear":    ("#2166ac", "#92c5de"),   # blue   — soft4, linear (weak)
     "B-onehot-linear":   ("#d6604d", "#f4a582"),   # red    — onehot, no clarity (weak)
 }
@@ -476,7 +504,7 @@ for row, (label, agent) in enumerate(trained_agents.items()):
         ax.tick_params(labelsize=8)
         if col == 0:
             ax.set_ylabel("True P(right)", fontsize=9)
-        if row == 1:
+        if row == len(trained_agents) - 1:
             ax.set_xlabel("Predicted P(right)", fontsize=9)
 
 sns.despine(fig=fig, trim=True)
