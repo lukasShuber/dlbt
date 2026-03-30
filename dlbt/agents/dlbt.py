@@ -35,7 +35,7 @@ from dlbt.data.image_ref import ImageRef
 from dlbt.data.task import Task
 
 
-class DlbtAgent(Agent, nn.Module):
+class DlbtAgent(nn.Module, Agent):
     """
     DLBT agent backed by a CLIP RN50 visual encoder.
 
@@ -159,43 +159,88 @@ class DlbtAgent(Agent, nn.Module):
         task: Task,
     ) -> torch.Tensor:
         """
-        Estimate P(action | image, task) via Monte Carlo Dirichlet sampling
-        with a straight-through estimator for the argmax.
+        Estimate P(action | image, task) via Monte Carlo Dirichlet sampling.
 
-        Forward pass (used at training time):
-          1. Compute α = mapper(encoder(x))              [B, K]
-          2. Sample b̃ ~ Dirichlet(α)  (rsample)          [N, B, K]
-          3. logit = b̃ · ΔU_t                            [N, B]
-          4. Straight-through argmax → choice indicator  [N, B, 2]
-          5. Average over samples                        [B, 2]
+        Dispatches to the training or eval path depending on self.training:
+
+        Training path — straight-through estimator:
+          Hard argmax in the forward pass (discrete decisions), soft softmax
+          gradient in the backward pass. Necessary for gradient flow through
+          the discrete argmax.
+
+        Eval path — clean hard MC average:
+          Simply averages hard argmax decisions over MC samples.
+          No ST entanglement, no gradient overhead.
+          Uses n_mc_samples from __init__ (increase for lower-variance eval).
 
         Returns:
-            Tensor of shape [B, 2], differentiable w.r.t. mapper (and
-            encoder if freeze_encoder=False).
+            Tensor of shape [B, 2], summing to 1 along dim=1.
+            Differentiable w.r.t. mapper (and encoder if not frozen) in
+            training mode only.
         """
-        B   = len(image_refs)
-        N   = self.n_mc_samples
-        alpha = self.get_alpha(image_refs)              # [B, K]
+        if self.training:
+            return self._choice_probs_train(image_refs, task)
+        else:
+            return self._choice_probs_eval(image_refs, task)
 
+    def _choice_probs_train(
+        self,
+        image_refs: List[ImageRef],
+        task: Task,
+    ) -> torch.Tensor:
+        """
+        Training forward pass: straight-through argmax over MC Dirichlet samples.
+
+          1. α = mapper(encoder(x))                      [B, K]
+          2. b̃ ~ Dirichlet(α)  (rsample, differentiable) [N, B, K]
+          3. logit = b̃ · ΔU_t                            [N, B]
+          4. Straight-through argmax → choice indicator  [N, B, 2]
+          5. Average over N samples                      [B, 2]
+        """
+        N     = self.n_mc_samples
+        alpha = self.get_alpha(image_refs)                          # [B, K]
         delta_u = torch.tensor(
             task.delta_u, dtype=torch.float32, device=self.device
-        )                                               # [K]
+        )
 
-        dist = Dirichlet(alpha)                         # batch Dirichlet
-        b    = dist.rsample((N,))                       # [N, B, K]
+        b      = Dirichlet(alpha).rsample((N,))                     # [N, B, K]
+        logit  = torch.einsum("nbk,k->nb", b, delta_u)             # [N, B]
 
-        # SEU logit: positive -> action 1 optimal, negative -> action 0
-        logit  = torch.einsum("nbk,k->nb", b, delta_u) # [N, B]
-
-        # Stack into [N, B, 2]: column 0 = -logit, column 1 = +logit
         logits_2d  = torch.stack([-logit, logit], dim=-1)          # [N, B, 2]
-        probs_soft = F.softmax(logits_2d, dim=-1)                   # [N, B, 2]
-        hard       = F.one_hot(logits_2d.argmax(-1), 2).float()     # [N, B, 2]
+        probs_soft = F.softmax(logits_2d, dim=-1)
+        hard       = F.one_hot(logits_2d.argmax(-1), 2).float()
 
-        # Straight-through: hard in forward, probs_soft gradient in backward
-        st = (hard - probs_soft).detach() + probs_soft              # [N, B, 2]
+        # Straight-through: hard forward, soft gradient
+        st = (hard - probs_soft).detach() + probs_soft
+        return st.mean(dim=0)                                       # [B, 2]
 
-        return st.mean(dim=0)                                        # [B, 2]
+    @torch.no_grad()
+    def _choice_probs_eval(
+        self,
+        image_refs: List[ImageRef],
+        task: Task,
+    ) -> torch.Tensor:
+        """
+        Eval forward pass: clean hard MC average, no ST, no gradients.
+
+          1. α = mapper(encoder(x))                      [B, K]
+          2. b̃ ~ Dirichlet(α)  (sample, not rsample)    [N, B, K]
+          3. logit = b̃ · ΔU_t                            [N, B]
+          4. Hard argmax → {0, 1}                        [N, B]
+          5. Average over N samples                      [B, 2]
+        """
+        N     = self.n_mc_samples
+        alpha = self.get_alpha(image_refs)                          # [B, K]
+        delta_u = torch.tensor(
+            task.delta_u, dtype=torch.float32, device=self.device
+        )
+
+        b     = Dirichlet(alpha).sample((N,))                      # [N, B, K]
+        logit = torch.einsum("nbk,k->nb", b, delta_u)             # [N, B]
+        hard  = (logit > 0).float()                                # [N, B]
+
+        p_right = hard.mean(dim=0)                                 # [B]
+        return torch.stack([1 - p_right, p_right], dim=-1)        # [B, 2]
 
     # -----------------------------------------------------------------------
     # Convenience

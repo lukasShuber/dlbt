@@ -8,6 +8,8 @@ All functions operate on:
 
 from __future__ import annotations
 
+from typing import Optional
+
 import torch
 
 
@@ -59,7 +61,7 @@ def mse(
 def corrected_mse(
     pred_probs: torch.Tensor,
     counts: torch.Tensor,
-    n_mc_samples: int = 1000,
+    n_mc_samples: Optional[int] = None,
 ) -> float:
     """
     Bias-corrected MSE: raw MSE minus the MC-sampling variance of the predictor.
@@ -72,13 +74,19 @@ def corrected_mse(
         pred_probs:   [N, 2]
         counts:       [N, 2]
         n_mc_samples: number of MC samples used to produce pred_probs.
+                      Pass None (or omit) for deterministic models (e.g. SLDA)
+                      where there is no MC variance to correct for.
+                      Correction is also skipped when n_mc_samples < 2.
 
     Returns:
         Python float.
     """
     totals    = counts.sum(dim=1, keepdim=True).clamp(min=1)
     emp_freqs = counts / totals
+    raw_mse   = torch.mean((pred_probs - emp_freqs) ** 2)
 
-    raw_mse  = torch.mean((pred_probs - emp_freqs) ** 2)
-    mc_var   = pred_probs * (1 - pred_probs) / max(n_mc_samples - 1, 1)
+    if n_mc_samples is None or n_mc_samples < 2:
+        return raw_mse.item()
+
+    mc_var = pred_probs * (1 - pred_probs) / (n_mc_samples - 1)
     return (raw_mse - mc_var.mean()).item()
