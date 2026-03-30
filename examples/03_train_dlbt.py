@@ -143,41 +143,50 @@ def _sigmoid(x: float) -> float:
 
 def gt_alpha(uid: str) -> np.ndarray:
     """
-    Soft Dirichlet concentration vector for an image.
+    Peaked Dirichlet centered on the true discrete latent state.
 
-    Each binary dimension is softened by a sigmoid applied to the image's
-    continuous property distance from its threshold:
+    Concentration scales with perceptual clarity — how far the image's
+    continuous properties are from their decision boundaries:
 
-        p_dim(x) = σ(BETA · (value − threshold))
+        clarity_dim = |σ(BETA · (value − threshold)) − 0.5| · 2   ∈ [0, 1]
 
-    The match score for latent state k is the product of per-dimension
-    probabilities, giving high α_k for clearly-matching states and low α_k
-    for mismatching ones. Images near a boundary get genuinely mixed beliefs.
+    Overall clarity is the product across all dimensions.  The resulting
+    concentration on the true state is:
 
-    Shape dimension is discrete (triangular / non-triangular) so it is not
-    softened — it is kept as a hard 0/1 probability.
+        α_true  = BASE + PEAK · clarity
+        α_other = BASE
+
+    This gives:
+      • clear image   → high concentration on true state → P(right) near 0/1
+      • ambiguous image → low concentration → P(right) near 0.5
+      • the target is always recoverable from the image (unlike variable-peak),
+        and the representation task is simply to predict state + clarity.
     """
     z = cont_meta[uid]
 
-    p_back   = _sigmoid(BETA * (z["y"]            - Y_THRESHOLD))   # P(back)
-    p_nontri = float(z["is_nontri"])                                  # discrete
+    # Soft marginals for each dimension
+    p_back   = _sigmoid(BETA * (z["y"]            - Y_THRESHOLD))
     p_transp = _sigmoid(BETA * (z["transparency"] - TRANSP_THRESH))
     p_glossy = _sigmoid(BETA * (z["glossiness"]   - GLOSS_THRESH))
 
-    alpha = np.empty(K, dtype=np.float64)
-    for k in range(K):
-        k_back   = (k >> DIM_FRONT_BACK) & 1
-        k_nontri = (k >> DIM_SHAPE)      & 1
-        k_transp = (k >> DIM_TRANSP)     & 1
-        k_glossy = (k >> DIM_GLOSS)      & 1
+    # True discrete latent state
+    true_k = (
+        (int(z["y"]            > Y_THRESHOLD)  << DIM_FRONT_BACK) |
+        (int(z["is_nontri"])                   << DIM_SHAPE)      |
+        (int(z["transparency"] > TRANSP_THRESH) << DIM_TRANSP)    |
+        (int(z["glossiness"]   > GLOSS_THRESH)  << DIM_GLOSS)
+    )
 
-        match = (
-            (p_back   if k_back   else (1.0 - p_back))   *
-            (p_nontri if k_nontri else (1.0 - p_nontri)) *
-            (p_transp if k_transp else (1.0 - p_transp)) *
-            (p_glossy if k_glossy else (1.0 - p_glossy))
-        )
-        alpha[k] = BASE_CONCENTRATION + PEAK * match
+    # Per-dimension clarity: 0 at boundary, 1 far from boundary
+    clarity_back   = abs(p_back   - 0.5) * 2.0
+    clarity_transp = abs(p_transp - 0.5) * 2.0
+    clarity_glossy = abs(p_glossy - 0.5) * 2.0
+    clarity_shape  = 1.0   # shape is discrete → always clear
+
+    clarity = clarity_back * clarity_shape * clarity_transp * clarity_glossy
+
+    alpha         = np.full(K, BASE_CONCENTRATION, dtype=np.float64)
+    alpha[true_k] = BASE_CONCENTRATION + PEAK * clarity
 
     return alpha
 

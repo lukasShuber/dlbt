@@ -52,6 +52,9 @@ class DlbtAgent(nn.Module, Agent):
         n_mc_samples:   number of Monte Carlo samples for the Dirichlet
                         expectation during choice_probs().
         device:         torch device.
+        mapper_hidden:  if None (default), use a single Linear(1024, K).
+                        If an int, insert a hidden layer of that width with
+                        GELU activation: 1024 → mapper_hidden → K.
     """
 
     def __init__(
@@ -59,6 +62,7 @@ class DlbtAgent(nn.Module, Agent):
         freeze_encoder: bool = True,
         n_mc_samples: int = 1000,
         device: torch.device = torch.device("cpu"),
+        mapper_hidden: Optional[int] = None,
     ):
         super().__init__()
 
@@ -84,13 +88,20 @@ class DlbtAgent(nn.Module, Agent):
 
         # ---- Distribution mapper: 1024 -> K -------------------------------
         # Linear + Softplus guarantees strictly positive Dirichlet parameters.
-        # Initialise bias so Softplus output starts at ~2.0 (moderate Dirichlet),
-        # avoiding the near-zero α / extreme corner-concentration at init.
-        # Softplus(x) ≈ x for x >> 0, so bias = ln(exp(2) - 1) ≈ 1.1.
-        linear = nn.Linear(1024, K)
-        nn.init.xavier_uniform_(linear.weight)
-        nn.init.constant_(linear.bias, 1.1)
-        self.mapper = nn.Sequential(linear, nn.Softplus()).to(device)
+        # Bias initialised so Softplus output starts at ~2.0 (moderate Dirichlet).
+        # mapper_hidden=None → single linear layer (default, fast, interpretable).
+        # mapper_hidden=256  → MLP with one hidden layer (more expressive).
+        if mapper_hidden is None:
+            linear = nn.Linear(1024, K)
+            nn.init.xavier_uniform_(linear.weight)
+            nn.init.constant_(linear.bias, 1.1)
+            self.mapper = nn.Sequential(linear, nn.Softplus()).to(device)
+        else:
+            h1 = nn.Linear(1024, mapper_hidden)
+            h2 = nn.Linear(mapper_hidden, K)
+            nn.init.xavier_uniform_(h1.weight);  nn.init.zeros_(h1.bias)
+            nn.init.xavier_uniform_(h2.weight);  nn.init.constant_(h2.bias, 1.1)
+            self.mapper = nn.Sequential(h1, nn.GELU(), h2, nn.Softplus()).to(device)
 
         # ---- Feature caches -----------------------------------------------
         # _cache:          uid -> [1024]      full CLIP features (freeze_encoder=True)
