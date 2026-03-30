@@ -229,17 +229,17 @@ plt.close()
 # Scatter: predicted vs ground truth P(right)
 # ---------------------------------------------------------------------------
 agent.eval()
-rng_gt = np.random.default_rng(SEED + 1)  # separate rng for gt_p_right estimates
+rng_gt = np.random.default_rng(SEED + 1)
 
-fig, axes = plt.subplots(1, 2, figsize=(9, 4.5), sharey=True)
+# Collect per-task predictions once; reuse for both plots.
+TRAIN_COLOR = "#d95f02"
+VAL_COLOR   = "#7570b3"
 
-for ax, (task_names, ds, label) in zip(axes, [
-    (TRAIN_TASKS, train_ds, "Train tasks"),
-    (VAL_TASKS,   val_ds,   "Val tasks"),
-]):
-    pred_all = []
-    true_all = []
+per_task: dict = {}   # task_name -> {"pred", "true", "rho", "cmse", "color"}
 
+all_ds = [(TRAIN_TASKS, train_ds), (VAL_TASKS, val_ds)]
+for task_names, ds in all_ds:
+    color = TRAIN_COLOR if task_names is TRAIN_TASKS else VAL_COLOR
     for task_name, group in ds.iter_tasks():
         task       = TASKS[task_name]
         batch_refs = [refs_dict[uid] for uid in group["uid"]]
@@ -253,23 +253,36 @@ for ax, (task_names, ds, label) in zip(axes, [
             for r in batch_refs
         ])
 
-        pred_all.append(pred)
-        true_all.append(true_p)
+        raw_mse = float(np.mean((pred - true_p) ** 2))
+        mc_corr = float(np.mean(pred * (1 - pred))) / (N_MC - 1)
+        rho, _  = spearmanr(pred, true_p)
 
-    pred_all = np.concatenate(pred_all)
-    true_all = np.concatenate(true_all)
+        per_task[task_name] = dict(
+            pred=pred, true=true_p,
+            cmse=raw_mse - mc_corr, rho=rho,
+            color=color,
+        )
 
-    # Corrected MSE: subtract MC variance of the predictor.
-    # The ground truth target is noise-free, so only the predictor's
-    # MC variance needs correcting (not finite-sample noise from counts).
-    raw_mse  = float(np.mean((pred_all - true_all) ** 2))
-    mc_corr  = float(np.mean(pred_all * (1 - pred_all))) / (N_MC - 1)
-    cmse     = raw_mse - mc_corr
+# ---------------------------------------------------------------------------
+# Plot 1: summary scatter — train vs val side by side
+# ---------------------------------------------------------------------------
+fig, axes = plt.subplots(1, 2, figsize=(9, 4.5), sharey=True)
 
-    rho, _ = spearmanr(pred_all, true_all)
+for ax, (task_names, label) in zip(axes, [
+    (TRAIN_TASKS, "Train tasks"),
+    (VAL_TASKS,   "Val tasks"),
+]):
+    pred_all = np.concatenate([per_task[t]["pred"] for t in task_names])
+    true_all = np.concatenate([per_task[t]["true"] for t in task_names])
+    color    = TRAIN_COLOR if task_names is TRAIN_TASKS else VAL_COLOR
 
-    ax.plot([0, 1], [0, 1], ls=":", color="gray")
-    ax.scatter(pred_all, true_all, alpha=0.4, s=12, color="#2ca02c")
+    raw_mse = float(np.mean((pred_all - true_all) ** 2))
+    mc_corr = float(np.mean(pred_all * (1 - pred_all))) / (N_MC - 1)
+    cmse    = raw_mse - mc_corr
+    rho, _  = spearmanr(pred_all, true_all)
+
+    ax.plot([0, 1], [0, 1], ls=":", color="gray", lw=0.8)
+    ax.scatter(pred_all, true_all, alpha=0.4, s=10, color=color)
     ax.set(
         xlabel="Predicted P(right)",
         ylabel="True P(right)",
@@ -279,6 +292,73 @@ for ax, (task_names, ds, label) in zip(axes, [
 
 sns.despine(trim=True)
 plt.tight_layout()
-plt.savefig("examples/plots/03_pred_vs_emp.png", dpi=150)
-print("Saved: examples/plots/03_pred_vs_emp.png")
+plt.savefig("examples/plots/03_pred_vs_true.png", dpi=150)
+print("Saved: examples/plots/03_pred_vs_true.png")
+plt.close()
+
+# ---------------------------------------------------------------------------
+# Plot 2: per-task grid — one small panel per task
+# ---------------------------------------------------------------------------
+ALL_TASKS  = TRAIN_TASKS + VAL_TASKS   # 10 tasks
+N_COLS     = 5
+N_ROWS     = 2
+
+fig, axes = plt.subplots(
+    N_ROWS, N_COLS,
+    figsize=(11, 4.5),
+    sharex=True, sharey=True,
+    gridspec_kw={"hspace": 0.45, "wspace": 0.08},
+)
+
+for idx, (ax, task_name) in enumerate(zip(axes.flat, ALL_TASKS)):
+    d     = per_task[task_name]
+    color = d["color"]
+    label = "train" if color == TRAIN_COLOR else "val"
+
+    ax.plot([0, 1], [0, 1], ls=":", color="gray", lw=0.8, zorder=0)
+    ax.scatter(d["pred"], d["true"], alpha=0.5, s=6, color=color, linewidths=0)
+
+    # clean task name: "nontriangular_and_front" → "nontri. & front"
+    nice = (task_name
+            .replace("nontriangular", "nontri.")
+            .replace("_and_", " & ")
+            .replace("_", "/"))
+    ax.set_title(nice, fontsize=7.5, pad=3)
+
+    # ρ annotation in upper-left
+    ax.text(0.06, 0.88, f"ρ={d['rho']:.2f}",
+            transform=ax.transAxes, fontsize=7,
+            color=color, va="top")
+
+    # axis labels on edges only
+    row, col = divmod(idx, N_COLS)
+    if row == N_ROWS - 1:
+        ax.set_xlabel("Pred", fontsize=8)
+    if col == 0:
+        ax.set_ylabel("True", fontsize=8)
+
+    ax.set_xlim(-0.05, 1.05)
+    ax.set_ylim(-0.05, 1.05)
+    ax.tick_params(labelsize=6)
+
+# shared super-labels
+fig.text(0.5, -0.01, "Predicted P(right)", ha="center", fontsize=9)
+fig.text(-0.01, 0.5, "True P(right)", va="center", rotation="vertical", fontsize=9)
+
+# legend
+from matplotlib.lines import Line2D
+fig.legend(
+    handles=[
+        Line2D([0], [0], marker="o", color="w", markerfacecolor=TRAIN_COLOR,
+               markersize=6, label="train"),
+        Line2D([0], [0], marker="o", color="w", markerfacecolor=VAL_COLOR,
+               markersize=6, label="val"),
+    ],
+    loc="lower right", bbox_to_anchor=(1.0, 0.02),
+    fontsize=8, frameon=False,
+)
+
+sns.despine(fig=fig, trim=True)
+plt.savefig("examples/plots/03_per_task.png", dpi=150, bbox_inches="tight")
+print("Saved: examples/plots/03_per_task.png")
 plt.close()
