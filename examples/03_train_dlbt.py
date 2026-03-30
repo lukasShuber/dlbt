@@ -65,9 +65,9 @@ else:
 
 SEED               = 42
 N_TRIALS           = 100    # SEU decisions per (image, task)
-PEAK               = 4.0   # peak concentration added to matching latent states
+PEAK               = 15.0   # peak concentration added to matching latent states
 BASE_CONCENTRATION = 1.0    # base concentration on all latent states
-BETA               = 2.0    # sigmoid sharpness for continuous dimensions;
+BETA               = 5.0    # sigmoid sharpness for continuous dimensions;
                              # higher = sharper boundary, lower = more perceptual ambiguity
 N_EPOCHS           = 100
 LR                 = 1e-3   # lower than frozen: attnpool weights are sensitive
@@ -267,8 +267,11 @@ print(f"Best epoch: {result.best_epoch}  best_val_mse: {result.best_val_mse:.4f}
 # ---------------------------------------------------------------------------
 slda = SldaAgent(device=DEVICE)
 
-# Reuse cached CLIP features — no re-encoding needed
-slda.load_cache(CACHE_PATH)
+# Load cached CLIP features if available; train_dlbt will precompute them
+# otherwise (since slda.freeze_encoder=True). Save after to reuse next run.
+if Path(CACHE_PATH).exists():
+    print(f"Loading cached CLIP features from {CACHE_PATH}")
+    slda.load_cache(CACHE_PATH)
 
 print("\nTraining SldaAgent...")
 slda_result = train_dlbt(
@@ -277,6 +280,11 @@ slda_result = train_dlbt(
 )
 print(f"Best epoch: {slda_result.best_epoch}  best_val_mse: {slda_result.best_val_mse:.4f}")
 print(f"Learned temperature τ = {slda.log_temperature.exp().item():.3f}")
+
+# Persist freshly-computed features for future runs.
+if not Path(CACHE_PATH).exists():
+    slda.save_cache(CACHE_PATH)
+    print(f"Saved fresh CLIP features → {CACHE_PATH}")
 
 # ---------------------------------------------------------------------------
 # Learning curves — DLBT and SLDA side by side
