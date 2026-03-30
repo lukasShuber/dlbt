@@ -70,7 +70,7 @@ BASE_CONCENTRATION = 1.0    # base concentration on all latent states
 BETA               = 5.0    # sigmoid sharpness for continuous dimensions;
                              # higher = sharper boundary, lower = more perceptual ambiguity
 N_EPOCHS           = 3000
-LR                 = 1e-2   # mapper LR (also used for frozen encoder and SLDA)
+LR                 = 1e-3   # mapper LR (also used for frozen encoder and SLDA)
 LR_ATTNPOOL        = 1e-5   # attnpool LR — much lower to preserve pre-trained weights
 N_MC               = 200    # MC samples for choice_probs during training
 FREEZE_ENCODER     = True  # True → DLBT-frozen; False → DLBT-attnpool
@@ -282,7 +282,7 @@ else:
 
 result = train_dlbt(
     agent, train_ds, val_ds, refs_dict,
-    n_epochs=N_EPOCHS, lr=LR, patience=N_EPOCHS,
+    n_epochs=N_EPOCHS, lr=LR, patience=300,
     optimizer=dlbt_optimizer,
 )
 print(f"Best epoch: {result.best_epoch}  best_val_mse: {result.best_val_mse:.4f}")
