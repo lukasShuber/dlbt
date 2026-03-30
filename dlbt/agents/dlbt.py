@@ -160,8 +160,8 @@ class DlbtAgent(nn.Module, Agent):
         Return Dirichlet concentration parameters α for each image.
         Shape: [B, K], all entries strictly positive.
         """
-        features = self._encode(image_refs)  # [B, 1024]
-        return self.mapper(features)          # [B, K]
+        features = self._encode(image_refs)          # [B, 1024]
+        return self.mapper(features).clamp(min=1e-6) # [B, K]
 
     def choice_probs(
         self,
