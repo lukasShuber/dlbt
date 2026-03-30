@@ -72,7 +72,7 @@ BETA               = 5.0    # sigmoid sharpness for continuous dimensions;
 N_EPOCHS           = 1000
 LR                 = 1e-3   # lower than frozen: attnpool weights are sensitive
 N_MC               = 200    # MC samples for choice_probs during training
-FREEZE_ENCODER     = False  # True → DLBT-frozen; False → DLBT-attnpool
+FREEZE_ENCODER     = True  # True → DLBT-frozen; False → DLBT-attnpool
 
 # 7 train / 3 val task split.
 # All 4 simple tasks stay in train (they are the only per-dimension signal).
