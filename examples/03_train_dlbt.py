@@ -47,6 +47,7 @@ from dlbt.data.image_ref import load_image_refs, image_refs_as_list, balanced_re
 from dlbt.data.task import TASKS
 from dlbt.data.dataset import BehavioralDataset, Observation
 from dlbt.agents.dlbt import DlbtAgent
+from dlbt.agents.slda import SldaAgent
 from dlbt.training.train_dlbt import train_dlbt
 from dlbt.training.metrics import corrected_mse
 
@@ -236,11 +237,11 @@ print(f"Noise floor — train: {train_ds.noise_floor():.4f}  "
       f"val: {val_ds.noise_floor():.4f}")
 
 # ---------------------------------------------------------------------------
-# Train
+# Train — DLBT (frozen encoder)
 # ---------------------------------------------------------------------------
 agent = DlbtAgent(freeze_encoder=True, n_mc_samples=N_MC, device=DEVICE)
 
-# Load or compute CLIP feature cache
+# Load or compute CLIP feature cache (shared with SLDA below)
 if Path(CACHE_PATH).exists():
     print(f"Loading cached CLIP features from {CACHE_PATH}")
     agent.load_cache(CACHE_PATH)
@@ -250,37 +251,59 @@ else:
     agent.save_cache(CACHE_PATH)
     print("Saved.")
 
-print("\nTraining DlbtAgent...")
+print("\nTraining DlbtAgent (frozen)...")
 result = train_dlbt(
     agent, train_ds, val_ds, refs_dict,
-    n_epochs=N_EPOCHS, lr=LR, patience=N_EPOCHS,  # patience=N_EPOCHS disables early stopping
+    n_epochs=N_EPOCHS, lr=LR, patience=N_EPOCHS,
 )
-print(f"\nBest epoch: {result.best_epoch}  best_val_mse: {result.best_val_mse:.4f}")
+print(f"Best epoch: {result.best_epoch}  best_val_mse: {result.best_val_mse:.4f}")
 
 # ---------------------------------------------------------------------------
-# Learning curves
+# Train — SLDA baseline
+# ---------------------------------------------------------------------------
+slda = SldaAgent(device=DEVICE)
+
+# Reuse cached CLIP features — no re-encoding needed
+slda.load_cache(CACHE_PATH)
+
+print("\nTraining SldaAgent...")
+slda_result = train_dlbt(
+    slda, train_ds, val_ds, refs_dict,
+    n_epochs=N_EPOCHS, lr=LR, patience=N_EPOCHS,
+)
+print(f"Best epoch: {slda_result.best_epoch}  best_val_mse: {slda_result.best_val_mse:.4f}")
+print(f"Learned temperature τ = {slda.log_temperature.exp().item():.3f}")
+
+# ---------------------------------------------------------------------------
+# Learning curves — DLBT and SLDA side by side
 # ---------------------------------------------------------------------------
 noise_floor_train = train_ds.noise_floor()
 noise_floor_val   = val_ds.noise_floor()
 
-fig, axes = plt.subplots(1, 2, figsize=(10, 4))
-epochs = range(len(result.train_nlls))
+fig, axes = plt.subplots(2, 2, figsize=(10, 7), sharex=False)
 
-axes[0].plot(epochs, result.train_nlls, label="train", color="#d95f02")
-axes[0].plot(epochs, result.val_nlls,   label="val",   color="#7570b3")
-axes[0].axvline(result.best_epoch, ls=":", color="gray")
-axes[0].set(xlabel="epoch", ylabel="NLL", title="Negative log-likelihood")
-axes[0].legend()
+for row, (res, model_label) in enumerate([(result, "DLBT (frozen)"), (slda_result, "SLDA")]):
+    epochs = range(len(res.train_nlls))
+    ax_nll, ax_mse = axes[row]
 
-axes[1].plot(epochs, result.train_mses, label="train", color="#d95f02")
-axes[1].plot(epochs, result.val_mses,   label="val",   color="#7570b3")
-axes[1].axvline(result.best_epoch, ls=":", color="gray")
-axes[1].axhline(noise_floor_train, ls="--", color="#d95f02", alpha=0.5, lw=1,
-                label=f"train floor ({noise_floor_train:.4f})")
-axes[1].axhline(noise_floor_val,   ls="--", color="#7570b3", alpha=0.5, lw=1,
-                label=f"val floor ({noise_floor_val:.4f})")
-axes[1].set(xlabel="epoch", ylabel="cMSE", title="Mean squared error (corrected)")
-axes[1].legend()
+    ax_nll.plot(epochs, res.train_nlls, label="train", color="#d95f02")
+    ax_nll.plot(epochs, res.val_nlls,   label="val",   color="#7570b3")
+    ax_nll.axvline(res.best_epoch, ls=":", color="gray")
+    ax_nll.set(ylabel="NLL", title=f"{model_label} — NLL")
+    ax_nll.legend(fontsize=8)
+
+    ax_mse.plot(epochs, res.train_mses, label="train", color="#d95f02")
+    ax_mse.plot(epochs, res.val_mses,   label="val",   color="#7570b3")
+    ax_mse.axvline(res.best_epoch, ls=":", color="gray")
+    ax_mse.axhline(noise_floor_train, ls="--", color="#d95f02", alpha=0.5, lw=1,
+                   label=f"train floor ({noise_floor_train:.4f})")
+    ax_mse.axhline(noise_floor_val,   ls="--", color="#7570b3", alpha=0.5, lw=1,
+                   label=f"val floor ({noise_floor_val:.4f})")
+    ax_mse.set(ylabel="cMSE", title=f"{model_label} — cMSE")
+    ax_mse.legend(fontsize=8)
+
+for ax in axes[1]:
+    ax.set_xlabel("epoch")
 
 sns.despine(trim=True)
 plt.tight_layout()
@@ -292,108 +315,153 @@ plt.close()
 # Scatter: predicted vs ground truth P(right)
 # ---------------------------------------------------------------------------
 agent.eval()
+slda.eval()
 rng_gt = np.random.default_rng(SEED + 1)
 
-# Collect per-task predictions once; reuse for both plots.
-TRAIN_COLOR = "#d95f02"
-VAL_COLOR   = "#7570b3"
+# Model colors: train/val split within each model
+DLBT_TRAIN  = "#d95f02"   # orange
+DLBT_VAL    = "#7570b3"   # purple
+SLDA_TRAIN  = "#1b9e77"   # teal
+SLDA_VAL    = "#e7298a"   # magenta
 
-per_task: dict = {}   # task_name -> {"pred", "true", "rho", "cmse", "color"}
+# Collect per-task predictions for both models; reuse true_p across models.
+# per_task[task_name] -> {pred, true, cmse, rho, color}  (DLBT)
+# per_task_slda[task_name] -> same shape                 (SLDA)
+
+per_task:      dict = {}
+per_task_slda: dict = {}
 
 all_ds = [(TRAIN_TASKS, train_ds), (VAL_TASKS, val_ds)]
 for task_names, ds in all_ds:
-    color = TRAIN_COLOR if task_names is TRAIN_TASKS else VAL_COLOR
+    is_train     = task_names is TRAIN_TASKS
+    dlbt_color   = DLBT_TRAIN  if is_train else DLBT_VAL
+    slda_color   = SLDA_TRAIN  if is_train else SLDA_VAL
+
     for task_name, group in ds.iter_tasks():
         task       = TASKS[task_name]
         batch_refs = [refs_dict[uid] for uid in group["uid"]]
 
-        with torch.no_grad():
-            probs = agent.choice_probs(batch_refs, task)
-        pred = probs[:, 1].cpu().numpy()
-
+        # Ground truth — computed once, shared by both models
         true_p = np.array([
             gt_p_right(r.uid, task, n_mc=1000, rng=rng_gt)
             for r in batch_refs
         ])
 
-        raw_mse = float(np.mean((pred - true_p) ** 2))
-        mc_corr = float(np.mean(pred * (1 - pred))) / (N_MC - 1)
-        rho, _  = spearmanr(pred, true_p)
+        # ---- DLBT predictions -----------------------------------------------
+        with torch.no_grad():
+            pred_d = agent.choice_probs(batch_refs, task)[:, 1].cpu().numpy()
 
+        raw_mse = float(np.mean((pred_d - true_p) ** 2))
+        mc_corr = float(np.mean(pred_d * (1 - pred_d))) / (N_MC - 1)
+        rho_d, _ = spearmanr(pred_d, true_p)
         per_task[task_name] = dict(
-            pred=pred, true=true_p,
-            cmse=raw_mse - mc_corr, rho=rho,
-            color=color,
+            pred=pred_d, true=true_p,
+            cmse=raw_mse - mc_corr, rho=rho_d,
+            color=dlbt_color,
+        )
+
+        # ---- SLDA predictions (deterministic — no MC correction) ------------
+        with torch.no_grad():
+            pred_s = slda.choice_probs(batch_refs, task)[:, 1].cpu().numpy()
+
+        raw_mse_s = float(np.mean((pred_s - true_p) ** 2))
+        rho_s, _  = spearmanr(pred_s, true_p)
+        per_task_slda[task_name] = dict(
+            pred=pred_s, true=true_p,
+            cmse=raw_mse_s, rho=rho_s,   # no MC correction for deterministic model
+            color=slda_color,
         )
 
 # ---------------------------------------------------------------------------
-# Plot 1: summary scatter — train vs val side by side
+# Plot 1: summary scatter — train/val × DLBT/SLDA (2×2 grid)
 # ---------------------------------------------------------------------------
-fig, axes = plt.subplots(1, 2, figsize=(9, 4.5), sharey=True)
+from matplotlib.lines import Line2D
 
-for ax, (task_names, label) in zip(axes, [
-    (TRAIN_TASKS, "Train tasks"),
-    (VAL_TASKS,   "Val tasks"),
+fig, axes = plt.subplots(2, 2, figsize=(8, 8), sharex=True, sharey=True,
+                         gridspec_kw={"hspace": 0.35, "wspace": 0.12})
+
+for col, (task_names, split_label) in enumerate([
+    (TRAIN_TASKS, "Train"),
+    (VAL_TASKS,   "Val"),
 ]):
-    pred_all = np.concatenate([per_task[t]["pred"] for t in task_names])
-    true_all = np.concatenate([per_task[t]["true"] for t in task_names])
-    color    = TRAIN_COLOR if task_names is TRAIN_TASKS else VAL_COLOR
+    for row, (pt, model_label, mc_n) in enumerate([
+        (per_task,      "DLBT",  N_MC),
+        (per_task_slda, "SLDA",  None),
+    ]):
+        ax    = axes[row, col]
+        is_train = task_names is TRAIN_TASKS
 
-    raw_mse = float(np.mean((pred_all - true_all) ** 2))
-    mc_corr = float(np.mean(pred_all * (1 - pred_all))) / (N_MC - 1)
-    cmse    = raw_mse - mc_corr
-    rho, _  = spearmanr(pred_all, true_all)
+        pred_all = np.concatenate([pt[t]["pred"] for t in task_names])
+        true_all = np.concatenate([pt[t]["true"] for t in task_names])
+        color    = (DLBT_TRAIN if row == 0 else SLDA_TRAIN) if is_train \
+                   else (DLBT_VAL if row == 0 else SLDA_VAL)
 
-    ax.plot([0, 1], [0, 1], ls=":", color="gray", lw=0.8)
-    ax.scatter(pred_all, true_all, alpha=0.4, s=10, color=color)
-    ax.set(
-        xlabel="Predicted P(right)",
-        ylabel="True P(right)",
-        title=f"{label}\ncMSE={cmse:.4f}   ρ={rho:.3f}",
-        xlim=(-0.05, 1.05), ylim=(-0.05, 1.05),
-    )
+        raw_mse = float(np.mean((pred_all - true_all) ** 2))
+        if mc_n is not None:
+            mc_corr = float(np.mean(pred_all * (1 - pred_all))) / (mc_n - 1)
+            cmse    = raw_mse - mc_corr
+        else:
+            cmse    = raw_mse
+        rho, _ = spearmanr(pred_all, true_all)
 
-sns.despine(trim=True)
-plt.tight_layout()
-plt.savefig("examples/plots/03_pred_vs_true.png", dpi=150)
+        ax.plot([0, 1], [0, 1], ls=":", color="gray", lw=0.8, zorder=0)
+        ax.scatter(pred_all, true_all, alpha=0.35, s=10, color=color,
+                   linewidths=0)
+        ax.set(
+            title=f"{model_label} — {split_label}\ncMSE={cmse:.4f}   ρ={rho:.3f}",
+            xlim=(-0.05, 1.05), ylim=(-0.05, 1.05),
+        )
+        ax.tick_params(labelsize=8)
+        if col == 0:
+            ax.set_ylabel("True P(right)", fontsize=9)
+        if row == 1:
+            ax.set_xlabel("Predicted P(right)", fontsize=9)
+
+sns.despine(fig=fig, trim=True)
+plt.savefig("examples/plots/03_pred_vs_true.png", dpi=150, bbox_inches="tight")
 print("Saved: examples/plots/03_pred_vs_true.png")
 plt.close()
 
 # ---------------------------------------------------------------------------
-# Plot 2: per-task grid — one small panel per task
+# Plot 2: per-task grid — DLBT and SLDA overlaid in each panel
 # ---------------------------------------------------------------------------
-ALL_TASKS  = TRAIN_TASKS + VAL_TASKS   # 10 tasks
-N_COLS     = 5
-N_ROWS     = 2
+ALL_TASKS = TRAIN_TASKS + VAL_TASKS   # 10 tasks
+N_COLS    = 5
+N_ROWS    = 2
 
 fig, axes = plt.subplots(
     N_ROWS, N_COLS,
-    figsize=(11, 4.5),
+    figsize=(12, 5),
     sharex=True, sharey=True,
-    gridspec_kw={"hspace": 0.45, "wspace": 0.08},
+    gridspec_kw={"hspace": 0.48, "wspace": 0.08},
 )
 
 for idx, (ax, task_name) in enumerate(zip(axes.flat, ALL_TASKS)):
-    d     = per_task[task_name]
-    color = d["color"]
-    label = "train" if color == TRAIN_COLOR else "val"
+    d_dlbt = per_task[task_name]
+    d_slda = per_task_slda[task_name]
+    true_p = d_dlbt["true"]   # shared
 
     ax.plot([0, 1], [0, 1], ls=":", color="gray", lw=0.8, zorder=0)
-    ax.scatter(d["pred"], d["true"], alpha=0.5, s=6, color=color, linewidths=0)
+    ax.scatter(d_dlbt["pred"], true_p, alpha=0.5, s=6,
+               color=d_dlbt["color"], linewidths=0, label="DLBT")
+    ax.scatter(d_slda["pred"], true_p, alpha=0.5, s=6,
+               color=d_slda["color"], linewidths=0, marker="s", label="SLDA")
 
-    # clean task name: "nontriangular_and_front" → "nontri. & front"
+    # clean task name
     nice = (task_name
             .replace("nontriangular", "nontri.")
             .replace("_and_", " & ")
             .replace("_", "/"))
     ax.set_title(nice, fontsize=7.5, pad=3)
 
-    # ρ annotation in upper-left
-    ax.text(0.06, 0.88, f"ρ={d['rho']:.2f}",
-            transform=ax.transAxes, fontsize=7,
-            color=color, va="top")
+    # ρ annotations: DLBT top-left, SLDA below it
+    ax.text(0.05, 0.93, f"D ρ={d_dlbt['rho']:.2f}",
+            transform=ax.transAxes, fontsize=6.5,
+            color=d_dlbt["color"], va="top")
+    ax.text(0.05, 0.78, f"S ρ={d_slda['rho']:.2f}",
+            transform=ax.transAxes, fontsize=6.5,
+            color=d_slda["color"], va="top")
 
-    # axis labels on edges only
     row, col = divmod(idx, N_COLS)
     if row == N_ROWS - 1:
         ax.set_xlabel("Pred", fontsize=8)
@@ -408,17 +476,23 @@ for idx, (ax, task_name) in enumerate(zip(axes.flat, ALL_TASKS)):
 fig.text(0.5, -0.01, "Predicted P(right)", ha="center", fontsize=9)
 fig.text(-0.01, 0.5, "True P(right)", va="center", rotation="vertical", fontsize=9)
 
-# legend
-from matplotlib.lines import Line2D
+# legend: model × split
+is_train_mask = {t: True for t in TRAIN_TASKS}
+is_train_mask.update({t: False for t in VAL_TASKS})
+
 fig.legend(
     handles=[
-        Line2D([0], [0], marker="o", color="w", markerfacecolor=TRAIN_COLOR,
-               markersize=6, label="train"),
-        Line2D([0], [0], marker="o", color="w", markerfacecolor=VAL_COLOR,
-               markersize=6, label="val"),
+        Line2D([0], [0], marker="o", color="w", markerfacecolor=DLBT_TRAIN,
+               markersize=6, label="DLBT (train)"),
+        Line2D([0], [0], marker="o", color="w", markerfacecolor=DLBT_VAL,
+               markersize=6, label="DLBT (val)"),
+        Line2D([0], [0], marker="s", color="w", markerfacecolor=SLDA_TRAIN,
+               markersize=6, label="SLDA (train)"),
+        Line2D([0], [0], marker="s", color="w", markerfacecolor=SLDA_VAL,
+               markersize=6, label="SLDA (val)"),
     ],
     loc="lower right", bbox_to_anchor=(1.0, 0.02),
-    fontsize=8, frameon=False,
+    fontsize=7.5, frameon=False, ncol=2,
 )
 
 sns.despine(fig=fig, trim=True)
