@@ -69,7 +69,7 @@ PEAK               = 4.0   # peak concentration added to matching latent states
 BASE_CONCENTRATION = 1.0    # base concentration on all latent states
 BETA               = 2.0    # sigmoid sharpness for continuous dimensions;
                              # higher = sharper boundary, lower = more perceptual ambiguity
-N_EPOCHS           = 5000
+N_EPOCHS           = 100
 LR                 = 1e-3   # lower than frozen: attnpool weights are sensitive
 N_MC               = 200    # MC samples for choice_probs during training
 FREEZE_ENCODER     = False  # True → DLBT-frozen; False → DLBT-attnpool
