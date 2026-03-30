@@ -70,7 +70,7 @@ BASE_CONCENTRATION = 1.0    # base concentration on all latent states
 BETA               = 5.0    # sigmoid sharpness for continuous dimensions;
                              # higher = sharper boundary, lower = more perceptual ambiguity
 N_EPOCHS           = 3000
-LR                 = 5e-3   # mapper LR (also used for SLDA)
+LR                 = 1e-2   # mapper LR (also used for SLDA)
 LR_ATTNPOOL        = 1e-5   # attnpool LR — much lower to preserve pre-trained weights
 N_MC               = 200    # MC samples for choice_probs during training
 FREEZE_ENCODER     = True   # True → DLBT-frozen; False → DLBT-attnpool
