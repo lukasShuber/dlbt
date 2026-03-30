@@ -65,13 +65,14 @@ else:
 
 SEED               = 42
 N_TRIALS           = 100    # SEU decisions per (image, task)
-PEAK               = 15.0   # peak concentration added to matching latent states
+PEAK               = 4.0   # peak concentration added to matching latent states
 BASE_CONCENTRATION = 1.0    # base concentration on all latent states
-BETA               = 5.0    # sigmoid sharpness for continuous dimensions;
+BETA               = 2.0    # sigmoid sharpness for continuous dimensions;
                              # higher = sharper boundary, lower = more perceptual ambiguity
 N_EPOCHS           = 5000
-LR                 = 1e-2
+LR                 = 1e-3   # lower than frozen: attnpool weights are sensitive
 N_MC               = 200    # MC samples for choice_probs during training
+FREEZE_ENCODER     = False  # True → DLBT-frozen; False → DLBT-attnpool
 
 # 7 train / 3 val task split.
 # All 4 simple tasks stay in train (they are the only per-dimension signal).
@@ -237,21 +238,24 @@ print(f"Noise floor — train: {train_ds.noise_floor():.4f}  "
       f"val: {val_ds.noise_floor():.4f}")
 
 # ---------------------------------------------------------------------------
-# Train — DLBT (frozen encoder)
+# Train — DLBT (frozen or attnpool, controlled by FREEZE_ENCODER)
 # ---------------------------------------------------------------------------
-agent = DlbtAgent(freeze_encoder=True, n_mc_samples=N_MC, device=DEVICE)
+model_label = "DLBT (frozen)" if FREEZE_ENCODER else "DLBT (attnpool)"
+agent = DlbtAgent(freeze_encoder=FREEZE_ENCODER, n_mc_samples=N_MC, device=DEVICE)
 
-# Load or compute CLIP feature cache (shared with SLDA below)
-if Path(CACHE_PATH).exists():
-    print(f"Loading cached CLIP features from {CACHE_PATH}")
-    agent.load_cache(CACHE_PATH)
-else:
-    print(f"Precomputing CLIP features → {CACHE_PATH}")
-    agent.precompute_features(list(refs_dict.values()))
-    agent.save_cache(CACHE_PATH)
-    print("Saved.")
+# Full CLIP feature cache is only used in frozen mode.
+# In attnpool mode, train_dlbt precomputes backbone (pre-attnpool) features instead.
+if FREEZE_ENCODER:
+    if Path(CACHE_PATH).exists():
+        print(f"Loading cached CLIP features from {CACHE_PATH}")
+        agent.load_cache(CACHE_PATH)
+    else:
+        print(f"Precomputing CLIP features → {CACHE_PATH}")
+        agent.precompute_features(list(refs_dict.values()))
+        agent.save_cache(CACHE_PATH)
+        print("Saved.")
 
-print("\nTraining DlbtAgent (frozen)...")
+print(f"\nTraining {model_label}...")
 result = train_dlbt(
     agent, train_ds, val_ds, refs_dict,
     n_epochs=N_EPOCHS, lr=LR, patience=N_EPOCHS,
@@ -269,7 +273,7 @@ slda.load_cache(CACHE_PATH)
 print("\nTraining SldaAgent...")
 slda_result = train_dlbt(
     slda, train_ds, val_ds, refs_dict,
-    n_epochs=N_EPOCHS, lr=LR, patience=N_EPOCHS,
+    n_epochs=N_EPOCHS, lr=LR, patience=100,
 )
 print(f"Best epoch: {slda_result.best_epoch}  best_val_mse: {slda_result.best_val_mse:.4f}")
 print(f"Learned temperature τ = {slda.log_temperature.exp().item():.3f}")
@@ -282,14 +286,14 @@ noise_floor_val   = val_ds.noise_floor()
 
 fig, axes = plt.subplots(2, 2, figsize=(10, 7), sharex=False)
 
-for row, (res, model_label) in enumerate([(result, "DLBT (frozen)"), (slda_result, "SLDA")]):
+for row, (res, lbl) in enumerate([(result, model_label), (slda_result, "SLDA")]):
     epochs = range(len(res.train_nlls))
     ax_nll, ax_mse = axes[row]
 
     ax_nll.plot(epochs, res.train_nlls, label="train", color="#d95f02")
     ax_nll.plot(epochs, res.val_nlls,   label="val",   color="#7570b3")
     ax_nll.axvline(res.best_epoch, ls=":", color="gray")
-    ax_nll.set(ylabel="NLL", title=f"{model_label} — NLL")
+    ax_nll.set(ylabel="NLL", title=f"{lbl} — NLL")
     ax_nll.legend(fontsize=8)
 
     ax_mse.plot(epochs, res.train_mses, label="train", color="#d95f02")
@@ -299,7 +303,7 @@ for row, (res, model_label) in enumerate([(result, "DLBT (frozen)"), (slda_resul
                    label=f"train floor ({noise_floor_train:.4f})")
     ax_mse.axhline(noise_floor_val,   ls="--", color="#7570b3", alpha=0.5, lw=1,
                    label=f"val floor ({noise_floor_val:.4f})")
-    ax_mse.set(ylabel="cMSE", title=f"{model_label} — cMSE")
+    ax_mse.set(ylabel="cMSE", title=f"{lbl} — cMSE")
     ax_mse.legend(fontsize=8)
 
 for ax in axes[1]:
@@ -384,9 +388,9 @@ for col, (task_names, split_label) in enumerate([
     (TRAIN_TASKS, "Train"),
     (VAL_TASKS,   "Val"),
 ]):
-    for row, (pt, model_label, mc_n) in enumerate([
-        (per_task,      "DLBT",  N_MC),
-        (per_task_slda, "SLDA",  None),
+    for row, (pt, scatter_lbl, mc_n) in enumerate([
+        (per_task,      model_label, N_MC),
+        (per_task_slda, "SLDA",      None),
     ]):
         ax    = axes[row, col]
         is_train = task_names is TRAIN_TASKS
@@ -408,7 +412,7 @@ for col, (task_names, split_label) in enumerate([
         ax.scatter(pred_all, true_all, alpha=0.35, s=10, color=color,
                    linewidths=0)
         ax.set(
-            title=f"{model_label} — {split_label}\ncMSE={cmse:.4f}   ρ={rho:.3f}",
+            title=f"{scatter_lbl} — {split_label}\ncMSE={cmse:.4f}   ρ={rho:.3f}",
             xlim=(-0.05, 1.05), ylim=(-0.05, 1.05),
         )
         ax.tick_params(labelsize=8)
