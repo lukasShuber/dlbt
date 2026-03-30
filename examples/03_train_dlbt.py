@@ -184,7 +184,7 @@ print(f"Noise floor — train: {train_ds.noise_floor():.4f}  "
 # ---------------------------------------------------------------------------
 # Train
 # ---------------------------------------------------------------------------
-agent = DlbtAgent(freeze_encoder=True, n_mc_samples=N_MC, device=DEVICE)
+agent = DlbtAgent(freeze_encoder=False, n_mc_samples=N_MC, device=DEVICE)
 
 # Load or compute CLIP feature cache
 if Path(CACHE_PATH).exists():
