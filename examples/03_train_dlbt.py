@@ -68,7 +68,7 @@ PEAK               = 15.0   # α* on the true latent state — gives 4 intermedi
 BASE_CONCENTRATION = 1.0    # α* on all other latent states
 N_EPOCHS           = 10000
 LR                 = 1e-2
-N_MC               = 200    # MC samples for choice_probs during training
+N_MC               = 500    # MC samples for choice_probs during training
 
 # 7 train / 3 val task split.
 # All 4 simple tasks stay in train (they are the only per-dimension signal).
