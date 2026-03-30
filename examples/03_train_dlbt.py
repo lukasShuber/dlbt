@@ -62,7 +62,7 @@ N_TRIALS           = 100    # SEU decisions per (image, task)
 PEAK_MIN           = 2.0    # minimum peak concentration — genuinely uncertain beliefs
 PEAK_MAX           = 20.0   # maximum peak concentration — confident but not extreme
 BASE_CONCENTRATION = 1.0    # α* on all other latent states
-N_EPOCHS           = 10000
+N_EPOCHS           = 2000
 LR                 = 1e-4  # conservative: attnpool finetuning needs small LR to stay stable
 N_MC               = 200    # MC samples for choice_probs during training
 
