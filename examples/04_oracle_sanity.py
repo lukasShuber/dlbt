@@ -178,6 +178,7 @@ def oracle_onehot(uid: str) -> np.ndarray:
     """
     16D one-hot of the true discrete latent state.
     The mapper receives the answer directly; tests the Dirichlet + SEU head.
+    Missing clarity → can't represent per-image concentration variation.
     """
     z = cont_meta[uid]
     k = (
@@ -189,6 +190,22 @@ def oracle_onehot(uid: str) -> np.ndarray:
     v    = np.zeros(K, dtype=np.float32)
     v[k] = 1.0
     return v
+
+
+def oracle_full(uid: str) -> np.ndarray:
+    """
+    17D: [16D one-hot of true state, 1D clarity scalar].
+    A Linear(17, 16) mapper can *perfectly* represent gt_alpha:
+        α_true_k = BASE + PEAK * clarity   (onehot selects k, clarity scales it)
+        α_other  = BASE
+    This is the theoretical ceiling — should converge to the noise floor.
+    """
+    z = cont_meta[uid]
+    p_back   = _sigmoid(BETA * (z["y"]            - Y_THRESHOLD))
+    p_transp = _sigmoid(BETA * (z["transparency"] - TRANSP_THRESH))
+    p_glossy = _sigmoid(BETA * (z["glossiness"]   - GLOSS_THRESH))
+    clarity  = abs(p_back - 0.5) * 2.0 * abs(p_transp - 0.5) * 2.0 * abs(p_glossy - 0.5) * 2.0
+    return np.append(oracle_onehot(uid), clarity).astype(np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -210,10 +227,11 @@ class OracleDlbtAgent(nn.Module, Agent):
 
     def __init__(
         self,
-        feature_dict: dict,     # uid -> np.ndarray oracle features
-        feature_dim:  int,
-        n_mc_samples: int             = 200,
-        device:       torch.device    = torch.device("cpu"),
+        feature_dict:   dict,               # uid -> np.ndarray oracle features
+        feature_dim:    int,
+        n_mc_samples:   int          = 200,
+        device:         torch.device = torch.device("cpu"),
+        mapper_hidden:  int | None   = None, # None = linear, int = MLP hidden dim
     ):
         super().__init__()
         self.device       = device
@@ -225,11 +243,18 @@ class OracleDlbtAgent(nn.Module, Agent):
             for uid, feat in feature_dict.items()
         }
 
-        # Same mapper as DlbtAgent, different input dim
-        linear = nn.Linear(feature_dim, K)
-        nn.init.xavier_uniform_(linear.weight)
-        nn.init.constant_(linear.bias, 1.1)   # Softplus(1.1) ≈ 2.0
-        self.mapper = nn.Sequential(linear, nn.Softplus()).to(device)
+        # Linear or MLP mapper
+        if mapper_hidden is None:
+            linear = nn.Linear(feature_dim, K)
+            nn.init.xavier_uniform_(linear.weight)
+            nn.init.constant_(linear.bias, 1.1)
+            self.mapper = nn.Sequential(linear, nn.Softplus()).to(device)
+        else:
+            h1 = nn.Linear(feature_dim, mapper_hidden)
+            h2 = nn.Linear(mapper_hidden, K)
+            nn.init.xavier_uniform_(h1.weight);  nn.init.zeros_(h1.bias)
+            nn.init.xavier_uniform_(h2.weight);  nn.init.constant_(h2.bias, 1.1)
+            self.mapper = nn.Sequential(h1, nn.GELU(), h2, nn.Softplus()).to(device)
 
     # train_dlbt calls this; oracle features are already loaded so it's a no-op
     def precompute_features(self, image_refs, batch_size: int = 16) -> None:
@@ -298,24 +323,31 @@ print(f"Noise floor — train: {train_ds.noise_floor():.4f}  "
 soft4_dict  = {uid: oracle_soft4(uid)  for uid in refs_dict}
 onehot_dict = {uid: oracle_onehot(uid) for uid in refs_dict}
 
+full_dict   = {uid: oracle_full(uid)   for uid in refs_dict}
+
 VARIANTS = [
-    ("Oracle-soft4",  soft4_dict,  4),
-    ("Oracle-onehot", onehot_dict, K),
+    # label,               feat_dict,   feat_dim,  mapper_hidden
+    ("Oracle-soft4",       soft4_dict,  4,         None),   # linear, missing nonlinearity
+    ("Oracle-soft4-MLP",   soft4_dict,  4,         256),    # MLP, can compute products
+    ("Oracle-onehot",      onehot_dict, K,         None),   # linear, missing clarity
+    ("Oracle-full",        full_dict,   K + 1,     None),   # linear, theoretically perfect
 ]
 
 results    = {}
 trained_agents = {}
 
-for label, feat_dict, feat_dim in VARIANTS:
+for label, feat_dict, feat_dim, mapper_hidden in VARIANTS:
     torch.manual_seed(SEED)   # same init for fair comparison
-    print(f"\nTraining {label}  (feat_dim={feat_dim})...")
-    agent = OracleDlbtAgent(feat_dict, feat_dim, n_mc_samples=N_MC, device=DEVICE)
+    print(f"\nTraining {label}  (feat_dim={feat_dim}, "
+          f"mapper={'MLP-' + str(mapper_hidden) if mapper_hidden else 'linear'})...")
+    agent = OracleDlbtAgent(feat_dict, feat_dim, n_mc_samples=N_MC,
+                             device=DEVICE, mapper_hidden=mapper_hidden)
     res = train_dlbt(
         agent, train_ds, val_ds, refs_dict,
         n_epochs=N_EPOCHS, lr=LR, patience=N_EPOCHS,
     )
     print(f"  best_epoch={res.best_epoch}  best_val_mse={res.best_val_mse:.4f}")
-    results[label]      = res
+    results[label]        = res
     trained_agents[label] = agent
 
 # ---------------------------------------------------------------------------
@@ -325,8 +357,10 @@ noise_train = train_ds.noise_floor()
 noise_val   = val_ds.noise_floor()
 
 COLORS = {
-    "Oracle-soft4":  ("#2166ac", "#92c5de"),   # (train, val)
-    "Oracle-onehot": ("#d6604d", "#f4a582"),
+    "Oracle-soft4":      ("#2166ac", "#92c5de"),   # (train, val)
+    "Oracle-soft4-MLP":  ("#1a9641", "#a6d96a"),
+    "Oracle-onehot":     ("#d6604d", "#f4a582"),
+    "Oracle-full":       ("#762a83", "#c2a5cf"),
 }
 
 fig, axes = plt.subplots(1, 2, figsize=(10, 4))
@@ -370,8 +404,8 @@ def task_groups(ds: BehavioralDataset) -> dict:
 train_groups = task_groups(train_ds)
 val_groups   = task_groups(val_ds)
 
-fig, axes = plt.subplots(2, 2, figsize=(9, 8), sharex=True, sharey=True,
-                         gridspec_kw={"hspace": 0.38, "wspace": 0.12})
+fig, axes = plt.subplots(4, 2, figsize=(9, 14), sharex=True, sharey=True,
+                         gridspec_kw={"hspace": 0.45, "wspace": 0.12})
 
 for row, (label, agent) in enumerate(trained_agents.items()):
     agent.eval()

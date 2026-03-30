@@ -80,16 +80,18 @@ FREEZE_ENCODER     = True  # True → DLBT-frozen; False → DLBT-attnpool
 # Val spans two distinct dimension combinations for a broader generalization test.
 TRAIN_TASKS = [
     # simple — one per dimension, must all be in train
-    "front_back", "triangular", "transparent", "glossy",
+    "front_back", "glossy",
     # composites
     "front_and_transparent",
     "nontriangular_and_glossy",
     "triangular_and_front",
-    "nontriangular_and_front"
+    "nontriangular_and_front",
+    "back_and_glossy",
+    "triangular_and_transparent",
 ]
 VAL_TASKS = [
-    "back_and_glossy",
-    "triangular_and_transparent"
+    "triangular",
+    "transparent"
 ]
 
 # ---------------------------------------------------------------------------
@@ -299,7 +301,7 @@ if Path(CACHE_PATH).exists():
 print("\nTraining SldaAgent...")
 slda_result = train_dlbt(
     slda, train_ds, val_ds, refs_dict,
-    n_epochs=N_EPOCHS, lr=LR, patience=100,
+    n_epochs=N_EPOCHS, lr=LR, patience=300,
 )
 print(f"Best epoch: {slda_result.best_epoch}  best_val_mse: {slda_result.best_val_mse:.4f}")
 print(f"Learned temperature τ = {slda.log_temperature.exp().item():.3f}")
