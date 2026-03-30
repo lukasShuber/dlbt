@@ -73,7 +73,8 @@ N_EPOCHS           = 3000
 LR                 = 1e-2   # mapper LR (also used for frozen encoder and SLDA)
 LR_ATTNPOOL        = 1e-5   # attnpool LR — much lower to preserve pre-trained weights
 N_MC               = 200    # MC samples for choice_probs during training
-FREEZE_ENCODER     = True  # True → DLBT-frozen; False → DLBT-attnpool
+FREEZE_ENCODER     = True   # True → DLBT-frozen; False → DLBT-attnpool
+MAPPER_HIDDEN      = 256   # None → linear mapper; int (e.g. 256) → MLP with GELU
 
 # 7 train / 3 val task split.
 # All 4 simple tasks stay in train (they are the only per-dimension signal).
@@ -259,7 +260,8 @@ print(f"Noise floor — train: {train_ds.noise_floor():.4f}  "
 # Train — DLBT (frozen or attnpool, controlled by FREEZE_ENCODER)
 # ---------------------------------------------------------------------------
 model_label = "DLBT (frozen)" if FREEZE_ENCODER else "DLBT (attnpool)"
-agent = DlbtAgent(freeze_encoder=FREEZE_ENCODER, n_mc_samples=N_MC, device=DEVICE)
+agent = DlbtAgent(freeze_encoder=FREEZE_ENCODER, n_mc_samples=N_MC, device=DEVICE,
+                  mapper_hidden=MAPPER_HIDDEN)
 
 # Full CLIP feature cache is only used in frozen mode.
 # In attnpool mode, train_dlbt precomputes backbone (pre-attnpool) features instead.
