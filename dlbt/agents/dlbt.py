@@ -1,0 +1,208 @@
+"""
+DlbtAgent: Deep Latent Belief Tomography agent.
+
+Architecture:
+    image → CLIP RN50 encoder → [1024]
+          → Linear(1024, K) + Softplus → α [K]      (distribution mapper)
+          → b̃ ~ Dirichlet(α)                         (reparameterised sample)
+          → logit = b̃ · ΔU_t                         (SEU difference, scalar)
+          → straight-through argmax → P(right | image, task)
+
+Two variants:
+    DlbtAgent(freeze_encoder=True)   — DLBT-frozen: only mapper is trained.
+    DlbtAgent(freeze_encoder=False)  — DLBT-finetuned: encoder + mapper trained
+                                       jointly on the behavioural NLL.
+
+For the frozen variant, call precompute_features() once before training to
+cache CLIP representations; subsequent forward passes become cheap lookups.
+"""
+
+from __future__ import annotations
+
+from typing import Dict, List, Optional
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from PIL import Image
+from torch.distributions import Dirichlet
+
+from tqdm import tqdm
+
+from dlbt.agents.base import Agent
+from dlbt.constants import K
+from dlbt.data.image_ref import ImageRef
+from dlbt.data.task import Task
+
+
+class DlbtAgent(Agent, nn.Module):
+    """
+    DLBT agent backed by a CLIP RN50 visual encoder.
+
+    Args:
+        freeze_encoder: if True, encoder weights are frozen and only the
+                        mapper is trained (DLBT-frozen). If False, encoder
+                        and mapper are trained jointly (DLBT-finetuned).
+        n_mc_samples:   number of Monte Carlo samples for the Dirichlet
+                        expectation during choice_probs().
+        device:         torch device.
+    """
+
+    def __init__(
+        self,
+        freeze_encoder: bool = True,
+        n_mc_samples: int = 1000,
+        device: torch.device = torch.device("cpu"),
+    ):
+        super().__init__()
+
+        self.freeze_encoder = freeze_encoder
+        self.n_mc_samples   = n_mc_samples
+        self.device         = device
+
+        # ---- CLIP RN50 encoder --------------------------------------------
+        import open_clip
+        clip_model, _, preprocess = open_clip.create_model_and_transforms(
+            "RN50", pretrained="openai"
+        )
+        self.encoder    = clip_model.visual.to(device)
+        self.preprocess = preprocess   # torchvision transform, kept on CPU
+
+        if freeze_encoder:
+            for p in self.encoder.parameters():
+                p.requires_grad_(False)
+
+        # ---- Distribution mapper: 1024 -> K -------------------------------
+        # Linear + Softplus guarantees strictly positive Dirichlet parameters.
+        # Initialise bias so Softplus output starts at ~2.0 (moderate Dirichlet),
+        # avoiding the near-zero α / extreme corner-concentration at init.
+        # Softplus(x) ≈ x for x >> 0, so bias = ln(exp(2) - 1) ≈ 1.1.
+        linear = nn.Linear(1024, K)
+        nn.init.xavier_uniform_(linear.weight)
+        nn.init.constant_(linear.bias, 1.1)
+        self.mapper = nn.Sequential(linear, nn.Softplus()).to(device)
+
+        # ---- Optional feature cache (frozen mode only) --------------------
+        # Maps uid -> [1024] float32 tensor on self.device.
+        self._cache: Dict[str, torch.Tensor] = {}
+
+    # -----------------------------------------------------------------------
+    # Cache persistence
+    # -----------------------------------------------------------------------
+
+    def save_cache(self, path: str) -> None:
+        """Save the feature cache to disk."""
+        torch.save(self._cache, path)
+
+    def load_cache(self, path: str) -> None:
+        """Load a previously saved feature cache from disk."""
+        loaded = torch.load(path, map_location=self.device)
+        self._cache.update(loaded)
+
+    # -----------------------------------------------------------------------
+    # Feature extraction
+    # -----------------------------------------------------------------------
+
+    @torch.no_grad()
+    def precompute_features(
+        self,
+        image_refs: List[ImageRef],
+        batch_size: int = 16,
+    ) -> None:
+        """
+        Encode all images in mini-batches and store results in the cache.
+        Call once before training when freeze_encoder=True.
+        Already-cached UIDs are skipped.
+        """
+        uncached = [r for r in image_refs if r.uid not in self._cache]
+        if not uncached:
+            return
+        for i in tqdm(range(0, len(uncached), batch_size),
+                      desc="precomputing CLIP features", unit="batch"):
+            batch = uncached[i : i + batch_size]
+            features = self._encode_fresh(batch)  # [B, 1024]
+            for ref, feat in zip(batch, features):
+                self._cache[ref.uid] = feat
+
+    def _encode_fresh(self, image_refs: List[ImageRef]) -> torch.Tensor:
+        """Run images through the CLIP encoder. Returns [B, 1024]."""
+        imgs  = [Image.open(r.path).convert("RGB") for r in image_refs]
+        batch = torch.stack([self.preprocess(img) for img in imgs]).to(self.device)
+        ctx   = torch.no_grad() if self.freeze_encoder else torch.enable_grad()
+        with ctx:
+            return self.encoder(batch).float()
+
+    def _encode(self, image_refs: List[ImageRef]) -> torch.Tensor:
+        """
+        Return CLIP features [B, 1024].
+        Uses cache when encoder is frozen; encodes fresh otherwise.
+        """
+        if self.freeze_encoder and all(r.uid in self._cache for r in image_refs):
+            return torch.stack([self._cache[r.uid] for r in image_refs])
+        return self._encode_fresh(image_refs)
+
+    # -----------------------------------------------------------------------
+    # Core computation
+    # -----------------------------------------------------------------------
+
+    def get_alpha(self, image_refs: List[ImageRef]) -> torch.Tensor:
+        """
+        Return Dirichlet concentration parameters α for each image.
+        Shape: [B, K], all entries strictly positive.
+        """
+        features = self._encode(image_refs)  # [B, 1024]
+        return self.mapper(features)          # [B, K]
+
+    def choice_probs(
+        self,
+        image_refs: List[ImageRef],
+        task: Task,
+    ) -> torch.Tensor:
+        """
+        Estimate P(action | image, task) via Monte Carlo Dirichlet sampling
+        with a straight-through estimator for the argmax.
+
+        Forward pass (used at training time):
+          1. Compute α = mapper(encoder(x))              [B, K]
+          2. Sample b̃ ~ Dirichlet(α)  (rsample)          [N, B, K]
+          3. logit = b̃ · ΔU_t                            [N, B]
+          4. Straight-through argmax → choice indicator  [N, B, 2]
+          5. Average over samples                        [B, 2]
+
+        Returns:
+            Tensor of shape [B, 2], differentiable w.r.t. mapper (and
+            encoder if freeze_encoder=False).
+        """
+        B   = len(image_refs)
+        N   = self.n_mc_samples
+        alpha = self.get_alpha(image_refs)              # [B, K]
+
+        delta_u = torch.tensor(
+            task.delta_u, dtype=torch.float32, device=self.device
+        )                                               # [K]
+
+        dist = Dirichlet(alpha)                         # batch Dirichlet
+        b    = dist.rsample((N,))                       # [N, B, K]
+
+        # SEU logit: positive -> action 1 optimal, negative -> action 0
+        logit  = torch.einsum("nbk,k->nb", b, delta_u) # [N, B]
+
+        # Stack into [N, B, 2]: column 0 = -logit, column 1 = +logit
+        logits_2d  = torch.stack([-logit, logit], dim=-1)          # [N, B, 2]
+        probs_soft = F.softmax(logits_2d, dim=-1)                   # [N, B, 2]
+        hard       = F.one_hot(logits_2d.argmax(-1), 2).float()     # [N, B, 2]
+
+        # Straight-through: hard in forward, probs_soft gradient in backward
+        st = (hard - probs_soft).detach() + probs_soft              # [N, B, 2]
+
+        return st.mean(dim=0)                                        # [B, 2]
+
+    # -----------------------------------------------------------------------
+    # Convenience
+    # -----------------------------------------------------------------------
+
+    def trainable_parameters(self):
+        """Return the parameters that should be passed to the optimiser."""
+        if self.freeze_encoder:
+            return list(self.mapper.parameters())
+        return list(self.parameters())

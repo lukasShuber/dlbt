@@ -1,0 +1,39 @@
+# Claude
+.claude/
+
+# Cluster scripts
+scripts/
+
+# Legacy
+analyses_legacy/
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Images and plots
+**/*.png
+**/*.jpg
+**/*.jpeg
+
+# CLIP feature cache
+**/*.pt
+
+# Python
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Logs
+logs/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment
+.env
