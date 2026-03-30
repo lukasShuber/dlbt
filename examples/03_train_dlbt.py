@@ -34,6 +34,7 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 import seaborn as sns
+from scipy.stats import spearmanr
 
 from dlbt.constants import K
 from dlbt.data.image_ref import load_image_refs, image_refs_as_list, balanced_refs
@@ -182,7 +183,7 @@ print(f"Noise floor — train: {train_ds.noise_floor():.4f}  "
 # ---------------------------------------------------------------------------
 # Train
 # ---------------------------------------------------------------------------
-agent = DlbtAgent(freeze_encoder=True, n_mc_samples=N_MC, device=DEVICE)
+agent = DlbtAgent(freeze_encoder=False, n_mc_samples=N_MC, device=DEVICE)
 
 # Load or compute CLIP feature cache
 if Path(CACHE_PATH).exists():
@@ -233,7 +234,7 @@ print("Saved: examples/plots/03_learning_curves.png")
 plt.close()
 
 # ---------------------------------------------------------------------------
-# Scatter: predicted vs empirical P(right)
+# Scatter: predicted vs ground truth P(right)
 # ---------------------------------------------------------------------------
 agent.eval()
 rng_gt = np.random.default_rng(SEED + 1)  # separate rng for gt_p_right estimates
@@ -245,7 +246,6 @@ for ax, (task_names, ds, label) in zip(axes, [
     (VAL_TASKS,   val_ds,   "Val tasks"),
 ]):
     pred_all = []
-    emp_all  = []
     true_all = []
 
     for task_name, group in ds.iter_tasks():
@@ -256,44 +256,34 @@ for ax, (task_names, ds, label) in zip(axes, [
             probs = agent.choice_probs(batch_refs, task)
         pred = probs[:, 1].cpu().numpy()
 
-        totals = (group["count_0"] + group["count_1"]).values.clip(1)
-        emp    = group["count_1"].values / totals
-
         true_p = np.array([
             gt_p_right(r.latent_state, peak_per_uid[r.uid], task, n_mc=1000, rng=rng_gt)
             for r in batch_refs
         ])
 
         pred_all.append(pred)
-        emp_all.append(emp)
         true_all.append(true_p)
 
-    pred_all  = np.concatenate(pred_all)
-    emp_all   = np.concatenate(emp_all)
-    true_all  = np.concatenate(true_all)
+    pred_all = np.concatenate(pred_all)
+    true_all = np.concatenate(true_all)
 
-    # corrected MSE vs empirical
-    pred_t   = torch.tensor(np.stack([1 - pred_all, pred_all], axis=1), dtype=torch.float32)
-    counts_t = torch.tensor(
-        np.stack([(1 - emp_all) * N_TRIALS, emp_all * N_TRIALS], axis=1).round(),
-        dtype=torch.float32,
-    )
-    cmse        = corrected_mse(pred_t, counts_t, n_mc_samples=N_MC)
-    noise_floor = ds.noise_floor()
+    # Corrected MSE: subtract MC variance of the predictor.
+    # The ground truth target is noise-free, so only the predictor's
+    # MC variance needs correcting (not finite-sample noise from counts).
+    raw_mse  = float(np.mean((pred_all - true_all) ** 2))
+    mc_corr  = float(np.mean(pred_all * (1 - pred_all))) / (N_MC - 1)
+    cmse     = raw_mse - mc_corr
 
-    # MSE vs ground truth (no finite-sample noise)
-    mse_vs_true = float(np.mean((pred_all - true_all) ** 2))
+    rho, _ = spearmanr(pred_all, true_all)
 
     ax.plot([0, 1], [0, 1], ls=":", color="gray")
-    ax.scatter(pred_all, true_all, alpha=0.3, s=10, color="#2ca02c", label="vs true P(right)")
-    ax.scatter(pred_all, emp_all,  alpha=0.3, s=10, color="#1f77b4", label="vs empirical")
+    ax.scatter(pred_all, true_all, alpha=0.4, s=12, color="#2ca02c")
     ax.set(
         xlabel="Predicted P(right)",
-        ylabel="P(right)",
-        title=f"{label}\ncMSE={cmse:.4f}  floor={noise_floor:.4f}  vs_true={mse_vs_true:.4f}",
+        ylabel="True P(right)",
+        title=f"{label}\ncMSE={cmse:.4f}   ρ={rho:.3f}",
         xlim=(-0.05, 1.05), ylim=(-0.05, 1.05),
     )
-    ax.legend(fontsize=7, markerscale=2)
 
 sns.despine(trim=True)
 plt.tight_layout()
