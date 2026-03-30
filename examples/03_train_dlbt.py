@@ -50,7 +50,10 @@ METADATA   = "stimuli/imgs/metadata.jsonl"
 CACHE_PATH = "stimuli/imgs/clip_rn50_features.pt"
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Device: {DEVICE}")
+if DEVICE.type == "cuda":
+    print(f"Device: {DEVICE} ({torch.cuda.get_device_name(0)})")
+else:
+    print(f"Device: {DEVICE} (no GPU — training will be slow)")
 
 SEED               = 42
 N_TRIALS           = 100    # SEU decisions per (image, task)
