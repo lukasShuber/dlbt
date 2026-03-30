@@ -7,8 +7,9 @@ Synthetic data generation (model-matched ground truth):
         α*_k = peak(x)           if k == latent_state(x)
         α*_k = BASE_CONCENTRATION  otherwise
     where peak(x) ~ Uniform(PEAK_MIN, PEAK_MAX) is drawn once per image.
-    Variable peak gives a continuous spread of P(right) values instead of
-    the three-band artefact that arises from a fixed concentration.
+    PEAK_MIN=2 keeps beliefs genuinely uncertain (only 2/17 mass on true state),
+    spreading P(right) continuously across [0, 1] for both simple and composite
+    tasks. PEAK_MAX=20 allows confident-but-not-extreme beliefs at the upper end.
   - Behavior: N_TRIALS independent draws of argmax SEU given b̃ ~ Dirichlet(α*(x)).
   - Because the training model has the same functional form, train MSE should
     converge to the noise floor (≈0) in the limit of sufficient data and epochs.
@@ -58,8 +59,8 @@ else:
 
 SEED               = 42
 N_TRIALS           = 100    # SEU decisions per (image, task)
-PEAK_MIN           = 10.0   # minimum peak concentration — ensures composite tasks
-PEAK_MAX           = 100.0  # maximum peak concentration   have P(right) spread
+PEAK_MIN           = 2.0    # minimum peak concentration — genuinely uncertain beliefs
+PEAK_MAX           = 20.0   # maximum peak concentration — confident but not extreme
 BASE_CONCENTRATION = 1.0    # α* on all other latent states
 N_EPOCHS           = 10000
 LR                 = 1e-2
@@ -195,7 +196,7 @@ else:
     agent.save_cache(CACHE_PATH)
     print("Saved.")
 
-print("\nTraining DlbtAgent (frozen encoder)...")
+print("\nTraining DlbtAgent...")
 result = train_dlbt(
     agent, train_ds, val_ds, refs_dict,
     n_epochs=N_EPOCHS, lr=LR, patience=N_EPOCHS,  # patience=N_EPOCHS disables early stopping
