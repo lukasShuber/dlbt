@@ -75,19 +75,32 @@ LR                 = 1e-2   # mapper LR
 N_MC               = 200
 
 TRAIN_TASKS = [
-    # simple — one per dimension
+    # simple (2 of 4 — triangular and transparent held out for val)
     "front_back", "glossy",
-    # composites
-    "front_and_transparent",
-    "nontriangular_and_glossy",
-    "triangular_and_front",
-    "nontriangular_and_front",
-    "back_and_glossy",
-    "triangular_and_transparent",
+    # 2-way: location × material
+    "back_and_glossy", "front_and_glossy",
+    "front_and_transparent", "back_and_transparent",
+    # 2-way: shape × material
+    "triangular_and_transparent", "nontriangular_and_transparent",
+    "triangular_and_glossy", "nontriangular_and_glossy",
+    # 2-way: shape × location
+    "triangular_and_front", "nontriangular_and_front",
+    "triangular_and_back", "nontriangular_and_back",
+    # 2-way: transparency × glossiness
+    "transparent_and_glossy",
+    # 3-way composites
+    "front_and_transparent_and_glossy",
+    "back_and_transparent_and_glossy",
+    "triangular_and_transparent_and_glossy",
+    "nontriangular_and_transparent_and_glossy",
+    "triangular_and_front_and_transparent",
+    "triangular_and_front_and_glossy",
+    "nontriangular_and_front_and_transparent",
+    "nontriangular_and_back_and_glossy",
 ]
 VAL_TASKS = [
-    "triangular",
-    "transparent"
+    "triangular",    # pure shape dimension — not in training
+    "transparent",   # pure transparency dimension — not in training
 ]
 
 random.seed(SEED)

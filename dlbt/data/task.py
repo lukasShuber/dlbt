@@ -11,8 +11,11 @@ The SEU decision rule reduces to:
   choose action 1  iff  b̃ · delta_u > 0
 where b̃ ~ Dirichlet(alpha(x)) is the agent's belief over latent states.
 
-This module defines the 10 tasks used in the paper (4 simple + 6 composite)
-and provides factory helpers.
+This module defines all tasks over the 4 binary latent dimensions:
+  - 4 simple tasks (one dimension each)
+  - 12 composite 2-way tasks (all pairs × both polarities)
+  - 8 composite 3-way tasks (all triples, one polarity each)
+  Total: 24 tasks
 """
 
 from __future__ import annotations
@@ -111,27 +114,43 @@ TASKS: Dict[str, Task] = {
         lambda fb, sh, tr, gl: gl == 1,           # right = glossy
     ),
 
-    # ---- composite: Location x Material -------------------------------------
+    # ---- 2-way: Location × Material -----------------------------------------
     "back_and_glossy": _task(
         "back_and_glossy",
         lambda fb, sh, tr, gl: fb == 1 and gl == 1,
+    ),
+    "front_and_glossy": _task(
+        "front_and_glossy",
+        lambda fb, sh, tr, gl: fb == 0 and gl == 1,
     ),
     "front_and_transparent": _task(
         "front_and_transparent",
         lambda fb, sh, tr, gl: fb == 0 and tr == 1,
     ),
+    "back_and_transparent": _task(
+        "back_and_transparent",
+        lambda fb, sh, tr, gl: fb == 1 and tr == 1,
+    ),
 
-    # ---- composite: Categorisation x Material --------------------------------
+    # ---- 2-way: Categorisation × Material -----------------------------------
     "triangular_and_transparent": _task(
         "triangular_and_transparent",
         lambda fb, sh, tr, gl: sh == 0 and tr == 1,
+    ),
+    "nontriangular_and_transparent": _task(
+        "nontriangular_and_transparent",
+        lambda fb, sh, tr, gl: sh == 1 and tr == 1,
+    ),
+    "triangular_and_glossy": _task(
+        "triangular_and_glossy",
+        lambda fb, sh, tr, gl: sh == 0 and gl == 1,
     ),
     "nontriangular_and_glossy": _task(
         "nontriangular_and_glossy",
         lambda fb, sh, tr, gl: sh == 1 and gl == 1,
     ),
 
-    # ---- composite: Categorisation x Location --------------------------------
+    # ---- 2-way: Categorisation × Location -----------------------------------
     "triangular_and_front": _task(
         "triangular_and_front",
         lambda fb, sh, tr, gl: sh == 0 and fb == 0,
@@ -139,6 +158,54 @@ TASKS: Dict[str, Task] = {
     "nontriangular_and_front": _task(
         "nontriangular_and_front",
         lambda fb, sh, tr, gl: sh == 1 and fb == 0,
+    ),
+    "triangular_and_back": _task(
+        "triangular_and_back",
+        lambda fb, sh, tr, gl: sh == 0 and fb == 1,
+    ),
+    "nontriangular_and_back": _task(
+        "nontriangular_and_back",
+        lambda fb, sh, tr, gl: sh == 1 and fb == 1,
+    ),
+
+    # ---- 2-way: Transparency × Glossiness -----------------------------------
+    "transparent_and_glossy": _task(
+        "transparent_and_glossy",
+        lambda fb, sh, tr, gl: tr == 1 and gl == 1,
+    ),
+
+    # ---- 3-way composites ---------------------------------------------------
+    "front_and_transparent_and_glossy": _task(
+        "front_and_transparent_and_glossy",
+        lambda fb, sh, tr, gl: fb == 0 and tr == 1 and gl == 1,
+    ),
+    "back_and_transparent_and_glossy": _task(
+        "back_and_transparent_and_glossy",
+        lambda fb, sh, tr, gl: fb == 1 and tr == 1 and gl == 1,
+    ),
+    "triangular_and_transparent_and_glossy": _task(
+        "triangular_and_transparent_and_glossy",
+        lambda fb, sh, tr, gl: sh == 0 and tr == 1 and gl == 1,
+    ),
+    "nontriangular_and_transparent_and_glossy": _task(
+        "nontriangular_and_transparent_and_glossy",
+        lambda fb, sh, tr, gl: sh == 1 and tr == 1 and gl == 1,
+    ),
+    "triangular_and_front_and_transparent": _task(
+        "triangular_and_front_and_transparent",
+        lambda fb, sh, tr, gl: sh == 0 and fb == 0 and tr == 1,
+    ),
+    "triangular_and_front_and_glossy": _task(
+        "triangular_and_front_and_glossy",
+        lambda fb, sh, tr, gl: sh == 0 and fb == 0 and gl == 1,
+    ),
+    "nontriangular_and_front_and_transparent": _task(
+        "nontriangular_and_front_and_transparent",
+        lambda fb, sh, tr, gl: sh == 1 and fb == 0 and tr == 1,
+    ),
+    "nontriangular_and_back_and_glossy": _task(
+        "nontriangular_and_back_and_glossy",
+        lambda fb, sh, tr, gl: sh == 1 and fb == 1 and gl == 1,
     ),
 }
 
