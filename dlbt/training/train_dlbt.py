@@ -93,6 +93,7 @@ def train_dlbt(
     lr:            float = 1e-3,
     patience:      int   = 30,
     callbacks:     List[Callable[[int, float, float], None]] = (),
+    optimizer:     Optional[torch.optim.Optimizer] = None,
 ) -> TrainResult:
     """
     Train a DlbtAgent on behavioural choice data.
@@ -103,17 +104,22 @@ def train_dlbt(
         val_dataset:    validation observations (used for early stopping).
         image_refs:     uid -> ImageRef lookup for all images.
         n_epochs:       maximum number of full-dataset passes.
-        lr:             Adam learning rate.
+        lr:             Adam learning rate (ignored if optimizer is provided).
         patience:       early-stopping patience (epochs without val improvement).
         callbacks:      list of callables called each epoch as
                         callback(epoch, val_nll, val_mse).
                         Use for logging, TensorBoard, etc.
+        optimizer:      optional pre-built optimizer. Use this to set per-
+                        parameter-group learning rates (e.g. different LRs for
+                        the mapper and attnpool). If None, a default Adam with
+                        lr is constructed from agent.trainable_parameters().
 
     Returns:
         TrainResult with metrics and best-weight agent.
     """
     result    = TrainResult(agent=agent)
-    optimizer = torch.optim.Adam(agent.trainable_parameters(), lr=lr)
+    if optimizer is None:
+        optimizer = torch.optim.Adam(agent.trainable_parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=n_epochs, eta_min=1e-6,
     )

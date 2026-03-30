@@ -70,7 +70,8 @@ BASE_CONCENTRATION = 1.0    # base concentration on all latent states
 BETA               = 5.0    # sigmoid sharpness for continuous dimensions;
                              # higher = sharper boundary, lower = more perceptual ambiguity
 N_EPOCHS           = 1000
-LR                 = 1e-3   # lower than frozen: attnpool weights are sensitive
+LR                 = 1e-3   # mapper LR (also used for frozen encoder and SLDA)
+LR_ATTNPOOL        = 1e-5   # attnpool LR — much lower to preserve pre-trained weights
 N_MC               = 200    # MC samples for choice_probs during training
 FREEZE_ENCODER     = True  # True → DLBT-frozen; False → DLBT-attnpool
 
@@ -256,9 +257,22 @@ if FREEZE_ENCODER:
         print("Saved.")
 
 print(f"\nTraining {model_label}...")
+# For attnpool: separate LRs — mapper trained aggressively, attnpool nudged gently.
+# For frozen: single LR via default Adam (optimizer=None).
+if not FREEZE_ENCODER:
+    dlbt_optimizer = torch.optim.Adam([
+        {"params": agent.mapper.parameters(),
+         "lr": LR},
+        {"params": agent.encoder.attnpool.parameters(),
+         "lr": LR_ATTNPOOL},
+    ])
+else:
+    dlbt_optimizer = None
+
 result = train_dlbt(
     agent, train_ds, val_ds, refs_dict,
     n_epochs=N_EPOCHS, lr=LR, patience=N_EPOCHS,
+    optimizer=dlbt_optimizer,
 )
 print(f"Best epoch: {result.best_epoch}  best_val_mse: {result.best_val_mse:.4f}")
 
