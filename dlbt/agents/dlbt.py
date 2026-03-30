@@ -171,9 +171,9 @@ class DlbtAgent(nn.Module, Agent):
         """
         enc = self.encoder
         x   = batch.type(enc.conv1.weight.dtype)
-        x   = enc.relu1(enc.bn1(enc.conv1(x)))
-        x   = enc.relu2(enc.bn2(enc.conv2(x)))
-        x   = enc.relu3(enc.bn3(enc.conv3(x)))
+        x   = enc.act1(enc.bn1(enc.conv1(x)))
+        x   = enc.act2(enc.bn2(enc.conv2(x)))
+        x   = enc.act3(enc.bn3(enc.conv3(x)))
         x   = enc.avgpool(x)
         x   = enc.layer1(x)
         x   = enc.layer2(x)
