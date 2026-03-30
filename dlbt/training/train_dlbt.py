@@ -114,8 +114,8 @@ def train_dlbt(
     """
     result    = TrainResult(agent=agent)
     optimizer = torch.optim.Adam(agent.trainable_parameters(), lr=lr)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", factor=0.5, patience=30, min_lr=1e-5,
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=n_epochs, eta_min=1e-6,
     )
 
     # Pre-cache CLIP features for frozen encoder (no-op if finetuned)
@@ -171,7 +171,7 @@ def train_dlbt(
         result.val_mses.append(val_mse_val)
 
         # ---- LR schedule --------------------------------------------------
-        scheduler.step(val_mse_val)
+        scheduler.step()
 
         # ---- Progress bar -------------------------------------------------
         pbar.set_postfix(

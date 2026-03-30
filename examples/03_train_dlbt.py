@@ -62,8 +62,8 @@ N_TRIALS           = 100    # SEU decisions per (image, task)
 PEAK_MIN           = 2.0    # minimum peak concentration — genuinely uncertain beliefs
 PEAK_MAX           = 20.0   # maximum peak concentration — confident but not extreme
 BASE_CONCENTRATION = 1.0    # α* on all other latent states
-N_EPOCHS           = 2000
-LR                 = 1e-4  # conservative: attnpool finetuning needs small LR to stay stable
+N_EPOCHS           = 10000
+LR                 = 1e-2
 N_MC               = 200    # MC samples for choice_probs during training
 
 # 7 train / 3 val task split.
@@ -184,7 +184,7 @@ print(f"Noise floor — train: {train_ds.noise_floor():.4f}  "
 # ---------------------------------------------------------------------------
 # Train
 # ---------------------------------------------------------------------------
-agent = DlbtAgent(freeze_encoder=False, n_mc_samples=N_MC, device=DEVICE)
+agent = DlbtAgent(freeze_encoder=True, n_mc_samples=N_MC, device=DEVICE)
 
 # Load or compute CLIP feature cache
 if Path(CACHE_PATH).exists():
