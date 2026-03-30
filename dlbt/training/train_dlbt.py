@@ -118,10 +118,14 @@ def train_dlbt(
         optimizer, T_max=n_epochs, eta_min=1e-6,
     )
 
-    # Pre-cache CLIP features for frozen encoder (no-op if finetuned)
+    # Pre-cache features before the training loop.
+    # frozen:  cache full CLIP features [1024] — forward passes become lookups.
+    # attnpool: cache pre-attnpool spatial maps — each epoch only runs attnpool + mapper.
+    all_refs = list(image_refs.values())
     if agent.freeze_encoder:
-        all_refs = list(image_refs.values())
         agent.precompute_features(all_refs)
+    else:
+        agent.precompute_backbone_features(all_refs)
 
     # Baseline evaluation (epoch 0)
     train_nll0, train_mse0 = evaluate(agent, train_dataset, image_refs)

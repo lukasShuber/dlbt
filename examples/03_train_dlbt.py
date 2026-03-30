@@ -4,16 +4,21 @@ Train DlbtAgent on a synthetic behavioral dataset.
 Synthetic data generation (model-matched ground truth):
   - Ground truth: a DLBT agent with known Dirichlet parameters α*(x).
     α*(x) is peaked on the true latent state of image x:
-        α*_k = peak(x)           if k == latent_state(x)
+        α*_k = PEAK              if k == latent_state(x)
         α*_k = BASE_CONCENTRATION  otherwise
-    where peak(x) ~ Uniform(PEAK_MIN, PEAK_MAX) is drawn once per image.
-    PEAK_MIN=2 keeps beliefs genuinely uncertain (only 2/17 mass on true state),
-    spreading P(right) continuously across [0, 1] for both simple and composite
-    tasks. PEAK_MAX=20 allows confident-but-not-extreme beliefs at the upper end.
+    Fixed peak gives exactly 4 distinct true P(right) values across all
+    (image, task) combinations, determined by the ΔU structure:
+        simple  correct  → P(right) ≈ 0.80
+        composite correct → P(right) ≈ 0.65
+        composite wrong   → P(right) ≈ 0.10
+        simple  wrong     → P(right) ≈ 0.20
+    A well-trained model should cluster its predictions at these 4 values,
+    giving a clean 4-point diagonal in the scatter plot. Per-image variable
+    peak was tried but creates noise the model cannot explain (peak is not
+    encoded in CLIP features), preventing diagonal alignment.
   - Behavior: N_TRIALS independent draws of argmax SEU given b̃ ~ Dirichlet(α*(x)).
   - Because the training model has the same functional form, train MSE should
-    converge to the noise floor (≈0) in the limit of sufficient data and epochs.
-    If it doesn't, something is fundamentally broken.
+    converge to the noise floor in the limit of sufficient data and epochs.
 
 Train/val split (7 train / 3 val):
   - All 4 simple tasks in train (only per-dimension signal).
@@ -59,8 +64,7 @@ else:
 
 SEED               = 42
 N_TRIALS           = 100    # SEU decisions per (image, task)
-PEAK_MIN           = 2.0    # minimum peak concentration — genuinely uncertain beliefs
-PEAK_MAX           = 20.0   # maximum peak concentration — confident but not extreme
+PEAK               = 15.0   # α* on the true latent state — gives 4 intermediate P(right) bands
 BASE_CONCENTRATION = 1.0    # α* on all other latent states
 N_EPOCHS           = 10000
 LR                 = 1e-2
@@ -98,39 +102,27 @@ refs      = image_refs_as_list(refs_dict)
 print(f"Loaded {len(refs)} images.")
 
 # ---------------------------------------------------------------------------
-# Per-image peak concentration (drawn once, reused everywhere)
-# ---------------------------------------------------------------------------
-# Sample PEAK_MIN ≤ peak(x) ≤ PEAK_MAX uniformly for each image.
-# This creates a continuous spread of ground-truth P(right) values and avoids
-# the three-band artefact that arises from a fixed PEAK_CONCENTRATION.
-rng_peaks = np.random.default_rng(SEED)
-peak_per_uid: dict[str, float] = {
-    ref.uid: float(rng_peaks.uniform(PEAK_MIN, PEAK_MAX))
-    for ref in refs
-}
-
-# ---------------------------------------------------------------------------
 # Ground truth Dirichlet agent
 # ---------------------------------------------------------------------------
 
-def gt_alpha(latent_state: int, peak: float) -> np.ndarray:
+def gt_alpha(latent_state: int) -> np.ndarray:
     """
     Ground truth Dirichlet concentration vector for a given latent state.
     Peaked on the true state, uniform background elsewhere.
     """
     alpha = np.full(K, BASE_CONCENTRATION, dtype=np.float64)
-    alpha[latent_state] = peak
+    alpha[latent_state] = PEAK
     return alpha
 
 
-def gt_p_right(latent_state: int, peak: float, task, n_mc: int = 2000, rng=None) -> float:
+def gt_p_right(latent_state: int, task, n_mc: int = 2000, rng=None) -> float:
     """
     Estimate the ground truth P(right | latent_state, task) via MC integration
     over the ground truth Dirichlet.
     """
     if rng is None:
         rng = np.random.default_rng(0)
-    alpha   = gt_alpha(latent_state, peak)
+    alpha   = gt_alpha(latent_state)
     beliefs = rng.dirichlet(alpha, size=n_mc)   # [n_mc, K]
     logits  = beliefs @ task.delta_u             # [n_mc]
     return float((logits > 0).mean())
@@ -146,8 +138,7 @@ def sample_behavior(
     Sample N_TRIALS binary choices from the ground truth Dirichlet agent.
     Returns (count_0, count_1).
     """
-    peak    = peak_per_uid[ref.uid]
-    alpha   = gt_alpha(ref.latent_state, peak)
+    alpha   = gt_alpha(ref.latent_state)
     beliefs = rng.dirichlet(alpha, size=n_trials)  # [n_trials, K]
     logits  = beliefs @ task.delta_u               # [n_trials]
     count_1 = int((logits > 0).sum())
@@ -258,7 +249,7 @@ for ax, (task_names, ds, label) in zip(axes, [
         pred = probs[:, 1].cpu().numpy()
 
         true_p = np.array([
-            gt_p_right(r.latent_state, peak_per_uid[r.uid], task, n_mc=1000, rng=rng_gt)
+            gt_p_right(r.latent_state, task, n_mc=1000, rng=rng_gt)
             for r in batch_refs
         ])
 

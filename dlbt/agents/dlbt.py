@@ -92,9 +92,13 @@ class DlbtAgent(nn.Module, Agent):
         nn.init.constant_(linear.bias, 1.1)
         self.mapper = nn.Sequential(linear, nn.Softplus()).to(device)
 
-        # ---- Optional feature cache (frozen mode only) --------------------
-        # Maps uid -> [1024] float32 tensor on self.device.
-        self._cache: Dict[str, torch.Tensor] = {}
+        # ---- Feature caches -----------------------------------------------
+        # _cache:          uid -> [1024]      full CLIP features (freeze_encoder=True)
+        # _backbone_cache: uid -> [C, H, W]   pre-attnpool spatial maps (freeze_encoder=False)
+        # In the attnpool variant the backbone is frozen, so its output is
+        # constant — caching it reduces each epoch to attnpool + mapper only.
+        self._cache:          Dict[str, torch.Tensor] = {}
+        self._backbone_cache: Dict[str, torch.Tensor] = {}
 
     # -----------------------------------------------------------------------
     # Cache persistence
@@ -134,8 +138,51 @@ class DlbtAgent(nn.Module, Agent):
             for ref, feat in zip(batch, features):
                 self._cache[ref.uid] = feat
 
+    @torch.no_grad()
+    def precompute_backbone_features(
+        self,
+        image_refs: List[ImageRef],
+        batch_size: int = 16,
+    ) -> None:
+        """
+        Cache pre-attnpool spatial feature maps for all images.
+        Call once before training when freeze_encoder=False.
+        The backbone (everything before attnpool) is frozen, so its output
+        is constant — caching it means each training epoch only runs the
+        small attnpool layer + mapper instead of the full ResNet.
+        Already-cached UIDs are skipped.
+        """
+        uncached = [r for r in image_refs if r.uid not in self._backbone_cache]
+        if not uncached:
+            return
+        for i in tqdm(range(0, len(uncached), batch_size),
+                      desc="precomputing backbone features", unit="batch"):
+            batch_refs = uncached[i : i + batch_size]
+            imgs  = [Image.open(r.path).convert("RGB") for r in batch_refs]
+            batch = torch.stack([self.preprocess(img) for img in imgs]).to(self.device)
+            feats = self._run_backbone(batch)          # [B, C, H, W]
+            for ref, feat in zip(batch_refs, feats):
+                self._backbone_cache[ref.uid] = feat
+
+    def _run_backbone(self, batch: torch.Tensor) -> torch.Tensor:
+        """
+        Run images through the frozen backbone up to (not including) attnpool.
+        Returns spatial feature maps [B, C, H, W].
+        """
+        enc = self.encoder
+        x   = batch.type(enc.conv1.weight.dtype)
+        x   = enc.relu1(enc.bn1(enc.conv1(x)))
+        x   = enc.relu2(enc.bn2(enc.conv2(x)))
+        x   = enc.relu3(enc.bn3(enc.conv3(x)))
+        x   = enc.avgpool(x)
+        x   = enc.layer1(x)
+        x   = enc.layer2(x)
+        x   = enc.layer3(x)
+        x   = enc.layer4(x)
+        return x
+
     def _encode_fresh(self, image_refs: List[ImageRef]) -> torch.Tensor:
-        """Run images through the CLIP encoder. Returns [B, 1024]."""
+        """Run images through the full CLIP encoder. Returns [B, 1024]."""
         imgs  = [Image.open(r.path).convert("RGB") for r in image_refs]
         batch = torch.stack([self.preprocess(img) for img in imgs]).to(self.device)
         ctx   = torch.no_grad() if self.freeze_encoder else torch.enable_grad()
@@ -145,10 +192,15 @@ class DlbtAgent(nn.Module, Agent):
     def _encode(self, image_refs: List[ImageRef]) -> torch.Tensor:
         """
         Return CLIP features [B, 1024].
-        Uses cache when encoder is frozen; encodes fresh otherwise.
+        - freeze_encoder=True:  uses full-feature cache.
+        - freeze_encoder=False: uses backbone cache + runs attnpool (trainable).
+          Falls back to full fresh encode if backbone cache is not populated.
         """
         if self.freeze_encoder and all(r.uid in self._cache for r in image_refs):
             return torch.stack([self._cache[r.uid] for r in image_refs])
+        if not self.freeze_encoder and all(r.uid in self._backbone_cache for r in image_refs):
+            spatial = torch.stack([self._backbone_cache[r.uid] for r in image_refs])
+            return self.encoder.attnpool(spatial).float()
         return self._encode_fresh(image_refs)
 
     # -----------------------------------------------------------------------
