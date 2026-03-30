@@ -4,8 +4,11 @@ Train DlbtAgent on a synthetic behavioral dataset.
 Synthetic data generation (model-matched ground truth):
   - Ground truth: a DLBT agent with known Dirichlet parameters α*(x).
     α*(x) is peaked on the true latent state of image x:
-        α*_k = PEAK_CONCENTRATION  if k == latent_state(x)
+        α*_k = peak(x)           if k == latent_state(x)
         α*_k = BASE_CONCENTRATION  otherwise
+    where peak(x) ~ Uniform(PEAK_MIN, PEAK_MAX) is drawn once per image.
+    Variable peak gives a continuous spread of P(right) values instead of
+    the three-band artefact that arises from a fixed concentration.
   - Behavior: N_TRIALS independent draws of argmax SEU given b̃ ~ Dirichlet(α*(x)).
   - Because the training model has the same functional form, train MSE should
     converge to the noise floor (≈0) in the limit of sufficient data and epochs.
@@ -50,12 +53,13 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {DEVICE}")
 
 SEED               = 42
-N_TRIALS           = 100   # SEU decisions per (image, task)
-PEAK_CONCENTRATION = 10.0  # α* on the true latent state   — controls belief sharpness
-BASE_CONCENTRATION = 1.0   # α* on all other latent states — controls background noise
+N_TRIALS           = 100    # SEU decisions per (image, task)
+PEAK_MIN           = 10.0   # minimum peak concentration — ensures composite tasks
+PEAK_MAX           = 100.0  # maximum peak concentration   have P(right) spread
+BASE_CONCENTRATION = 1.0    # α* on all other latent states
 N_EPOCHS           = 1000
 LR                 = 1e-2
-N_MC               = 200   # MC samples for choice_probs during training
+N_MC               = 200    # MC samples for choice_probs during training
 
 # 7 train / 3 val task split.
 # All 4 simple tasks stay in train (they are the only per-dimension signal).
@@ -89,27 +93,39 @@ refs      = image_refs_as_list(refs_dict)
 print(f"Loaded {len(refs)} images.")
 
 # ---------------------------------------------------------------------------
+# Per-image peak concentration (drawn once, reused everywhere)
+# ---------------------------------------------------------------------------
+# Sample PEAK_MIN ≤ peak(x) ≤ PEAK_MAX uniformly for each image.
+# This creates a continuous spread of ground-truth P(right) values and avoids
+# the three-band artefact that arises from a fixed PEAK_CONCENTRATION.
+rng_peaks = np.random.default_rng(SEED)
+peak_per_uid: dict[str, float] = {
+    ref.uid: float(rng_peaks.uniform(PEAK_MIN, PEAK_MAX))
+    for ref in refs
+}
+
+# ---------------------------------------------------------------------------
 # Ground truth Dirichlet agent
 # ---------------------------------------------------------------------------
 
-def gt_alpha(latent_state: int) -> np.ndarray:
+def gt_alpha(latent_state: int, peak: float) -> np.ndarray:
     """
     Ground truth Dirichlet concentration vector for a given latent state.
     Peaked on the true state, uniform background elsewhere.
     """
     alpha = np.full(K, BASE_CONCENTRATION, dtype=np.float64)
-    alpha[latent_state] = PEAK_CONCENTRATION
+    alpha[latent_state] = peak
     return alpha
 
 
-def gt_p_right(latent_state: int, task, n_mc: int = 2000, rng=None) -> float:
+def gt_p_right(latent_state: int, peak: float, task, n_mc: int = 2000, rng=None) -> float:
     """
     Estimate the ground truth P(right | latent_state, task) via MC integration
     over the ground truth Dirichlet.
     """
     if rng is None:
         rng = np.random.default_rng(0)
-    alpha  = gt_alpha(latent_state)
+    alpha   = gt_alpha(latent_state, peak)
     beliefs = rng.dirichlet(alpha, size=n_mc)   # [n_mc, K]
     logits  = beliefs @ task.delta_u             # [n_mc]
     return float((logits > 0).mean())
@@ -125,7 +141,8 @@ def sample_behavior(
     Sample N_TRIALS binary choices from the ground truth Dirichlet agent.
     Returns (count_0, count_1).
     """
-    alpha   = gt_alpha(ref.latent_state)
+    peak    = peak_per_uid[ref.uid]
+    alpha   = gt_alpha(ref.latent_state, peak)
     beliefs = rng.dirichlet(alpha, size=n_trials)  # [n_trials, K]
     logits  = beliefs @ task.delta_u               # [n_trials]
     count_1 = int((logits > 0).sum())
@@ -177,7 +194,7 @@ else:
 print("\nTraining DlbtAgent (frozen encoder)...")
 result = train_dlbt(
     agent, train_ds, val_ds, refs_dict,
-    n_epochs=N_EPOCHS, lr=LR, patience=40,
+    n_epochs=N_EPOCHS, lr=LR, patience=N_EPOCHS,  # patience=N_EPOCHS disables early stopping
 )
 print(f"\nBest epoch: {result.best_epoch}  best_val_mse: {result.best_val_mse:.4f}")
 
@@ -240,7 +257,7 @@ for ax, (task_names, ds, label) in zip(axes, [
         emp    = group["count_1"].values / totals
 
         true_p = np.array([
-            gt_p_right(r.latent_state, task, n_mc=1000, rng=rng_gt)
+            gt_p_right(r.latent_state, peak_per_uid[r.uid], task, n_mc=1000, rng=rng_gt)
             for r in batch_refs
         ])
 
