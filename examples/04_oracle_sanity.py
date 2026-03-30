@@ -71,7 +71,7 @@ PEAK               = 15.0
 BASE_CONCENTRATION = 1.0
 BETA               = 5.0
 N_EPOCHS           = 2000
-LR                 = 1e-3   # 1e-2 causes instability for A-prealpha (wide feature range)
+LR                 = 1e-2   # mapper LR
 N_MC               = 200
 
 TRAIN_TASKS = [

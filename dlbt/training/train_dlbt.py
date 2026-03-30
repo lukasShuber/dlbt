@@ -94,6 +94,7 @@ def train_dlbt(
     patience:      int   = 30,
     callbacks:     List[Callable[[int, float, float], None]] = (),
     optimizer:     Optional[torch.optim.Optimizer] = None,
+    grad_clip:     float = 1.0,
 ) -> TrainResult:
     """
     Train a DlbtAgent on behavioural choice data.
@@ -113,6 +114,8 @@ def train_dlbt(
                         parameter-group learning rates (e.g. different LRs for
                         the mapper and attnpool). If None, a default Adam with
                         lr is constructed from agent.trainable_parameters().
+        grad_clip:      max gradient norm (torch.nn.utils.clip_grad_norm_).
+                        Prevents early-epoch NLL spikes when using high LR.
 
     Returns:
         TrainResult with metrics and best-weight agent.
@@ -168,6 +171,8 @@ def train_dlbt(
         # Normalise by total number of observations across tasks
         total_loss = total_loss / len(train_dataset)
         total_loss.backward()
+        if grad_clip > 0:
+            torch.nn.utils.clip_grad_norm_(agent.trainable_parameters(), grad_clip)
         optimizer.step()
 
         # ---- Evaluation ---------------------------------------------------
