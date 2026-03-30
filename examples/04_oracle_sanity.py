@@ -117,24 +117,28 @@ def _sigmoid(x: float) -> float:
 
 
 def gt_alpha(uid: str) -> np.ndarray:
+    """
+    Peaked Dirichlet centered on the true discrete latent state, with
+    concentration scaled by perceptual clarity (same as example 03).
+    """
     z = cont_meta[uid]
     p_back   = _sigmoid(BETA * (z["y"]            - Y_THRESHOLD))
-    p_nontri = float(z["is_nontri"])
     p_transp = _sigmoid(BETA * (z["transparency"] - TRANSP_THRESH))
     p_glossy = _sigmoid(BETA * (z["glossiness"]   - GLOSS_THRESH))
-    alpha = np.empty(K, dtype=np.float64)
-    for k in range(K):
-        k_back   = (k >> DIM_FRONT_BACK) & 1
-        k_nontri = (k >> DIM_SHAPE)      & 1
-        k_transp = (k >> DIM_TRANSP)     & 1
-        k_glossy = (k >> DIM_GLOSS)      & 1
-        match = (
-            (p_back   if k_back   else (1.0 - p_back))   *
-            (p_nontri if k_nontri else (1.0 - p_nontri)) *
-            (p_transp if k_transp else (1.0 - p_transp)) *
-            (p_glossy if k_glossy else (1.0 - p_glossy))
-        )
-        alpha[k] = BASE_CONCENTRATION + PEAK * match
+
+    true_k = (
+        (int(z["y"]            > Y_THRESHOLD)  << DIM_FRONT_BACK) |
+        (int(z["is_nontri"])                   << DIM_SHAPE)      |
+        (int(z["transparency"] > TRANSP_THRESH) << DIM_TRANSP)    |
+        (int(z["glossiness"]   > GLOSS_THRESH)  << DIM_GLOSS)
+    )
+
+    clarity = (abs(p_back   - 0.5) * 2.0 *
+               abs(p_transp - 0.5) * 2.0 *
+               abs(p_glossy - 0.5) * 2.0)   # shape always clear → ×1.0
+
+    alpha         = np.full(K, BASE_CONCENTRATION, dtype=np.float64)
+    alpha[true_k] = BASE_CONCENTRATION + PEAK * clarity
     return alpha
 
 

@@ -69,11 +69,11 @@ PEAK               = 15.0   # peak concentration added to matching latent states
 BASE_CONCENTRATION = 1.0    # base concentration on all latent states
 BETA               = 5.0    # sigmoid sharpness for continuous dimensions;
                              # higher = sharper boundary, lower = more perceptual ambiguity
-N_EPOCHS           = 1500
+N_EPOCHS           = 3000
 LR                 = 1e-2   # mapper LR (also used for frozen encoder and SLDA)
 LR_ATTNPOOL        = 1e-5   # attnpool LR — much lower to preserve pre-trained weights
 N_MC               = 200    # MC samples for choice_probs during training
-FREEZE_ENCODER     = False  # True → DLBT-frozen; False → DLBT-attnpool
+FREEZE_ENCODER     = True  # True → DLBT-frozen; False → DLBT-attnpool
 
 # 7 train / 3 val task split.
 # All 4 simple tasks stay in train (they are the only per-dimension signal).
