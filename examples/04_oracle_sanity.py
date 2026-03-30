@@ -68,7 +68,7 @@ LR                 = 1e-2
 N_MC               = 200
 
 TRAIN_TASKS = [
-    # simple — one per dimension, must all be in train
+    # simple — one per dimension
     "front_back", "glossy",
     # composites
     "front_and_transparent",
