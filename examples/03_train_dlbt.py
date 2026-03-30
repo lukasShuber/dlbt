@@ -60,7 +60,7 @@ N_TRIALS           = 100    # SEU decisions per (image, task)
 PEAK_MIN           = 10.0   # minimum peak concentration — ensures composite tasks
 PEAK_MAX           = 100.0  # maximum peak concentration   have P(right) spread
 BASE_CONCENTRATION = 1.0    # α* on all other latent states
-N_EPOCHS           = 1000
+N_EPOCHS           = 10000
 LR                 = 1e-2
 N_MC               = 200    # MC samples for choice_probs during training
 

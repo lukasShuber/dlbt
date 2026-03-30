@@ -10,11 +10,15 @@ Architecture:
 
 Two variants:
     DlbtAgent(freeze_encoder=True)   — DLBT-frozen: only mapper is trained.
-    DlbtAgent(freeze_encoder=False)  — DLBT-finetuned: encoder + mapper trained
-                                       jointly on the behavioural NLL.
+    DlbtAgent(freeze_encoder=False)  — DLBT-attnpool: backbone frozen, only the
+                                       CLIP attention-pooling layer + mapper are
+                                       trained (~1M + 16K params). Parsimonious
+                                       alternative to full encoder finetuning.
 
 For the frozen variant, call precompute_features() once before training to
 cache CLIP representations; subsequent forward passes become cheap lookups.
+The attnpool variant cannot use the cache (attnpool weights change during
+training), so every forward pass runs through the full encoder.
 """
 
 from __future__ import annotations
@@ -40,9 +44,11 @@ class DlbtAgent(nn.Module, Agent):
     DLBT agent backed by a CLIP RN50 visual encoder.
 
     Args:
-        freeze_encoder: if True, encoder weights are frozen and only the
-                        mapper is trained (DLBT-frozen). If False, encoder
-                        and mapper are trained jointly (DLBT-finetuned).
+        freeze_encoder: if True, the full encoder is frozen and only the
+                        mapper is trained (DLBT-frozen). If False, the
+                        backbone is frozen but the attention-pooling layer
+                        (attnpool) is unfrozen and trained jointly with the
+                        mapper (DLBT-attnpool).
         n_mc_samples:   number of Monte Carlo samples for the Dirichlet
                         expectation during choice_probs().
         device:         torch device.
@@ -68,9 +74,13 @@ class DlbtAgent(nn.Module, Agent):
         self.encoder    = clip_model.visual.to(device)
         self.preprocess = preprocess   # torchvision transform, kept on CPU
 
-        if freeze_encoder:
-            for p in self.encoder.parameters():
-                p.requires_grad_(False)
+        # Freeze the full backbone unconditionally.
+        # When freeze_encoder=False, selectively re-enable attnpool only.
+        for p in self.encoder.parameters():
+            p.requires_grad_(False)
+        if not freeze_encoder:
+            for p in self.encoder.attnpool.parameters():
+                p.requires_grad_(True)
 
         # ---- Distribution mapper: 1024 -> K -------------------------------
         # Linear + Softplus guarantees strictly positive Dirichlet parameters.
@@ -248,6 +258,4 @@ class DlbtAgent(nn.Module, Agent):
 
     def trainable_parameters(self):
         """Return the parameters that should be passed to the optimiser."""
-        if self.freeze_encoder:
-            return list(self.mapper.parameters())
-        return list(self.parameters())
+        return [p for p in self.parameters() if p.requires_grad]
