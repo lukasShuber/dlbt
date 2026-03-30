@@ -6,16 +6,13 @@ Synthetic data generation (model-matched ground truth):
     α*(x) is peaked on the true latent state of image x:
         α*_k = PEAK              if k == latent_state(x)
         α*_k = BASE_CONCENTRATION  otherwise
-    Fixed peak gives exactly 4 distinct true P(right) values across all
-    (image, task) combinations, determined by the ΔU structure:
-        simple  correct  → P(right) ≈ 0.80
-        composite correct → P(right) ≈ 0.65
-        composite wrong   → P(right) ≈ 0.10
-        simple  wrong     → P(right) ≈ 0.20
-    A well-trained model should cluster its predictions at these 4 values,
-    giving a clean 4-point diagonal in the scatter plot. Per-image variable
-    peak was tried but creates noise the model cannot explain (peak is not
-    encoded in CLIP features), preventing diagonal alignment.
+    Soft beliefs: each binary dimension is "softened" by a sigmoid applied
+    to the distance of the image's continuous property from its threshold.
+    Images near a boundary (e.g. y ≈ 0.5) get mixed beliefs across states;
+    images far from any boundary get sharply peaked beliefs. This creates a
+    continuous spread of P(right) values that is encoded in the image content
+    (and hence potentially recoverable from CLIP features), unlike per-image
+    variable peak which is an invisible synthetic artefact.
   - Behavior: N_TRIALS independent draws of argmax SEU given b̃ ~ Dirichlet(α*(x)).
   - Because the training model has the same functional form, train MSE should
     converge to the noise floor in the limit of sufficient data and epochs.
@@ -42,7 +39,10 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy.stats import spearmanr
 
-from dlbt.constants import K
+from dlbt.constants import (
+    K, DIM_FRONT_BACK, DIM_SHAPE, DIM_TRANSP, DIM_GLOSS,
+    Y_THRESHOLD, TRANSP_THRESH, GLOSS_THRESH, NON_TRIANGULAR_SHAPES,
+)
 from dlbt.data.image_ref import load_image_refs, image_refs_as_list, balanced_refs
 from dlbt.data.task import TASKS
 from dlbt.data.dataset import BehavioralDataset, Observation
@@ -64,9 +64,11 @@ else:
 
 SEED               = 42
 N_TRIALS           = 100    # SEU decisions per (image, task)
-PEAK               = 15.0   # α* on the true latent state — gives 4 intermediate P(right) bands
-BASE_CONCENTRATION = 12.0    # α* on all other latent states
-N_EPOCHS           = 10000
+PEAK               = 15.0   # peak concentration added to matching latent states
+BASE_CONCENTRATION = 1.0    # base concentration on all latent states
+BETA               = 5.0    # sigmoid sharpness for continuous dimensions;
+                             # higher = sharper boundary, lower = more perceptual ambiguity
+N_EPOCHS           = 5000
 LR                 = 1e-2
 N_MC               = 200    # MC samples for choice_probs during training
 
@@ -78,13 +80,13 @@ TRAIN_TASKS = [
     "front_back", "triangular", "transparent", "glossy",
     # composites
     "front_and_transparent",
-    "triangular_and_transparent",
     "nontriangular_and_glossy",
+    "triangular_and_front",
+    "nontriangular_and_front"
 ]
 VAL_TASKS = [
-    "back_and_glossy",         # location × material
-    "triangular_and_front",    # shape × location
-    "nontriangular_and_front", # shape × location (flipped)
+    "back_and_glossy",
+    "triangular_and_transparent"
 ]
 
 # ---------------------------------------------------------------------------
@@ -102,27 +104,88 @@ refs      = image_refs_as_list(refs_dict)
 print(f"Loaded {len(refs)} images.")
 
 # ---------------------------------------------------------------------------
-# Ground truth Dirichlet agent
+# Continuous metadata (used for soft belief generation)
+# ---------------------------------------------------------------------------
+# Load the raw continuous properties for each image directly from metadata.
+# These drive the sigmoid softening of the ground truth Dirichlet.
+
+def _load_continuous_metadata(metadata_path: str) -> dict[str, dict]:
+    """Return uid -> {y, transparency, glossiness, is_nontri} for every image."""
+    import json
+    result = {}
+    with open(metadata_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            rec = json.loads(line)
+            z   = rec["z"]
+            result[rec["id"]] = dict(
+                y            = z["pos_xy"][1],
+                transparency = z["transparency"],
+                glossiness   = z["glossiness"],
+                is_nontri    = z["shape_name"] in NON_TRIANGULAR_SHAPES,
+            )
+    return result
+
+cont_meta = _load_continuous_metadata(METADATA)
+
+# ---------------------------------------------------------------------------
+# Ground truth Dirichlet agent — soft beliefs
 # ---------------------------------------------------------------------------
 
-def gt_alpha(latent_state: int) -> np.ndarray:
+def _sigmoid(x: float) -> float:
+    return 1.0 / (1.0 + np.exp(-x))
+
+
+def gt_alpha(uid: str) -> np.ndarray:
     """
-    Ground truth Dirichlet concentration vector for a given latent state.
-    Peaked on the true state, uniform background elsewhere.
+    Soft Dirichlet concentration vector for an image.
+
+    Each binary dimension is softened by a sigmoid applied to the image's
+    continuous property distance from its threshold:
+
+        p_dim(x) = σ(BETA · (value − threshold))
+
+    The match score for latent state k is the product of per-dimension
+    probabilities, giving high α_k for clearly-matching states and low α_k
+    for mismatching ones. Images near a boundary get genuinely mixed beliefs.
+
+    Shape dimension is discrete (triangular / non-triangular) so it is not
+    softened — it is kept as a hard 0/1 probability.
     """
-    alpha = np.full(K, BASE_CONCENTRATION, dtype=np.float64)
-    alpha[latent_state] = PEAK
+    z = cont_meta[uid]
+
+    p_back   = _sigmoid(BETA * (z["y"]            - Y_THRESHOLD))   # P(back)
+    p_nontri = float(z["is_nontri"])                                  # discrete
+    p_transp = _sigmoid(BETA * (z["transparency"] - TRANSP_THRESH))
+    p_glossy = _sigmoid(BETA * (z["glossiness"]   - GLOSS_THRESH))
+
+    alpha = np.empty(K, dtype=np.float64)
+    for k in range(K):
+        k_back   = (k >> DIM_FRONT_BACK) & 1
+        k_nontri = (k >> DIM_SHAPE)      & 1
+        k_transp = (k >> DIM_TRANSP)     & 1
+        k_glossy = (k >> DIM_GLOSS)      & 1
+
+        match = (
+            (p_back   if k_back   else (1.0 - p_back))   *
+            (p_nontri if k_nontri else (1.0 - p_nontri)) *
+            (p_transp if k_transp else (1.0 - p_transp)) *
+            (p_glossy if k_glossy else (1.0 - p_glossy))
+        )
+        alpha[k] = BASE_CONCENTRATION + PEAK * match
+
     return alpha
 
 
-def gt_p_right(latent_state: int, task, n_mc: int = 2000, rng=None) -> float:
+def gt_p_right(uid: str, task, n_mc: int = 2000, rng=None) -> float:
     """
-    Estimate the ground truth P(right | latent_state, task) via MC integration
-    over the ground truth Dirichlet.
+    Estimate P(right | image, task) via MC integration over the soft Dirichlet.
     """
     if rng is None:
         rng = np.random.default_rng(0)
-    alpha   = gt_alpha(latent_state)
+    alpha   = gt_alpha(uid)
     beliefs = rng.dirichlet(alpha, size=n_mc)   # [n_mc, K]
     logits  = beliefs @ task.delta_u             # [n_mc]
     return float((logits > 0).mean())
@@ -135,10 +198,10 @@ def sample_behavior(
     rng: np.random.Generator,
 ) -> tuple[int, int]:
     """
-    Sample N_TRIALS binary choices from the ground truth Dirichlet agent.
+    Sample N_TRIALS binary choices from the soft ground truth Dirichlet agent.
     Returns (count_0, count_1).
     """
-    alpha   = gt_alpha(ref.latent_state)
+    alpha   = gt_alpha(ref.uid)
     beliefs = rng.dirichlet(alpha, size=n_trials)  # [n_trials, K]
     logits  = beliefs @ task.delta_u               # [n_trials]
     count_1 = int((logits > 0).sum())
@@ -249,7 +312,7 @@ for task_names, ds in all_ds:
         pred = probs[:, 1].cpu().numpy()
 
         true_p = np.array([
-            gt_p_right(r.latent_state, task, n_mc=1000, rng=rng_gt)
+            gt_p_right(r.uid, task, n_mc=1000, rng=rng_gt)
             for r in batch_refs
         ])
 
