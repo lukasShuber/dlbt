@@ -70,8 +70,8 @@ N_TRIALS           = 100
 PEAK               = 15.0
 BASE_CONCENTRATION = 1.0
 BETA               = 5.0
-N_EPOCHS           = 1000
-LR                 = 1e-2
+N_EPOCHS           = 2000
+LR                 = 1e-3   # 1e-2 causes instability for A-prealpha (wide feature range)
 N_MC               = 200
 
 TRAIN_TASKS = [
@@ -381,18 +381,16 @@ print(f"Noise floor — train: {train_ds.noise_floor():.4f}  "
 # ---------------------------------------------------------------------------
 # Train both oracle variants
 # ---------------------------------------------------------------------------
-prealpha_dict    = {uid: oracle_prealpha(uid)    for uid in refs_dict}
-interaction_dict = {uid: oracle_interaction(uid) for uid in refs_dict}
-soft4_dict       = {uid: oracle_soft4(uid)       for uid in refs_dict}
-onehot_dict      = {uid: oracle_onehot(uid)      for uid in refs_dict}
+prealpha_dict = {uid: oracle_prealpha(uid) for uid in refs_dict}
+soft4_dict    = {uid: oracle_soft4(uid)    for uid in refs_dict}
+onehot_dict   = {uid: oracle_onehot(uid)   for uid in refs_dict}
 
 VARIANTS = [
-    # label                  feat_dict         feat_dim  mapper_hidden
-    ("A-prealpha",           prealpha_dict,    K,        None),  # A: head-only ceiling
-    ("B-interaction",        interaction_dict, K,        None),  # B: linear sufficient stat
-    ("B-soft4-MLP",          soft4_dict,       4,        256),   # B: sufficient stats, MLP
-    ("B-soft4-linear",       soft4_dict,       4,        None),  # B-weak: linear (can't do products)
-    ("B-onehot-linear",      onehot_dict,      K,        None),  # B-weak: no clarity
+    # label               feat_dict      feat_dim  mapper_hidden
+    ("A-prealpha",        prealpha_dict, K,        None),  # A: head-only ceiling (identity map)
+    ("B-soft4-MLP",       soft4_dict,    4,        256),   # B: sufficient stats, MLP
+    ("B-soft4-linear",    soft4_dict,    4,        None),  # B-weak: linear (can't do products)
+    ("B-onehot-linear",   onehot_dict,   K,        None),  # B-weak: no clarity
 ]
 
 results    = {}
@@ -420,7 +418,6 @@ noise_val   = val_ds.noise_floor()
 
 COLORS = {
     "A-prealpha":        ("#000000", "#888888"),   # black  — head-only ceiling
-    "B-interaction":     ("#762a83", "#c2a5cf"),   # purple — linear sufficient stat
     "B-soft4-MLP":       ("#1a9641", "#a6d96a"),   # green  — sufficient stats, MLP
     "B-soft4-linear":    ("#2166ac", "#92c5de"),   # blue   — soft4, linear (weak)
     "B-onehot-linear":   ("#d6604d", "#f4a582"),   # red    — onehot, no clarity (weak)
@@ -467,7 +464,7 @@ def task_groups(ds: BehavioralDataset) -> dict:
 train_groups = task_groups(train_ds)
 val_groups   = task_groups(val_ds)
 
-fig, axes = plt.subplots(5, 2, figsize=(9, 17), sharex=True, sharey=True,
+fig, axes = plt.subplots(4, 2, figsize=(9, 14), sharex=True, sharey=True,
                          gridspec_kw={"hspace": 0.45, "wspace": 0.12})
 
 for row, (label, agent) in enumerate(trained_agents.items()):

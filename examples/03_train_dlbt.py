@@ -70,11 +70,12 @@ BASE_CONCENTRATION = 1.0    # base concentration on all latent states
 BETA               = 5.0    # sigmoid sharpness for continuous dimensions;
                              # higher = sharper boundary, lower = more perceptual ambiguity
 N_EPOCHS           = 3000
-LR                 = 1e-2   # mapper LR (also used for frozen encoder and SLDA)
+LR                 = 1e-3   # mapper LR — 1e-2 causes a large early NLL spike
 LR_ATTNPOOL        = 1e-5   # attnpool LR — much lower to preserve pre-trained weights
 N_MC               = 200    # MC samples for choice_probs during training
 FREEZE_ENCODER     = True   # True → DLBT-frozen; False → DLBT-attnpool
-MAPPER_HIDDEN      = 256   # None → linear mapper; int (e.g. 256) → MLP with GELU
+MAPPER_HIDDEN      = None   # None → linear mapper; MLP doesn't help when CLIP is the bottleneck
+WEIGHT_DECAY_SLDA  = 1e-4   # L2 regularisation for SLDA — prevents NLL divergence
 
 # 7 train / 3 val task split.
 # All 4 simple tasks stay in train (they are the only per-dimension signal).
@@ -307,9 +308,13 @@ if Path(CACHE_PATH).exists():
     slda.load_cache(CACHE_PATH)
 
 print("\nTraining SldaAgent...")
+slda_optimizer = torch.optim.Adam(
+    slda.trainable_parameters(), lr=LR, weight_decay=WEIGHT_DECAY_SLDA,
+)
 slda_result = train_dlbt(
     slda, train_ds, val_ds, refs_dict,
     n_epochs=N_EPOCHS, lr=LR, patience=300,
+    optimizer=slda_optimizer,
 )
 print(f"Best epoch: {slda_result.best_epoch}  best_val_mse: {slda_result.best_val_mse:.4f}")
 print(f"Learned temperature τ = {slda.log_temperature.exp().item():.3f}")
