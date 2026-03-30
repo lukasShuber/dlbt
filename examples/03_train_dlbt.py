@@ -79,7 +79,7 @@ FREEZE_ENCODER     = True  # True → DLBT-frozen; False → DLBT-attnpool
 # All 4 simple tasks stay in train (they are the only per-dimension signal).
 # Val spans two distinct dimension combinations for a broader generalization test.
 TRAIN_TASKS = [
-    # simple — one per dimension, must all be in train
+    # simple — one per dimension
     "front_back", "glossy",
     # composites
     "front_and_transparent",

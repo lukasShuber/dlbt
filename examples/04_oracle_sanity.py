@@ -68,13 +68,20 @@ LR                 = 1e-2
 N_MC               = 200
 
 TRAIN_TASKS = [
-    "front_back", "triangular", "transparent", "glossy",
+    # simple — one per dimension, must all be in train
+    "front_back", "glossy",
+    # composites
     "front_and_transparent",
     "nontriangular_and_glossy",
     "triangular_and_front",
     "nontriangular_and_front",
+    "back_and_glossy",
+    "triangular_and_transparent",
 ]
-VAL_TASKS = ["back_and_glossy", "triangular_and_transparent"]
+VAL_TASKS = [
+    "triangular",
+    "transparent"
+]
 
 random.seed(SEED)
 np.random.seed(SEED)
@@ -157,7 +164,32 @@ def sample_behavior(ref, task, n_trials: int, rng) -> tuple[int, int]:
 
 # ---------------------------------------------------------------------------
 # Oracle feature constructors
+#
+# Three-level sanity-check hierarchy:
+#
+#   A. Head-only   — input is gt_alpha(uid) directly.
+#                    Mapper just needs to copy / rescale. Tests Dirichlet +
+#                    SEU + loss + optimiser in isolation. Should hit the floor.
+#
+#   B. Sufficient  — input encodes all information needed to compute gt_alpha,
+#                    but not gt_alpha itself.
+#                    oracle_full = [onehot(true_state), clarity]  (17D, linear)
+#                    oracle_soft4-MLP = soft marginals + nonlinear mapper
+#                    Both should also approach the floor.
+#
+#   C. Bottleneck  — frozen CLIP features (example 03).
+#                    Gap vs B is the representation bottleneck.
 # ---------------------------------------------------------------------------
+
+def oracle_alpha(uid: str) -> np.ndarray:
+    """
+    [A — head-only] K=16 dimensional ground-truth α vector.
+    The mapper receives the answer; it only needs to learn identity / rescaling.
+    Tests Dirichlet + SEU + NLL loss + optimiser in isolation.
+    Should converge (near) to the noise floor.
+    """
+    return gt_alpha(uid).astype(np.float32)
+
 
 def oracle_soft4(uid: str) -> np.ndarray:
     """
@@ -323,14 +355,16 @@ print(f"Noise floor — train: {train_ds.noise_floor():.4f}  "
 soft4_dict  = {uid: oracle_soft4(uid)  for uid in refs_dict}
 onehot_dict = {uid: oracle_onehot(uid) for uid in refs_dict}
 
+alpha_dict  = {uid: oracle_alpha(uid)  for uid in refs_dict}
 full_dict   = {uid: oracle_full(uid)   for uid in refs_dict}
 
 VARIANTS = [
-    # label,               feat_dict,   feat_dim,  mapper_hidden
-    ("Oracle-soft4",       soft4_dict,  4,         None),   # linear, missing nonlinearity
-    ("Oracle-soft4-MLP",   soft4_dict,  4,         256),    # MLP, can compute products
-    ("Oracle-onehot",      onehot_dict, K,         None),   # linear, missing clarity
-    ("Oracle-full",        full_dict,   K + 1,     None),   # linear, theoretically perfect
+    # label                feat_dict    feat_dim  mapper_hidden  tier
+    ("A-alpha",            alpha_dict,  K,        None),    # A: head-only ceiling
+    ("B-full",             full_dict,   K + 1,    None),    # B: sufficient stats, linear
+    ("B-soft4-MLP",        soft4_dict,  4,        256),     # B: sufficient stats, MLP
+    ("B-soft4-linear",     soft4_dict,  4,        None),    # B-weak: linear (can't do products)
+    ("B-onehot-linear",    onehot_dict, K,        None),    # B-weak: no clarity
 ]
 
 results    = {}
@@ -357,10 +391,11 @@ noise_train = train_ds.noise_floor()
 noise_val   = val_ds.noise_floor()
 
 COLORS = {
-    "Oracle-soft4":      ("#2166ac", "#92c5de"),   # (train, val)
-    "Oracle-soft4-MLP":  ("#1a9641", "#a6d96a"),
-    "Oracle-onehot":     ("#d6604d", "#f4a582"),
-    "Oracle-full":       ("#762a83", "#c2a5cf"),
+    "A-alpha":           ("#000000", "#888888"),   # black  — head ceiling
+    "B-full":            ("#762a83", "#c2a5cf"),   # purple — sufficient stats (linear)
+    "B-soft4-MLP":       ("#1a9641", "#a6d96a"),   # green  — sufficient stats (MLP)
+    "B-soft4-linear":    ("#2166ac", "#92c5de"),   # blue   — soft4, linear (weak)
+    "B-onehot-linear":   ("#d6604d", "#f4a582"),   # red    — onehot, no clarity (weak)
 }
 
 fig, axes = plt.subplots(1, 2, figsize=(10, 4))
@@ -404,7 +439,7 @@ def task_groups(ds: BehavioralDataset) -> dict:
 train_groups = task_groups(train_ds)
 val_groups   = task_groups(val_ds)
 
-fig, axes = plt.subplots(4, 2, figsize=(9, 14), sharex=True, sharey=True,
+fig, axes = plt.subplots(5, 2, figsize=(9, 17), sharex=True, sharey=True,
                          gridspec_kw={"hspace": 0.45, "wspace": 0.12})
 
 for row, (label, agent) in enumerate(trained_agents.items()):
