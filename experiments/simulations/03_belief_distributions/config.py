@@ -24,7 +24,7 @@ RESULTS_DIR = Path(__file__).parent / "results"
 # Synthetic data
 # ---------------------------------------------------------------------------
 BASE_SEED          = 42
-N_SEEDS            = 1
+N_SEEDS            = 5
 SEEDS              = [BASE_SEED + i for i in range(N_SEEDS)]
 
 N_TRIALS           = 100
