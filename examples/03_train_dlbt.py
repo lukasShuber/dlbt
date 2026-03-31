@@ -85,8 +85,8 @@ WEIGHT_DECAY_SLDA  = 1e-4   # L2 regularisation for SLDA — prevents NLL diverg
 TRAIN_TASKS = [
     # all 4 simple (model must learn each dimension cleanly)
     "front_back", "glossy", "triangular", "transparent",
-    # simple-flipped
-    "front", "nontriangular", "opaque", "matte",
+    # # simple-flipped
+    # "front", "nontriangular", "opaque", "matte",
     # 2-way AND: location × material (no shape×transparency)
     "back_and_glossy", "front_and_glossy",
     "front_and_transparent", "back_and_transparent",
