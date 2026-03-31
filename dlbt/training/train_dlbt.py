@@ -41,6 +41,8 @@ class TrainResult:
     val_mses:     List[float] = field(default_factory=list)
     best_epoch:   int = 0
     best_val_mse: float = float("inf")
+    extra_val_nlls: Dict[str, List[float]] = field(default_factory=dict)
+    extra_val_mses: Dict[str, List[float]] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -95,6 +97,7 @@ def train_dlbt(
     callbacks:     List[Callable[[int, float, float], None]] = (),
     optimizer:     Optional[torch.optim.Optimizer] = None,
     grad_clip:     float = 1.0,
+    extra_val_datasets: Optional[Dict[str, BehavioralDataset]] = None,
 ) -> TrainResult:
     """
     Train a DlbtAgent on behavioural choice data.
@@ -121,6 +124,9 @@ def train_dlbt(
         TrainResult with metrics and best-weight agent.
     """
     result    = TrainResult(agent=agent)
+    extra_val_datasets = extra_val_datasets or {}
+    result.extra_val_nlls = {k: [] for k in extra_val_datasets}
+    result.extra_val_mses = {k: [] for k in extra_val_datasets}
     if optimizer is None:
         optimizer = torch.optim.Adam(agent.trainable_parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -144,6 +150,11 @@ def train_dlbt(
     result.val_nlls.append(val_nll0)
     result.val_mses.append(val_mse0)
     result.best_val_mse = val_mse0
+
+    for name, ds in extra_val_datasets.items():
+        nll, mse_ = evaluate(agent, ds, image_refs)
+        result.extra_val_nlls[name].append(nll)
+        result.extra_val_mses[name].append(mse_)
 
     # Save initial weights
     best_state = copy.deepcopy(agent.state_dict())
@@ -184,6 +195,11 @@ def train_dlbt(
         result.train_mses.append(train_mse_val)
         result.val_nlls.append(val_nll)
         result.val_mses.append(val_mse_val)
+
+        for name, ds in extra_val_datasets.items():
+            nll, mse_ = evaluate(agent, ds, image_refs)
+            result.extra_val_nlls[name].append(nll)
+            result.extra_val_mses[name].append(mse_)
 
         # ---- LR schedule --------------------------------------------------
         scheduler.step()
