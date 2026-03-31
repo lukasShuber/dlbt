@@ -35,7 +35,7 @@ PATIENCE_PHASE2 = 100
 LR              = 1e-2
 LR_ATTNPOOL     = 1e-5
 N_MC            = 200       # MC samples for choice_probs during training
-FREEZE_ENCODER  = False     # True → frozen only; False → phase 1 + attnpool fine-tune
+FREEZE_ENCODER  = True     # True → frozen only; False → phase 1 + attnpool fine-tune
 MAPPER_HIDDEN   = None      # None → linear mapper
 
 RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"
