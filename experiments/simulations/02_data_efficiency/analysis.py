@@ -90,7 +90,7 @@ def _plot_metric(ax, metric: str, ylabel: str):
 # ---------------------------------------------------------------------------
 fig, ax = plt.subplots(figsize=(7, 4.5))
 _plot_metric(ax, "cmse", "cMSE")
-ax.set_title(f"Data efficiency — cMSE  ({run_tag}, {res['n_seeds']} seeds ± 1 SD)",
+ax.set_title(f"Data efficiency — cMSE  ({run_tag}, {len(res['seeds'])} seeds ± 1 SD)",
              fontsize=11)
 sns.despine(trim=True)
 plt.tight_layout()
@@ -104,7 +104,7 @@ plt.close()
 # ---------------------------------------------------------------------------
 fig, ax = plt.subplots(figsize=(7, 4.5))
 _plot_metric(ax, "rho", "Spearman ρ")
-ax.set_title(f"Data efficiency — ρ  ({run_tag}, {res['n_seeds']} seeds ± 1 SD)",
+ax.set_title(f"Data efficiency — ρ  ({run_tag}, {len(res['seeds'])} seeds ± 1 SD)",
              fontsize=11)
 sns.despine(trim=True)
 plt.tight_layout()

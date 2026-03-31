@@ -269,6 +269,9 @@ for s_idx, seed in enumerate(cfg.SEEDS):
             agent.precompute_features(list(refs_dict.values()))
             agent.save_cache(str(cache_path))
 
+        # Snapshot frozen CLIP features — SLDA always uses these.
+        frozen_clip: dict = {uid: feat.clone() for uid, feat in agent._cache.items()}
+
         phase1 = train_dlbt(
             agent, train_ds, test_stim, refs_dict,
             n_epochs=cfg.N_EPOCHS_PHASE1, lr=cfg.LR,
@@ -316,10 +319,10 @@ for s_idx, seed in enumerate(cfg.SEEDS):
                         agent._cache[ref.uid] = feat.cpu()
 
         # ---------------------------------------------------------------
-        # Fit SLDA
+        # Fit SLDA  (always on frozen CLIP features)
         # ---------------------------------------------------------------
         def clip_features(uids: list) -> np.ndarray:
-            return np.array([agent._cache[uid].cpu().numpy() for uid in uids])
+            return np.array([frozen_clip[uid].cpu().numpy() for uid in uids])
 
         slda_scalers, slda_models, slda_temps = {}, {}, {}
 

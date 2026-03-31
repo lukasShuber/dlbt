@@ -803,7 +803,16 @@ def sample_random_latents(cfg, rng: random.Random):
         "icosahedron": 20,
     }
 
-    color_sample = sample_lab_color(cfg, rng)
+    # Color — either fixed (for one-color diagnostic runs) or sampled randomly.
+    # Set "fixed_color_lab": [L, a, b] in the config JSON to pin all objects to
+    # the same neutral color (e.g. [65, 0, 0] for mid-gray achromatic).
+    if "fixed_color_lab" in cfg:
+        L_fix, a_fix, b_fix = cfg["fixed_color_lab"]
+        rgb_fix, _ = lab_to_rgb(float(L_fix), float(a_fix), float(b_fix))
+        rgb_fix = [min(1.0, max(0.0, c)) for c in rgb_fix]
+        color_sample = {"lab": [float(L_fix), float(a_fix), float(b_fix)], "rgb": rgb_fix}
+    else:
+        color_sample = sample_lab_color(cfg, rng)
 
     return {
         "shape_name": shape_name,
@@ -946,10 +955,10 @@ def main():
     # Random dataset
     # ----------------------------
     random_n = int(cfg.get("random_n", 100))
-    # for i in range(random_n):
-    #     uid = f"{i:06d}"
-    #     z = sample_random_latents(cfg, rng)
-    #     render_one(cfg, engine, img_dir, meta_path, uid, z, tag="random")
+    for i in range(random_n):
+        uid = f"{i:06d}"
+        z = sample_random_latents(cfg, rng)
+        render_one(cfg, engine, img_dir, meta_path, uid, z, tag="random")
 
     # ----------------------------
     # Grid dataset
@@ -987,32 +996,32 @@ def main():
 
     base_uid = random_n
     idx = 0
-    for i_g, gloss in enumerate(gloss_vals):
-        for j_t, trans in enumerate(trans_vals):
-            uid = f"{(base_uid + idx):06d}"
-            z = {
-                "shape_name": grid_shape,
-                "face_index": 0,
-                "glossiness": float(gloss),
-                "transparency": float(trans),
-                "lab": [float(grid_lab[0]), float(grid_lab[1]), float(grid_lab[2])],
-                "rgb": [float(grid_rgb[0]), float(grid_rgb[1]), float(grid_rgb[2])],
-                "scale": float(grid_scale),
-                "pos_xy": [float(grid_pos_xy[0]), float(grid_pos_xy[1])],
-                "yaw_deg": float(grid_yaw_deg),
-            }
-            tag = f"grid_r{i_g:02d}_t{j_t:02d}"
-            render_one(
-                cfg,
-                engine,
-                img_dir,
-                meta_path,
-                uid,
-                z,
-                tag=tag,
-                target_max_dim=grid_target_max_dim,
-            )
-            idx += 1
+    # for i_g, gloss in enumerate(gloss_vals):
+    #     for j_t, trans in enumerate(trans_vals):
+    #         uid = f"{(base_uid + idx):06d}"
+    #         z = {
+    #             "shape_name": grid_shape,
+    #             "face_index": 0,
+    #             "glossiness": float(gloss),
+    #             "transparency": float(trans),
+    #             "lab": [float(grid_lab[0]), float(grid_lab[1]), float(grid_lab[2])],
+    #             "rgb": [float(grid_rgb[0]), float(grid_rgb[1]), float(grid_rgb[2])],
+    #             "scale": float(grid_scale),
+    #             "pos_xy": [float(grid_pos_xy[0]), float(grid_pos_xy[1])],
+    #             "yaw_deg": float(grid_yaw_deg),
+    #         }
+    #         tag = f"grid_r{i_g:02d}_t{j_t:02d}"
+    #         render_one(
+    #             cfg,
+    #             engine,
+    #             img_dir,
+    #             meta_path,
+    #             uid,
+    #             z,
+    #             tag=tag,
+    #             target_max_dim=grid_target_max_dim,
+    #         )
+    #         idx += 1
 
     print(f"Done. Random={random_n}, Grid={grid_n}x{grid_n}. Images in {img_dir}")
 if __name__ == "__main__":

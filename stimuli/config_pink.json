@@ -1,0 +1,67 @@
+{
+  "blender_exe": "/Applications/Blender.app/Contents/MacOS/Blender",
+
+  "out_dir": "imgs_pink",
+  "seed": 0,
+
+  "engine": "CYCLES",
+  "device": "CPU",
+
+  "resolution": [224, 224],
+  "samples": 128,
+  "use_denoising": true,
+
+  "floor_size": 10.0,
+  "wall_height": 12.0,
+  "wall_extent": 30.0,
+  "wall_thickness": 0.05,
+
+  "floor_roughness": 0.25,
+  "floor_specular": 0.25,
+  "gloss_energy": 350.0,
+  "gloss_size": 1.5,
+  "wall_color_rgba": [0.1, 0.1, 0.1, 1.0],
+  "wall_roughness": 0.95,
+
+  "cam_location": [5.5, -6.5, 4.8],
+  "cam_focal_length_mm": 45.0,
+  "cam_target": [0.0, 0.0, 2.2],
+
+  "key_energy": 2200.0,
+  "fill_energy": 700.0,
+  "back_energy": 500.0,
+  "key_size": 4.5,
+  "fill_size": 5.0,
+
+  "target_max_dim": 2.8,
+
+  "shape_names": [
+    "tetrahedron",
+    "cube",
+    "octahedron",
+    "dodecahedron",
+    "icosahedron"
+  ],
+
+  "obj_x_range": [-2.5, 2.5],
+  "obj_y_range": [0.0, 1.0],
+  "obj_scale_range": [0.2, 0.8],
+  "yaw_deg_range": [0.0, 360.0],
+
+  "fixed_color_lab": [45.0, 40.0, -12.0],
+
+  "glossiness_range": [0.0, 1.0],
+  "transparency_range": [0.0, 1.0],
+
+  "random_n": 1000,
+
+  "grid_n": 5,
+  "grid_shape": "dodecahedron",
+  "grid_pos_xy": [0.0, 0.5],
+  "grid_yaw_deg": 0.0,
+  "grid_scale": 0.6,
+  "grid_fixed_L": 45.0,
+  "grid_a": 40.0,
+  "grid_b": -12.0,
+  "grid_target_max_dim": 4.0
+}

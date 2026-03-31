@@ -186,6 +186,10 @@ else:
     agent.precompute_features(list(refs_dict.values()))
     agent.save_cache(str(cache_path))
 
+# Snapshot frozen CLIP features — SLDA always uses these, even in attnpool runs,
+# so that it is never evaluated on fine-tuned representations.
+frozen_clip: dict = {uid: feat.clone() for uid, feat in agent._cache.items()}
+
 print("\nPhase 1 — mapper warmup...")
 phase1 = train_dlbt(
     agent, train_ds, stim_gen_ds, refs_dict,
@@ -221,7 +225,7 @@ if not cfg.FREEZE_ENCODER:
     )
     print(f"  best epoch: {phase2.best_epoch}  stim_gen_mse: {phase2.best_val_mse:.4f}")
 
-    # Repopulate _cache with final attnpool features for SLDA
+    # Repopulate _cache with final attnpool features for DLBT predictions
     print("Repopulating feature cache...")
     agent.eval()
     all_refs_list = list(refs_dict.values())
@@ -244,10 +248,10 @@ torch.save(agent.state_dict(), agent_path)
 print(f"Saved agent weights → {agent_path}")
 
 # ---------------------------------------------------------------------------
-# Fit per-task SLDA
+# Fit per-task SLDA  (always on frozen CLIP features)
 # ---------------------------------------------------------------------------
 def clip_features(uids: list) -> np.ndarray:
-    return np.array([agent._cache[uid].cpu().numpy() for uid in uids])
+    return np.array([frozen_clip[uid].cpu().numpy() for uid in uids])
 
 
 print("\nFitting SLDA...")
