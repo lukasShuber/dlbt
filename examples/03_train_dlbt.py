@@ -70,11 +70,11 @@ SCALE_BETA         = 10.0   # sharpness for scale sigmoid (new stimuli [0.2, 0.8
 N_EPOCHS_PHASE1    = 500    # mapper warmup (encoder always frozen)
 PATIENCE_PHASE1    = 50     # early-stopping patience for phase 1
 N_EPOCHS_PHASE2    = 3000   # attnpool fine-tuning (only if FREEZE_ENCODER=False)
-PATIENCE_PHASE2    = 300    # early-stopping patience for phase 2
+PATIENCE_PHASE2    = 100    # early-stopping patience for phase 2
 LR                 = 1e-2   # mapper LR
-LR_ATTNPOOL        = 1e-5   # attnpool LR (phase 2 only)
+LR_ATTNPOOL        = 1e-4   # attnpool LR (phase 2 only)
 N_MC               = 200    # MC samples for choice_probs during training
-FREEZE_ENCODER     = True   # True → frozen only; False → phase 1 then attnpool fine-tune
+FREEZE_ENCODER     = False   # True → frozen only; False → phase 1 then attnpool fine-tune
 MAPPER_HIDDEN      = None   # None → linear mapper
 
 RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"  # used in all output paths
