@@ -1,8 +1,11 @@
 """
 Configuration for simulation 02 — data efficiency experiment.
 
-Trains DLBT and SLDA across a range of per-pair trial budgets and multiple
-seeds to characterise how prediction accuracy scales with behavioral data.
+Trains DLBT and SLDA across a range of *total* trial budgets.  For each
+budget b, exactly b behavioral trials are sampled uniformly at random (with
+replacement) from the full set of training (image, task) pairs.  At low
+budgets most pairs are unobserved; at high budgets each pair accumulates
+many trials.  This tests the full data-scarce → data-rich continuum.
 """
 
 from pathlib import Path
@@ -18,11 +21,11 @@ RESULTS_DIR = Path(__file__).parent / "results"
 # Synthetic data
 # ---------------------------------------------------------------------------
 BASE_SEED          = 42
-N_SEEDS            = 5
+N_SEEDS            = 1
 SEEDS              = [BASE_SEED + i for i in range(N_SEEDS)]
 
-BUDGETS            = [4, 16, 64, 256, 1000]   # trials per (image, task) pair
-N_FULL             = 1000                       # test-set trial count (fixed)
+BUDGETS    = [10, 100, 1_000, 10_000, 100_000, 1_000_000]  # total training trials
+N_FULL_PER_PAIR = 1000   # trials per pair for the fixed test sets
 
 PEAK               = 15.0
 BASE_CONCENTRATION = 1.0

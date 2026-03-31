@@ -38,9 +38,10 @@ dist_colors   = res["dist_colors"]
 dlbt          = res["dlbt"]
 slda          = res["slda"]
 
-n_dist = len(distributions)
-x      = np.arange(n_dist)
-width  = 0.18   # bar width
+n_dist  = len(distributions)
+width   = 0.16                          # individual bar width
+spacing = 1.6                           # gap between distribution groups
+x       = np.arange(n_dist) * spacing  # group centres: 0, 1.6, 3.2, 4.8
 
 # ---------------------------------------------------------------------------
 # Plotting helper
@@ -74,7 +75,7 @@ def _plot_metric(ax, metric: str, ylabel: str):
 
     ax.set_xticks(x)
     ax.set_xticklabels([dist_labels[d] for d in distributions],
-                       rotation=15, ha="right", fontsize=9)
+                       rotation=0, ha="center", fontsize=9)
     ax.set_ylabel(ylabel, fontsize=10)
     if metric == "cmse":
         ax.set_ylim(bottom=0)
@@ -83,7 +84,7 @@ def _plot_metric(ax, metric: str, ylabel: str):
 # ---------------------------------------------------------------------------
 # Plot 1 — cMSE
 # ---------------------------------------------------------------------------
-fig, ax = plt.subplots(figsize=(9, 4.5))
+fig, ax = plt.subplots(figsize=(12, 4.5))
 _plot_metric(ax, "cmse", "cMSE")
 ax.set_title(
     f"Belief distribution robustness — cMSE  "
@@ -109,7 +110,7 @@ plt.close()
 # ---------------------------------------------------------------------------
 # Plot 2 — ρ
 # ---------------------------------------------------------------------------
-fig, ax = plt.subplots(figsize=(9, 4.5))
+fig, ax = plt.subplots(figsize=(12, 4.5))
 _plot_metric(ax, "rho", "Spearman ρ")
 ax.set_title(
     f"Belief distribution robustness — ρ  "

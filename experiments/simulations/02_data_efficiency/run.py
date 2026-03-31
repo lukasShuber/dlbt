@@ -1,12 +1,11 @@
 """
 Simulation 02 — data efficiency.
 
-Sweeps over per-pair trial budgets and multiple seeds.  For each (seed, budget)
-pair a fresh DLBT model is trained and an SLDA baseline is fit; both are
-evaluated on test datasets held at N_FULL trials for clean ground-truth targets.
-
-Results are saved to results/results_{tag}.pkl as numpy arrays of shape
-[n_seeds, n_budgets] for downstream plotting in analysis.py.
+For each budget b, exactly b behavioral trials are drawn uniformly at random
+(with replacement) from the pool of training (image, task) pairs.  At low
+budgets most pairs are unobserved; at high budgets each pair accumulates many
+trials.  DLBT and SLDA are trained on the resulting sparse dataset and
+evaluated on fixed test sets (N_FULL_PER_PAIR trials each) for clean targets.
 
 Run from repo root:
     python experiments/simulations/02_data_efficiency/run.py
@@ -25,7 +24,6 @@ from scipy.optimize import minimize_scalar
 from scipy.stats import spearmanr
 from sklearn.linear_model import RidgeCV
 from sklearn.preprocessing import StandardScaler
-from tqdm import tqdm
 
 from dlbt.constants import (
     K, DIM_LEFT_RIGHT, DIM_TRANSP, DIM_GLOSS, DIM_SMALL_LARGE,
@@ -112,7 +110,7 @@ def gt_p_right(uid: str, task, n_mc: int = 2000, rng=None) -> float:
     return float((beliefs @ task.delta_u > 0).mean())
 
 
-# Ground-truth probabilities are independent of seed / budget — cache globally.
+# GT probabilities are deterministic given uid+task — cache globally.
 _rng_gt   = np.random.default_rng(0)
 _gt_cache: dict = {}
 
@@ -125,10 +123,9 @@ def get_true_p(uid: str, task_name: str) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Dataset helpers
+# Split helper
 # ---------------------------------------------------------------------------
 def make_split(rng_split) -> tuple[set, set]:
-    """Stratified image split → (train_uids, test_uids)."""
     state_to_uids: dict = defaultdict(list)
     for uid in sorted(refs_dict.keys()):
         state_to_uids[refs_dict[uid].latent_state].append(uid)
@@ -144,20 +141,66 @@ def make_split(rng_split) -> tuple[set, set]:
     return train_uids, test_uids
 
 
-def make_dataset(task_names: list, allowed_uids: set,
-                 n_trials: int, rng) -> BehavioralDataset:
+# ---------------------------------------------------------------------------
+# Dataset helpers
+# ---------------------------------------------------------------------------
+def make_test_dataset(task_names: list, allowed_uids: set, rng) -> BehavioralDataset:
+    """Fixed-size test dataset: N_FULL_PER_PAIR trials per (image, task) pair."""
     avail   = [r for r in refs if r.uid in allowed_uids]
     records = []
     for task_name in task_names:
         task = TASKS[task_name]
         for ref in balanced_refs(task, avail, rng=rng):
             alpha   = gt_alpha(ref.uid)
-            beliefs = rng.dirichlet(alpha, size=n_trials)
+            beliefs = rng.dirichlet(alpha, size=cfg.N_FULL_PER_PAIR)
             count_1 = int((beliefs @ task.delta_u > 0).sum())
             records.append(Observation(
                 uid=ref.uid, task_name=task_name,
-                count_0=n_trials - count_1, count_1=count_1,
+                count_0=cfg.N_FULL_PER_PAIR - count_1, count_1=count_1,
             ))
+    return BehavioralDataset.from_records(records)
+
+
+def make_pair_pool(task_names: list, allowed_uids: set, rng) -> list:
+    """
+    Return the ordered list of (ref, task_name) pairs that would be sampled
+    from.  Uses balanced_refs to match the standard data generation procedure.
+    Rng is consumed here; call once per seed and reuse the list across budgets.
+    """
+    avail = [r for r in refs if r.uid in allowed_uids]
+    pairs = []
+    for task_name in task_names:
+        task = TASKS[task_name]
+        for ref in balanced_refs(task, avail, rng=rng):
+            pairs.append((ref, task_name))
+    return pairs
+
+
+def make_budget_dataset(pairs: list, total_budget: int, rng) -> BehavioralDataset:
+    """
+    Sample `total_budget` trials uniformly at random (with replacement) across
+    all (image, task) pairs.  Pairs that receive 0 trials are excluded.
+    """
+    n_pairs = len(pairs)
+    # Draw which pair each trial belongs to
+    counts = np.bincount(
+        rng.integers(0, n_pairs, size=total_budget),
+        minlength=n_pairs,
+    )
+
+    records = []
+    for pair_idx, n_trials in enumerate(counts):
+        if n_trials == 0:
+            continue
+        ref, task_name = pairs[pair_idx]
+        task    = TASKS[task_name]
+        alpha   = gt_alpha(ref.uid)
+        beliefs = rng.dirichlet(alpha, size=int(n_trials))
+        count_1 = int((beliefs @ task.delta_u > 0).sum())
+        records.append(Observation(
+            uid=ref.uid, task_name=task_name,
+            count_0=int(n_trials) - count_1, count_1=count_1,
+        ))
     return BehavioralDataset.from_records(records)
 
 
@@ -166,9 +209,20 @@ def make_dataset(task_names: list, allowed_uids: set,
 # ---------------------------------------------------------------------------
 def agg_metrics(pred_dict: dict, task_names: list,
                 n_mc: int | None = None) -> tuple[float, float]:
-    """Aggregate cMSE and ρ across all tasks in a condition."""
-    preds = np.concatenate([pred_dict[t]["pred"] for t in task_names if t in pred_dict])
-    trues = np.concatenate([pred_dict[t]["true"] for t in task_names if t in pred_dict])
+    """Aggregate cMSE and ρ; use true GT probabilities as targets."""
+    preds_list, trues_list = [], []
+    for t in task_names:
+        if t not in pred_dict:
+            continue
+        d = pred_dict[t]
+        preds_list.append(d["pred"])
+        trues_list.append(np.array([get_true_p(uid, t) for uid in d["uids"]]))
+
+    if not preds_list:
+        return float("nan"), float("nan")
+
+    preds = np.concatenate(preds_list)
+    trues = np.concatenate(trues_list)
     raw   = float(np.mean((preds - trues) ** 2))
     cmse  = raw - float(np.mean(preds * (1 - preds))) / (n_mc - 1) if n_mc else raw
     rho, _ = spearmanr(preds, trues)
@@ -183,11 +237,11 @@ def collect_dlbt(agent, ds: BehavioralDataset, task_names: list) -> dict:
         if len(group) == 0:
             continue
         task       = TASKS[task_name]
-        batch_refs = [refs_dict[uid] for uid in group["uid"]]
-        true_p     = np.array([get_true_p(r.uid, task_name) for r in batch_refs])
+        uids       = group["uid"].tolist()
+        batch_refs = [refs_dict[uid] for uid in uids]
         with torch.no_grad():
             pred = agent.choice_probs(batch_refs, task)[:, 1].cpu().numpy()
-        out[task_name] = dict(pred=pred, true=true_p)
+        out[task_name] = dict(pred=pred, uids=uids)
     return out
 
 
@@ -198,18 +252,17 @@ def collect_slda(slda_scalers, slda_models, slda_temps,
     for task_name in task_names:
         if task_name not in slda_models:
             continue
-        group  = ds.df[ds.df["task_name"] == task_name]
+        group = ds.df[ds.df["task_name"] == task_name]
         if len(group) == 0:
             continue
-        uids   = group["uid"].tolist()
-        true_p = np.array([get_true_p(uid, task_name) for uid in uids])
+        uids     = group["uid"].tolist()
         X        = clip_feat_fn(uids)
         X_scaled = slda_scalers[task_name].transform(X)
         p_pred   = np.clip(slda_models[task_name].predict(X_scaled), 1e-6, 1 - 1e-6)
         logits   = np.log(p_pred / (1 - p_pred))
         tau      = slda_temps[task_name]
         pred     = 1.0 / (1.0 + np.exp(-logits / tau))
-        out[task_name] = dict(pred=pred, true=true_p)
+        out[task_name] = dict(pred=pred, uids=uids)
     return out
 
 
@@ -232,29 +285,37 @@ for s_idx, seed in enumerate(cfg.SEEDS):
     print(f"Seed {s_idx + 1}/{cfg.N_SEEDS}  (seed={seed})")
     print(f"{'='*60}")
 
-    # Image split — fixed for this seed, shared across budgets
-    rng_split          = np.random.default_rng(seed)
-    train_uids, test_uids = make_split(rng_split)
+    rng_split              = np.random.default_rng(seed)
+    train_uids, test_uids  = make_split(rng_split)
     print(f"  split: {len(train_uids)} train / {len(test_uids)} test images")
 
-    # Test datasets — always N_FULL trials, fixed for this seed
-    rng_test     = np.random.default_rng(seed + 99_999)
-    test_train   = make_dataset(cfg.TRAIN_TASKS, train_uids, cfg.N_FULL, rng_test)
-    test_stim    = make_dataset(cfg.TRAIN_TASKS, test_uids,  cfg.N_FULL, rng_test)
-    test_task    = make_dataset(cfg.VAL_TASKS,   train_uids, cfg.N_FULL, rng_test)
-    test_joint   = make_dataset(cfg.VAL_TASKS,   test_uids,  cfg.N_FULL, rng_test)
+    # Test datasets — N_FULL_PER_PAIR trials, fixed for this seed
+    rng_test  = np.random.default_rng(seed + 99_999)
+    test_train  = make_test_dataset(cfg.TRAIN_TASKS, train_uids, rng_test)
+    test_stim   = make_test_dataset(cfg.TRAIN_TASKS, test_uids,  rng_test)
+    test_task   = make_test_dataset(cfg.VAL_TASKS,   train_uids, rng_test)
+    test_joint  = make_test_dataset(cfg.VAL_TASKS,   test_uids,  rng_test)
+
+    # Pair pool — generated once per seed, reused across all budgets
+    rng_pairs  = np.random.default_rng(seed + 77_777)
+    train_pairs = make_pair_pool(cfg.TRAIN_TASKS, train_uids, rng_pairs)
+    print(f"  pair pool: {len(train_pairs)} training (image, task) pairs")
 
     for b_idx, budget in enumerate(cfg.BUDGETS):
-        print(f"\n  Budget {budget:>5} trials/pair  ({b_idx + 1}/{len(cfg.BUDGETS)})")
+        print(f"\n  Budget {budget:>9,} total trials  ({b_idx + 1}/{len(cfg.BUDGETS)})")
 
         # Training dataset — budget trials, unique rng per (seed, budget)
         rng_train = np.random.default_rng(seed * 10_000 + b_idx)
-        train_ds  = make_dataset(cfg.TRAIN_TASKS, train_uids, budget, rng_train)
+        train_ds  = make_budget_dataset(train_pairs, budget, rng_train)
+
+        n_obs   = len(train_ds.df)
+        n_tasks = train_ds.df["task_name"].nunique()
+        print(f"    {n_obs} observations across {n_tasks} tasks")
 
         # ---------------------------------------------------------------
         # Train DLBT
         # ---------------------------------------------------------------
-        torch.manual_seed(seed)          # reproducible mapper init across budgets
+        torch.manual_seed(seed)
         random.seed(seed)
         np.random.seed(seed)
 
@@ -269,7 +330,6 @@ for s_idx, seed in enumerate(cfg.SEEDS):
             agent.precompute_features(list(refs_dict.values()))
             agent.save_cache(str(cache_path))
 
-        # Snapshot frozen CLIP features — SLDA always uses these.
         frozen_clip: dict = {uid: feat.clone() for uid, feat in agent._cache.items()}
 
         phase1 = train_dlbt(
@@ -281,45 +341,8 @@ for s_idx, seed in enumerate(cfg.SEEDS):
         print(f"    DLBT  best epoch {phase1.best_epoch:4d}  "
               f"stim_mse={phase1.best_val_mse:.4f}")
 
-        # Optional phase 2 (attnpool fine-tune)
-        if not cfg.FREEZE_ENCODER:
-            gc.collect()
-            torch.cuda.empty_cache()
-
-            for p in agent.mapper.parameters():
-                p.requires_grad_(False)
-            for p in agent.encoder.attnpool.parameters():
-                p.requires_grad_(True)
-            agent.freeze_encoder = False
-            agent._cache.clear()
-
-            optimizer2 = torch.optim.Adam(
-                agent.encoder.attnpool.parameters(), lr=cfg.LR_ATTNPOOL
-            )
-            phase2 = train_dlbt(
-                agent, train_ds, test_stim, refs_dict,
-                n_epochs=cfg.N_EPOCHS_PHASE2, patience=cfg.PATIENCE_PHASE2,
-                optimizer=optimizer2,
-                extra_val_datasets={"task": test_task, "joint": test_joint},
-            )
-            print(f"    DLBT  phase2 best epoch {phase2.best_epoch:4d}  "
-                  f"stim_mse={phase2.best_val_mse:.4f}")
-
-            # Rebuild cache from attnpool features
-            agent.eval()
-            all_refs_list = list(refs_dict.values())
-            with torch.no_grad():
-                for i in range(0, len(all_refs_list), 16):
-                    batch   = all_refs_list[i : i + 16]
-                    spatial = torch.stack(
-                        [agent._backbone_cache[r.uid] for r in batch]
-                    ).to(agent.device)
-                    feats = agent.encoder.attnpool(spatial).float()
-                    for ref, feat in zip(batch, feats):
-                        agent._cache[ref.uid] = feat.cpu()
-
         # ---------------------------------------------------------------
-        # Fit SLDA  (always on frozen CLIP features)
+        # Fit SLDA  (only on tasks present in training data)
         # ---------------------------------------------------------------
         def clip_features(uids: list) -> np.ndarray:
             return np.array([frozen_clip[uid].cpu().numpy() for uid in uids])
@@ -328,7 +351,7 @@ for s_idx, seed in enumerate(cfg.SEEDS):
 
         for task_name in cfg.TRAIN_TASKS:
             group = train_ds.df[train_ds.df["task_name"] == task_name]
-            if len(group) == 0:
+            if len(group) < 3:   # need at least a few points to fit ridge
                 continue
             uids    = group["uid"].tolist()
             X       = clip_features(uids)
@@ -352,6 +375,8 @@ for s_idx, seed in enumerate(cfg.SEEDS):
             slda_models[task_name]  = model
             slda_temps[task_name]   = float(np.exp(opt.x))
 
+        print(f"    SLDA  fitted {len(slda_models)}/{len(cfg.TRAIN_TASKS)} tasks")
+
         # ---------------------------------------------------------------
         # Collect predictions
         # ---------------------------------------------------------------
@@ -370,22 +395,21 @@ for s_idx, seed in enumerate(cfg.SEEDS):
         }
 
         # ---------------------------------------------------------------
-        # Store aggregated metrics
+        # Store metrics
         # ---------------------------------------------------------------
         for cond, task_names in [("train", cfg.TRAIN_TASKS), ("stim",  cfg.TRAIN_TASKS),
                                   ("task",  cfg.VAL_TASKS),   ("joint", cfg.VAL_TASKS)]:
-            cmse, rho = agg_metrics(dlbt_preds[cond], task_names, n_mc=cfg.N_MC)
+            cmse, rho = agg_metrics(dlbt_preds[cond], task_names, cfg.N_MC)
             res_dlbt[cond]["cmse"][s_idx, b_idx] = cmse
             res_dlbt[cond]["rho"][s_idx, b_idx]  = rho
             print(f"    DLBT  {cond:6s}  cMSE={cmse:.4f}  ρ={rho:.3f}")
 
         for cond, task_names in [("train", cfg.TRAIN_TASKS), ("stim", cfg.TRAIN_TASKS)]:
-            cmse, rho = agg_metrics(slda_preds[cond], task_names, n_mc=None)
+            cmse, rho = agg_metrics(slda_preds[cond], task_names, None)
             res_slda[cond]["cmse"][s_idx, b_idx] = cmse
             res_slda[cond]["rho"][s_idx, b_idx]  = rho
             print(f"    SLDA  {cond:6s}  cMSE={cmse:.4f}  ρ={rho:.3f}")
 
-        # Free GPU memory before next iteration
         del agent
         gc.collect()
         if torch.cuda.is_available():
@@ -397,7 +421,7 @@ for s_idx, seed in enumerate(cfg.SEEDS):
 results = dict(
     budgets  = cfg.BUDGETS,
     seeds    = cfg.SEEDS,
-    n_full   = cfg.N_FULL,
+    n_full   = cfg.N_FULL_PER_PAIR,
     run_tag  = cfg.RUN_TAG,
     dlbt     = res_dlbt,
     slda     = res_slda,

@@ -77,8 +77,9 @@ def _plot_metric(ax, metric: str, ylabel: str):
 
     ax.set_xscale("log")
     ax.set_xticks(budgets)
-    ax.set_xticklabels(budgets)
-    ax.set_xlabel("Training trials per stimulus–task pair", fontsize=10)
+    labels = [f"{b:,}" if b < 1_000_000 else "1M" for b in budgets]
+    ax.set_xticklabels(labels)
+    ax.set_xlabel("Total training trials", fontsize=10)
     ax.set_ylabel(ylabel, fontsize=10)
     if metric == "cmse":
         ax.set_ylim(bottom=0)
