@@ -10,8 +10,14 @@ Four evaluation regions arise from a joint split on stimuli (X_test) and tasks (
     │ Unseen images    │ Stim generalization│ Joint generalization │
     └──────────────────┴────────────────────┴──────────────────────┘
 
+Five latent dimensions (K=32): front/back (y), left/right (x), transparent,
+glossy, small/large (scale).  Shape (categorical) is excluded.
+
+Val tasks hold out all lr × sl conjunctions (left_right × small_large):
+the model trains on each dimension separately but never sees their combination.
+
 DLBT is evaluated on all four regions.
-SLDA (per-task Ridge) is evaluated on training + stimulus-generalization only
+SLDA (per-task RidgeCV) is evaluated on training + stimulus-generalization only
 (it has no weights for unseen tasks).
 
 Run from repo root:
@@ -26,12 +32,13 @@ import torch
 import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy.stats import spearmanr
-from sklearn.linear_model import Ridge
+from sklearn.linear_model import RidgeCV
 from sklearn.preprocessing import StandardScaler
+from scipy.optimize import minimize_scalar
 
 from dlbt.constants import (
-    K, DIM_FRONT_BACK, DIM_SHAPE, DIM_TRANSP, DIM_GLOSS,
-    Y_THRESHOLD, TRANSP_THRESH, GLOSS_THRESH, NON_TRIANGULAR_SHAPES,
+    K, DIM_FRONT_BACK, DIM_LEFT_RIGHT, DIM_TRANSP, DIM_GLOSS, DIM_SMALL_LARGE,
+    Y_THRESHOLD, X_THRESHOLD, TRANSP_THRESH, GLOSS_THRESH, SCALE_THRESH,
 )
 from dlbt.data.image_ref import load_image_refs, image_refs_as_list, balanced_refs
 from dlbt.data.task import TASKS
@@ -56,7 +63,8 @@ SEED               = 42
 N_TRIALS           = 100    # SEU decisions per (image, task)
 PEAK               = 15.0   # peak concentration added to matching latent states
 BASE_CONCENTRATION = 1.0    # base concentration on all latent states
-BETA               = 5.0    # sigmoid sharpness for continuous dimensions
+BETA               = 5.0    # sigmoid sharpness for fb, lr, tr, gl dimensions
+SCALE_BETA         = 20.0   # higher sharpness for scale (range [0.5, 0.8] is narrow)
 N_EPOCHS           = 3000
 LR                 = 1e-2   # mapper LR
 LR_ATTNPOOL        = 1e-5   # attnpool LR
@@ -65,39 +73,36 @@ FREEZE_ENCODER     = True   # True → DLBT-frozen; False → DLBT-attnpool
 MAPPER_HIDDEN      = None   # None → linear mapper
 
 IMG_TEST_FRAC      = 0.20   # fraction of images held out for stimulus/joint gen
-SLDA_RIDGE_ALPHA   = 1.0    # Ridge regularisation strength for per-task SLDA
 
-# Holdout: all shape × transparency conjunctions held out as T_test.
-# Training includes pure shape and pure transparency tasks separately so each
-# dimension is learned — but their combination is never seen during training.
+# Holdout (Option B): all left_right × small_large conjunctions held out as T_test.
+# Training sees each dimension independently but never their combination.
 TRAIN_TASKS = [
     # simple (one dimension each)
-    "front_back", "glossy", "triangular", "transparent",
+    "front_back", "left_right", "transparent", "glossy", "large",
     # simple-flipped
-    "front", "nontriangular", "opaque", "matte",
-    # 2-way AND: location × material
+    "front", "left", "opaque", "matte", "small",
+    # 2-way AND: location × location (fb × lr)
+    "back_and_right", "back_and_left", "front_and_left",
+    # 2-way AND: fb × material
+    "back_and_transparent", "front_and_transparent",
     "back_and_glossy", "front_and_glossy",
-    "front_and_transparent", "back_and_transparent",
-    # 2-way AND: shape × glossiness (shape without transparency)
-    "triangular_and_glossy", "nontriangular_and_glossy",
-    # 2-way AND: shape × location (shape without transparency)
-    "triangular_and_front", "nontriangular_and_front",
-    "triangular_and_back", "nontriangular_and_back",
-    # 2-way AND: transparency × glossiness
+    # 2-way AND: lr × material
+    "right_and_transparent", "right_and_glossy", "left_and_glossy",
+    # 2-way AND: material × material
     "transparent_and_glossy",
-    # 3-way AND: no shape×transparency conjunction
-    "front_and_transparent_and_glossy",
-    "back_and_transparent_and_glossy",
-    "triangular_and_front_and_glossy",
-    "nontriangular_and_back_and_glossy",
+    # 2-way AND: sl × location/material (no lr × sl)
+    "large_and_back", "large_and_transparent", "large_and_glossy",
+    # 3-way AND
+    "front_and_transparent_and_glossy", "back_and_transparent_and_glossy",
+    "back_and_right_and_glossy", "large_and_front_and_transparent",
 ]
 VAL_TASKS = [
-    # 2-way shape × transparency — never seen in training
-    "triangular_and_transparent",
-    "nontriangular_and_transparent",
-    # 3-way extensions — also never seen
-    "triangular_and_front_and_transparent",
-    "triangular_and_transparent_and_glossy",
+    # lr × sl conjunctions — never seen during training
+    "right_and_large",
+    "left_and_large",
+    # 3-way extensions
+    "back_and_right_and_large",
+    "right_and_large_and_glossy",
 ]
 
 # Regime colors (used consistently across all plots)
@@ -135,9 +140,10 @@ def _load_continuous_metadata(metadata_path: str) -> dict:
             z   = rec["z"]
             result[rec["id"]] = dict(
                 y            = z["pos_xy"][1],
+                x            = z["pos_xy"][0],
                 transparency = z["transparency"],
                 glossiness   = z["glossiness"],
-                is_nontri    = z["shape_name"] in NON_TRIANGULAR_SHAPES,
+                scale        = z["scale"],
             )
     return result
 
@@ -151,29 +157,39 @@ def _sigmoid(x: float) -> float:
 
 
 def gt_alpha(uid: str) -> np.ndarray:
-    """Structured Dirichlet: soft mean q_k + clarity-scaled concentration λ."""
+    """Structured Dirichlet: soft mean q_k + clarity-scaled concentration λ.
+
+    Five continuous dimensions — shape (categorical) is excluded.
+    SCALE_BETA is higher than BETA because the scale range [0.5, 0.8] is
+    narrower than the other dimensions' ranges.
+    """
     z = cont_meta[uid]
-    p_back   = _sigmoid(BETA * (z["y"]            - Y_THRESHOLD))
-    p_nontri = float(z["is_nontri"])
-    p_transp = _sigmoid(BETA * (z["transparency"] - TRANSP_THRESH))
-    p_glossy = _sigmoid(BETA * (z["glossiness"]   - GLOSS_THRESH))
+    p_back  = _sigmoid(BETA       * (z["y"]            - Y_THRESHOLD))
+    p_right = _sigmoid(BETA       * (z["x"]            - X_THRESHOLD))
+    p_transp = _sigmoid(BETA      * (z["transparency"] - TRANSP_THRESH))
+    p_glossy = _sigmoid(BETA      * (z["glossiness"]   - GLOSS_THRESH))
+    p_large  = _sigmoid(SCALE_BETA * (z["scale"]       - SCALE_THRESH))
 
     q = np.empty(K, dtype=np.float64)
     for k in range(K):
-        k_back   = (k >> DIM_FRONT_BACK) & 1
-        k_nontri = (k >> DIM_SHAPE)      & 1
+        k_back  = (k >> DIM_FRONT_BACK)  & 1
+        k_right = (k >> DIM_LEFT_RIGHT)  & 1
         k_transp = (k >> DIM_TRANSP)     & 1
         k_glossy = (k >> DIM_GLOSS)      & 1
+        k_large  = (k >> DIM_SMALL_LARGE) & 1
         q[k] = (
             (p_back   if k_back   else (1.0 - p_back))   *
-            (p_nontri if k_nontri else (1.0 - p_nontri)) *
+            (p_right  if k_right  else (1.0 - p_right))  *
             (p_transp if k_transp else (1.0 - p_transp)) *
-            (p_glossy if k_glossy else (1.0 - p_glossy))
+            (p_glossy if k_glossy else (1.0 - p_glossy)) *
+            (p_large  if k_large  else (1.0 - p_large))
         )
 
     clarity = (abs(p_back   - 0.5) * 2.0 *
+               abs(p_right  - 0.5) * 2.0 *
                abs(p_transp - 0.5) * 2.0 *
-               abs(p_glossy - 0.5) * 2.0)
+               abs(p_glossy - 0.5) * 2.0 *
+               abs(p_large  - 0.5) * 2.0)
     lam = BASE_CONCENTRATION + PEAK * clarity
     return 1e-6 + lam * q
 
@@ -279,9 +295,10 @@ def clip_features(uids: list) -> np.ndarray:
     return np.array([agent._cache[uid].cpu().numpy() for uid in uids])
 
 
-print("\nFitting per-task SLDA (Ridge regression)...")
+print("\nFitting per-task SLDA (RidgeCV + temperature calibration)...")
 slda_scalers: dict = {}   # task_name -> StandardScaler (fitted on train images)
-slda_models:  dict = {}   # task_name -> Ridge
+slda_models:  dict = {}   # task_name -> RidgeCV
+slda_temps:   dict = {}   # task_name -> float  (Platt scaling temperature τ)
 
 for task_name in TRAIN_TASKS:
     group = train_ds.df[train_ds.df["task_name"] == task_name]
@@ -291,21 +308,43 @@ for task_name in TRAIN_TASKS:
     X       = clip_features(uids)
     p_right = (group["count_1"] / (group["count_0"] + group["count_1"])).values
 
-    scaler  = StandardScaler()
+    # RidgeCV: cross-validates over candidate alphas — avoids manually tuning
+    # regularisation strength (critical when features=1024 >> samples~200).
+    scaler   = StandardScaler()
     X_scaled = scaler.fit_transform(X)
-    model   = Ridge(alpha=SLDA_RIDGE_ALPHA)
+    model    = RidgeCV(alphas=[1e1, 1e2, 1e3, 1e4, 1e5])
     model.fit(X_scaled, p_right)
+
+    # Temperature calibration (Platt scaling) on training data.
+    # Ridge predicts raw probabilities p̂; we fit τ > 0 to minimise NLL:
+    #   P = σ( logit(p̂) / τ )
+    # This re-calibrates confidence without changing the ranking.
+    p_pred = np.clip(model.predict(X_scaled), 1e-6, 1.0 - 1e-6)
+    logits  = np.log(p_pred / (1.0 - p_pred))
+
+    def _nll_tau(log_tau, logits=logits, targets=p_right):
+        p = 1.0 / (1.0 + np.exp(-logits / np.exp(log_tau)))
+        p = np.clip(p, 1e-7, 1.0 - 1e-7)
+        return -np.mean(targets * np.log(p) + (1.0 - targets) * np.log(1.0 - p))
+
+    opt = minimize_scalar(_nll_tau, bounds=(-3.0, 3.0), method="bounded")
+    tau = float(np.exp(opt.x))
 
     slda_scalers[task_name] = scaler
     slda_models[task_name]  = model
+    slda_temps[task_name]   = tau
 
-print(f"  Fitted {len(slda_models)} per-task Ridge models.")
+print(f"  Fitted {len(slda_models)} per-task RidgeCV models  "
+      f"(τ range: {min(slda_temps.values()):.3f}–{max(slda_temps.values()):.3f}).")
 
 
 def slda_predict(task_name: str, uids: list) -> np.ndarray:
-    X = clip_features(uids)
+    X        = clip_features(uids)
     X_scaled = slda_scalers[task_name].transform(X)
-    return np.clip(slda_models[task_name].predict(X_scaled), 0.0, 1.0)
+    p_pred   = np.clip(slda_models[task_name].predict(X_scaled), 1e-6, 1.0 - 1e-6)
+    logits   = np.log(p_pred / (1.0 - p_pred))
+    tau      = slda_temps[task_name]
+    return 1.0 / (1.0 + np.exp(-logits / tau))
 
 
 # ---------------------------------------------------------------------------
@@ -497,8 +536,7 @@ for idx, (ax, task_name) in enumerate(zip(axes.flat, ALL_TASKS)):
         ax.text(0.05, 0.78, f"ρ={rho_jg:.2f}", transform=ax.transAxes,
                 fontsize=6, color=C_JOINT, va="top")
 
-    nice = (task_name.replace("nontriangular", "nontri.")
-                     .replace("_and_", " & ").replace("_", "/"))
+    nice = task_name.replace("_and_", " & ").replace("_", "/")
     ax.set_title(nice, fontsize=7, pad=2)
     row, col = divmod(idx, N_COLS)
     if row == N_ROWS - 1:
@@ -554,8 +592,7 @@ for idx, (ax, task_name) in enumerate(zip(axes.flat, TRAIN_TASKS)):
             fontsize=6, color=C_TRAIN, va="top")
     ax.text(0.05, 0.78, f"ρ={rho_sg:.2f}", transform=ax.transAxes,
             fontsize=6, color=C_STIM,  va="top")
-    nice = (task_name.replace("nontriangular", "nontri.")
-                     .replace("_and_", " & ").replace("_", "/"))
+    nice = task_name.replace("_and_", " & ").replace("_", "/")
     ax.set_title(nice, fontsize=7, pad=2)
     row, col = divmod(idx, N_COLS_S)
     if row == N_ROWS_S - 1:

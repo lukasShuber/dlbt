@@ -5,11 +5,12 @@ Each ImageRef carries the image's UID, its absolute path, and its
 pre-computed latent state index (an integer in [0, K-1]).
 
 The latent state is determined deterministically from the image's
-generative parameters via the four binary splits defined in constants.py:
-  - front/back  (y-position threshold)
-  - shape       (triangular vs non-triangular)
-  - transparency (threshold)
-  - glossiness   (threshold)
+generative parameters via the five binary splits defined in constants.py:
+  - front/back    (y-position threshold)
+  - left/right    (x-position threshold)
+  - transparency  (threshold)
+  - glossiness    (threshold)
+  - small/large   (scale threshold)
 """
 
 from __future__ import annotations
@@ -21,9 +22,8 @@ from typing import Dict, List
 
 from dlbt.constants import (
     K,
-    DIM_FRONT_BACK, DIM_SHAPE, DIM_TRANSP, DIM_GLOSS,
-    Y_THRESHOLD, TRANSP_THRESH, GLOSS_THRESH,
-    NON_TRIANGULAR_SHAPES,
+    DIM_FRONT_BACK, DIM_LEFT_RIGHT, DIM_TRANSP, DIM_GLOSS, DIM_SMALL_LARGE,
+    Y_THRESHOLD, X_THRESHOLD, TRANSP_THRESH, GLOSS_THRESH, SCALE_THRESH,
 )
 
 
@@ -48,24 +48,23 @@ def _latent_state_from_z(z: dict) -> int:
     Map a latent parameter dict (as stored in metadata.jsonl) to a state index.
 
     Bit layout:
-      bit 3 (front_back): 1 if y >= Y_THRESHOLD, else 0
-      bit 2 (shape):      1 if shape is non-triangular, else 0
-      bit 1 (transp):     1 if transparency >= TRANSP_THRESH, else 0
-      bit 0 (gloss):      1 if glossiness >= GLOSS_THRESH, else 0
+      bit 4 (front_back):  1 if y >= Y_THRESHOLD, else 0
+      bit 3 (left_right):  1 if x >= X_THRESHOLD, else 0
+      bit 2 (transp):      1 if transparency >= TRANSP_THRESH, else 0
+      bit 1 (gloss):       1 if glossiness >= GLOSS_THRESH, else 0
+      bit 0 (small_large): 1 if scale >= SCALE_THRESH, else 0
     """
-    y = z["pos_xy"][1]
-    front_back = int(y >= Y_THRESHOLD)
+    front_back  = int(z["pos_xy"][1] >= Y_THRESHOLD)
+    left_right  = int(z["pos_xy"][0] >= X_THRESHOLD)
+    transp      = int(z["transparency"] >= TRANSP_THRESH)
+    gloss       = int(z["glossiness"]   >= GLOSS_THRESH)
+    small_large = int(z["scale"]        >= SCALE_THRESH)
 
-    shape_name = z["shape_name"]
-    shape_bit  = int(shape_name in NON_TRIANGULAR_SHAPES)
-
-    transp = int(z["transparency"] >= TRANSP_THRESH)
-    gloss  = int(z["glossiness"]  >= GLOSS_THRESH)
-
-    return (front_back << DIM_FRONT_BACK
-            | shape_bit << DIM_SHAPE
-            | transp    << DIM_TRANSP
-            | gloss     << DIM_GLOSS)
+    return (front_back  << DIM_FRONT_BACK
+            | left_right  << DIM_LEFT_RIGHT
+            | transp      << DIM_TRANSP
+            | gloss       << DIM_GLOSS
+            | small_large << DIM_SMALL_LARGE)
 
 
 # ---------------------------------------------------------------------------
