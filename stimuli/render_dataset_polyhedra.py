@@ -946,10 +946,10 @@ def main():
     # Random dataset
     # ----------------------------
     random_n = int(cfg.get("random_n", 100))
-    for i in range(random_n):
-        uid = f"{i:06d}"
-        z = sample_random_latents(cfg, rng)
-        render_one(cfg, engine, img_dir, meta_path, uid, z, tag="random")
+    # for i in range(random_n):
+    #     uid = f"{i:06d}"
+    #     z = sample_random_latents(cfg, rng)
+    #     render_one(cfg, engine, img_dir, meta_path, uid, z, tag="random")
 
     # ----------------------------
     # Grid dataset
@@ -987,32 +987,32 @@ def main():
 
     base_uid = random_n
     idx = 0
-    # for i_g, gloss in enumerate(gloss_vals):
-    #     for j_t, trans in enumerate(trans_vals):
-    #         uid = f"{(base_uid + idx):06d}"
-    #         z = {
-    #             "shape_name": grid_shape,
-    #             "face_index": 0,
-    #             "glossiness": float(gloss),
-    #             "transparency": float(trans),
-    #             "lab": [float(grid_lab[0]), float(grid_lab[1]), float(grid_lab[2])],
-    #             "rgb": [float(grid_rgb[0]), float(grid_rgb[1]), float(grid_rgb[2])],
-    #             "scale": float(grid_scale),
-    #             "pos_xy": [float(grid_pos_xy[0]), float(grid_pos_xy[1])],
-    #             "yaw_deg": float(grid_yaw_deg),
-    #         }
-    #         tag = f"grid_r{i_g:02d}_t{j_t:02d}"
-    #         render_one(
-    #             cfg,
-    #             engine,
-    #             img_dir,
-    #             meta_path,
-    #             uid,
-    #             z,
-    #             tag=tag,
-    #             target_max_dim=grid_target_max_dim,
-    #         )
-    #         idx += 1
+    for i_g, gloss in enumerate(gloss_vals):
+        for j_t, trans in enumerate(trans_vals):
+            uid = f"{(base_uid + idx):06d}"
+            z = {
+                "shape_name": grid_shape,
+                "face_index": 0,
+                "glossiness": float(gloss),
+                "transparency": float(trans),
+                "lab": [float(grid_lab[0]), float(grid_lab[1]), float(grid_lab[2])],
+                "rgb": [float(grid_rgb[0]), float(grid_rgb[1]), float(grid_rgb[2])],
+                "scale": float(grid_scale),
+                "pos_xy": [float(grid_pos_xy[0]), float(grid_pos_xy[1])],
+                "yaw_deg": float(grid_yaw_deg),
+            }
+            tag = f"grid_r{i_g:02d}_t{j_t:02d}"
+            render_one(
+                cfg,
+                engine,
+                img_dir,
+                meta_path,
+                uid,
+                z,
+                tag=tag,
+                target_max_dim=grid_target_max_dim,
+            )
+            idx += 1
 
     print(f"Done. Random={random_n}, Grid={grid_n}x{grid_n}. Images in {img_dir}")
 if __name__ == "__main__":

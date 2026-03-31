@@ -74,8 +74,10 @@ PATIENCE_PHASE2    = 300    # early-stopping patience for phase 2
 LR                 = 1e-2   # mapper LR
 LR_ATTNPOOL        = 1e-5   # attnpool LR (phase 2 only)
 N_MC               = 200    # MC samples for choice_probs during training
-FREEZE_ENCODER     = False   # True → frozen only; False → phase 1 then attnpool fine-tune
+FREEZE_ENCODER     = True   # True → frozen only; False → phase 1 then attnpool fine-tune
 MAPPER_HIDDEN      = None   # None → linear mapper
+
+RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"  # used in all output paths
 
 IMG_TEST_FRAC      = 0.20   # fraction of images held out for stimulus/joint gen
 
@@ -344,17 +346,20 @@ if not FREEZE_ENCODER:
     # before switching to the more memory-intensive attnpool training.
     gc.collect()
     torch.cuda.empty_cache()
-    # Unfreeze attnpool; clear full-feature cache so train_dlbt switches to
-    # backbone-feature caching (pre-attnpool spatial maps).
+    # Unfreeze attnpool only; mapper stays frozen (phase 1 brought it to
+    # convergence — letting it move in phase 2 causes oscillation).
+    # Clear full-feature cache so train_dlbt switches to backbone-feature
+    # caching (pre-attnpool spatial maps).
+    for p in agent.mapper.parameters():
+        p.requires_grad_(False)
     for p in agent.encoder.attnpool.parameters():
         p.requires_grad_(True)
     agent.freeze_encoder = False
     agent._cache.clear()
 
-    optimizer2 = torch.optim.Adam([
-        {"params": agent.mapper.parameters(),           "lr": LR * 0.1},
-        {"params": agent.encoder.attnpool.parameters(), "lr": LR_ATTNPOOL},
-    ])
+    optimizer2 = torch.optim.Adam(
+        agent.encoder.attnpool.parameters(), lr=LR_ATTNPOOL
+    )
     phase2 = train_dlbt(
         agent, train_ds, stim_gen_ds, refs_dict,
         n_epochs=N_EPOCHS_PHASE2, lr=LR, patience=PATIENCE_PHASE2,
@@ -557,8 +562,8 @@ ax_mse.axhline(train_ds.noise_floor(), ls="--", color=C_TRAIN, alpha=0.4, lw=1,
 
 sns.despine(trim=True)
 plt.tight_layout()
-plt.savefig("examples/plots/03_learning_curves.png", dpi=150, bbox_inches="tight")
-print("Saved: examples/plots/03_learning_curves.png")
+plt.savefig(f"examples/plots/03_learning_curves_{RUN_TAG}.png", dpi=150, bbox_inches="tight")
+print(f"Saved: examples/plots/03_learning_curves_{RUN_TAG}.png")
 plt.close()
 
 # ---------------------------------------------------------------------------
@@ -606,8 +611,8 @@ for pt, task_names, color, title, mc_n, row, col in panels:
         ax.set_xlabel("Predicted P(right)", fontsize=9)
 
 sns.despine(fig=fig, trim=True)
-plt.savefig("examples/plots/03_pred_vs_true.png", dpi=150, bbox_inches="tight")
-print("Saved: examples/plots/03_pred_vs_true.png")
+plt.savefig(f"examples/plots/03_pred_vs_true_{RUN_TAG}.png", dpi=150, bbox_inches="tight")
+print(f"Saved: examples/plots/03_pred_vs_true_{RUN_TAG}.png")
 plt.close()
 
 # ---------------------------------------------------------------------------
@@ -684,8 +689,8 @@ fig.legend(handles=[
 fig.text(0.5, -0.01, "Predicted P(right)", ha="center", fontsize=9)
 fig.text(-0.01, 0.5, "True P(right)", va="center", rotation="vertical", fontsize=9)
 sns.despine(fig=fig, trim=True)
-plt.savefig("examples/plots/03_per_task_dlbt.png", dpi=150, bbox_inches="tight")
-print("Saved: examples/plots/03_per_task_dlbt.png")
+plt.savefig(f"examples/plots/03_per_task_dlbt_{RUN_TAG}.png", dpi=150, bbox_inches="tight")
+print(f"Saved: examples/plots/03_per_task_dlbt_{RUN_TAG}.png")
 plt.close()
 
 # ---------------------------------------------------------------------------
@@ -735,6 +740,6 @@ fig.legend(handles=[
 fig.text(0.5, -0.01, "Predicted P(right)", ha="center", fontsize=9)
 fig.text(-0.01, 0.5, "True P(right)", va="center", rotation="vertical", fontsize=9)
 sns.despine(fig=fig, trim=True)
-plt.savefig("examples/plots/03_per_task_slda.png", dpi=150, bbox_inches="tight")
-print("Saved: examples/plots/03_per_task_slda.png")
+plt.savefig(f"examples/plots/03_per_task_slda_{RUN_TAG}.png", dpi=150, bbox_inches="tight")
+print(f"Saved: examples/plots/03_per_task_slda_{RUN_TAG}.png")
 plt.close()
