@@ -23,6 +23,7 @@ import numpy as np
 import seaborn as sns
 from matplotlib.lines import Line2D
 from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
 
 import config as cfg
 
@@ -297,11 +298,13 @@ else:
     _var    = _pca.explained_variance_ratio_
 
     # 4-panel scatter, one per latent dimension
+    # coolwarm: soft diverging (left/right centred at 0)
+    # viridis/plasma/cividis: perceptually-uniform sequential for 0→1 dims
     _dims = [
-        ("x",            "Left / Right",  "RdBu",   None,   None),
-        ("transparency", "Transparent",   "RdBu_r", 0.0,    1.0),
-        ("glossiness",   "Glossy",        "RdBu_r", 0.0,    1.0),
-        ("scale",        "Large / Small", "RdBu_r", 0.0,    1.0),
+        ("x",            "Left / Right",  "coolwarm", None, None),
+        ("transparency", "Transparent",   "viridis",  0.0,  1.0),
+        ("glossiness",   "Glossy",        "plasma",   0.0,  1.0),
+        ("scale",        "Large / Small", "cividis",  0.0,  1.0),
     ]
 
     fig, axes = plt.subplots(1, 4, figsize=(14, 3.6),
@@ -322,6 +325,46 @@ else:
     sns.despine(fig=fig, trim=True)
     plt.tight_layout()
     out = plots_dir / f"plot_06_latent_pca_{run_tag}.png"
+    plt.savefig(out, dpi=150, bbox_inches="tight")
+    print(f"Saved: {out}")
+    plt.close()
+
+    # -----------------------------------------------------------------------
+    # Plot 7 — t-SNE of first 8 PCA components
+    # PCA first to denoise, then t-SNE to reveal nonlinear structure.
+    # -----------------------------------------------------------------------
+    _n_pca  = min(8, _q.shape[1] - 1)
+    _pca8   = PCA(n_components=_n_pca, random_state=42)
+    _q_pca8 = _pca8.fit_transform(_q)           # [N, n_pca]
+    _cum_var = _pca8.explained_variance_ratio_.cumsum()
+
+    _tsne   = TSNE(n_components=2, perplexity=40, learning_rate="auto",
+                   init="pca", random_state=42, n_iter=1000)
+    _tsne_coords = _tsne.fit_transform(_q_pca8)  # [N, 2]
+
+    fig, axes = plt.subplots(1, 4, figsize=(14, 3.6),
+                             gridspec_kw={"wspace": 0.35})
+    for ax, (key, title, cmap, vmin, vmax) in zip(axes, _dims):
+        _vals = np.array([_cont[r.uid][key] for r in _all_refs])
+        sc = ax.scatter(_tsne_coords[:, 0], _tsne_coords[:, 1],
+                        c=_vals, cmap=cmap, vmin=vmin, vmax=vmax,
+                        s=10, alpha=0.7, linewidths=0)
+        plt.colorbar(sc, ax=ax, shrink=0.75, pad=0.02)
+        ax.set_title(title, fontsize=10)
+        ax.set_xlabel("t-SNE 1", fontsize=8)
+        ax.set_ylabel("t-SNE 2", fontsize=8)
+        ax.tick_params(labelsize=7)
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+    fig.suptitle(
+        f"Mapper latent space — t-SNE (PCA {_n_pca}D → 2D, "
+        f"{_cum_var[-1]:.0%} var.)  ({model_label})",
+        fontsize=11, y=1.02,
+    )
+    sns.despine(fig=fig, left=True, bottom=True)
+    plt.tight_layout()
+    out = plots_dir / f"plot_07_latent_tsne_{run_tag}.png"
     plt.savefig(out, dpi=150, bbox_inches="tight")
     print(f"Saved: {out}")
     plt.close()

@@ -77,7 +77,7 @@ VAL_TASKS = [
 # ---------------------------------------------------------------------------
 # Plot colours
 # ---------------------------------------------------------------------------
-C_TRAIN = "#d95f02"
-C_STIM  = "#1f78b4"
-C_TASK  = "#7570b3"
-C_JOINT = "#33a02c"
+C_TRAIN = "#E76F51"   # coral   — training region
+C_STIM  = "#457B9D"   # steel blue — stimulus generalization
+C_TASK  = "#9B5DE5"   # electric purple — task generalization
+C_JOINT = "#43AA8B"   # teal    — joint generalization
