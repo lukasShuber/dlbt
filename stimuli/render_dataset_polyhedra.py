@@ -586,27 +586,31 @@ def apply_material_latents(obj, glossiness: float, transparency: float, rgb, eng
     trans_mapped = 0.95 * (trans ** 0.3)
 
     # Opaque BSDF: metallic + roughness both driven by glossiness
-    #   gloss=0 → metallic=0, roughness=1.0  (diffuse plastic)
-    #   gloss=1 → metallic=1, roughness=0.05 (polished metal)
+    #   gloss=0 → metallic=0,    roughness=1.0  (diffuse plastic)
+    #   gloss=1 → metallic=1,    roughness=0.20 (polished metal)
+    # Power-law on metallic (^0.6) linearises the perceptual jump near gloss=1;
+    # roughness floor at 0.20 keeps mid-gloss steps perceptually even.
     opaque = nodes.new("ShaderNodeBsdfPrincipled")
     opaque.location = (0, 120)
     opaque.inputs["Base Color"].default_value = (r, g, b, 1.0)
-    opaque.inputs["Metallic"].default_value   = gloss
-    opaque.inputs["Roughness"].default_value  = 1.0 - gloss * 0.95
+    opaque.inputs["Metallic"].default_value   = gloss ** 0.6
+    opaque.inputs["Roughness"].default_value  = 1.0 - gloss * 0.80
     opaque.inputs["Specular"].default_value   = 0.9
     opaque.inputs["Transmission"].default_value = 0.0
     opaque.inputs["IOR"].default_value = 1.45
 
-    # Glass BSDF: roughness controls frosted (gloss=0) vs clear (gloss=1) glass
+    # Glass BSDF: roughness controls frosted (gloss=0) vs clear (gloss=1) glass.
+    # Scale both Roughness and Transmission Roughness by 0.3 so that even at
+    # gloss=0 the object looks see-through rather than milky/frosted.
     glass = nodes.new("ShaderNodeBsdfPrincipled")
     glass.location = (0, -120)
     glass.inputs["Base Color"].default_value = (r, g, b, 1.0)
     glass.inputs["Metallic"].default_value   = 0.0
-    glass.inputs["Roughness"].default_value  = rough_mapped
+    glass.inputs["Roughness"].default_value  = rough_mapped * 0.3
     glass.inputs["Specular"].default_value   = 0.9
     glass.inputs["Transmission"].default_value = 1.0
     glass.inputs["IOR"].default_value = 1.45
-    glass.inputs["Transmission Roughness"].default_value = rough_mapped
+    glass.inputs["Transmission Roughness"].default_value = rough_mapped * 0.3
 
     mix.inputs["Fac"].default_value = trans_mapped
     links.new(opaque.outputs["BSDF"], mix.inputs[1])
@@ -942,10 +946,10 @@ def main():
     # Random dataset
     # ----------------------------
     random_n = int(cfg.get("random_n", 100))
-    # for i in range(random_n):
-    #     uid = f"{i:06d}"
-    #     z = sample_random_latents(cfg, rng)
-    #     render_one(cfg, engine, img_dir, meta_path, uid, z, tag="random")
+    for i in range(random_n):
+        uid = f"{i:06d}"
+        z = sample_random_latents(cfg, rng)
+        render_one(cfg, engine, img_dir, meta_path, uid, z, tag="random")
 
     # ----------------------------
     # Grid dataset
@@ -983,32 +987,32 @@ def main():
 
     base_uid = random_n
     idx = 0
-    for i_g, gloss in enumerate(gloss_vals):
-        for j_t, trans in enumerate(trans_vals):
-            uid = f"{(base_uid + idx):06d}"
-            z = {
-                "shape_name": grid_shape,
-                "face_index": 0,
-                "glossiness": float(gloss),
-                "transparency": float(trans),
-                "lab": [float(grid_lab[0]), float(grid_lab[1]), float(grid_lab[2])],
-                "rgb": [float(grid_rgb[0]), float(grid_rgb[1]), float(grid_rgb[2])],
-                "scale": float(grid_scale),
-                "pos_xy": [float(grid_pos_xy[0]), float(grid_pos_xy[1])],
-                "yaw_deg": float(grid_yaw_deg),
-            }
-            tag = f"grid_r{i_g:02d}_t{j_t:02d}"
-            render_one(
-                cfg,
-                engine,
-                img_dir,
-                meta_path,
-                uid,
-                z,
-                tag=tag,
-                target_max_dim=grid_target_max_dim,
-            )
-            idx += 1
+    # for i_g, gloss in enumerate(gloss_vals):
+    #     for j_t, trans in enumerate(trans_vals):
+    #         uid = f"{(base_uid + idx):06d}"
+    #         z = {
+    #             "shape_name": grid_shape,
+    #             "face_index": 0,
+    #             "glossiness": float(gloss),
+    #             "transparency": float(trans),
+    #             "lab": [float(grid_lab[0]), float(grid_lab[1]), float(grid_lab[2])],
+    #             "rgb": [float(grid_rgb[0]), float(grid_rgb[1]), float(grid_rgb[2])],
+    #             "scale": float(grid_scale),
+    #             "pos_xy": [float(grid_pos_xy[0]), float(grid_pos_xy[1])],
+    #             "yaw_deg": float(grid_yaw_deg),
+    #         }
+    #         tag = f"grid_r{i_g:02d}_t{j_t:02d}"
+    #         render_one(
+    #             cfg,
+    #             engine,
+    #             img_dir,
+    #             meta_path,
+    #             uid,
+    #             z,
+    #             tag=tag,
+    #             target_max_dim=grid_target_max_dim,
+    #         )
+    #         idx += 1
 
     print(f"Done. Random={random_n}, Grid={grid_n}x{grid_n}. Images in {img_dir}")
 if __name__ == "__main__":

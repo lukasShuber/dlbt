@@ -173,7 +173,7 @@ class DlbtAgent(nn.Module, Agent):
             batch = torch.stack([self.preprocess(img) for img in imgs]).to(self.device)
             feats = self._run_backbone(batch)          # [B, C, H, W]
             for ref, feat in zip(batch_refs, feats):
-                self._backbone_cache[ref.uid] = feat
+                self._backbone_cache[ref.uid] = feat.cpu()  # keep off-GPU; moved to device in _encode
 
     def _run_backbone(self, batch: torch.Tensor) -> torch.Tensor:
         """
@@ -210,7 +210,7 @@ class DlbtAgent(nn.Module, Agent):
         if self.freeze_encoder and all(r.uid in self._cache for r in image_refs):
             return torch.stack([self._cache[r.uid] for r in image_refs])
         if not self.freeze_encoder and all(r.uid in self._backbone_cache for r in image_refs):
-            spatial = torch.stack([self._backbone_cache[r.uid] for r in image_refs])
+            spatial = torch.stack([self._backbone_cache[r.uid] for r in image_refs]).to(self.device)
             return self.encoder.attnpool(spatial).float()
         return self._encode_fresh(image_refs)
 

@@ -164,9 +164,13 @@ def train_dlbt(
     for epoch in pbar:
 
         # ---- Forward + backward pass over all tasks -----------------------
+        # Gradient accumulation: backward() after each task so only one
+        # computation graph lives in memory at a time (critical for phase 2
+        # where attnpool is trainable and graphs are much larger).
         agent.train()
         optimizer.zero_grad()
-        total_loss = torch.tensor(0.0, device=agent.device)
+        total_loss = 0.0
+        n_total    = len(train_dataset)
 
         for task_name, group in train_dataset.iter_tasks():
             task   = TASKS[task_name]
@@ -176,12 +180,10 @@ def train_dlbt(
                 dtype=torch.float32,
                 device=agent.device,
             )
-            probs = agent.choice_probs(refs, task)   # [B, 2]
-            total_loss = total_loss + multinomial_nll(probs, counts) * len(refs)
-
-        # Normalise by total number of observations across tasks
-        total_loss = total_loss / len(train_dataset)
-        total_loss.backward()
+            probs     = agent.choice_probs(refs, task)                    # [B, 2]
+            task_loss = multinomial_nll(probs, counts) * len(refs) / n_total
+            task_loss.backward()           # free graph immediately
+            total_loss += task_loss.item()
         if grad_clip > 0:
             torch.nn.utils.clip_grad_norm_(agent.trainable_parameters(), grad_clip)
         optimizer.step()
