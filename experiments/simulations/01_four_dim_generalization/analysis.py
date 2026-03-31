@@ -2,9 +2,8 @@
 Simulation 01 — analysis and plots.
 
 Loads results saved by run.py and generates four figures:
-  plot_01_balance.png      — latent-state image balance (random vs stratified)
-  plot_02_curves.png       — DLBT learning curves (NLL + cMSE)
-  plot_03_summary.png      — 6-panel pred-vs-true scatter
+  plot_02_curves.png        — DLBT learning curves (NLL + cMSE)
+  plot_03_summary.png       — 6-panel pred-vs-true scatter
   plot_04_per_task_dlbt.png — per-task scatter grid (DLBT)
   plot_05_per_task_slda.png — per-task scatter grid (SLDA)
 
@@ -53,50 +52,10 @@ dlbt_task      = res["dlbt_task"]
 dlbt_joint     = res["dlbt_joint"]
 slda_train     = res["slda_train"]
 slda_stim      = res["slda_stim"]
-state_to_uids  = res["state_to_uids"]
-train_uids     = res["train_uids"]
-test_uids      = res["test_uids"]
 
 has_phase2 = phase_boundary < len(curves["train_nlls"]) - 1
 
 C_TRAIN, C_STIM, C_TASK, C_JOINT = cfg.C_TRAIN, cfg.C_STIM, cfg.C_TASK, cfg.C_JOINT
-
-# ---------------------------------------------------------------------------
-# Plot 1 — latent-state balance
-# ---------------------------------------------------------------------------
-all_uids      = sorted(set().union(*state_to_uids.values()))
-states_sorted = sorted(state_to_uids.keys())
-
-# random split baseline (same seed)
-rng_rand     = np.random.default_rng(cfg.SEED)
-n_rand_test  = max(1, int(len(all_uids) * cfg.IMG_TEST_FRAC))
-rand_test    = set(rng_rand.choice(all_uids, size=n_rand_test, replace=False).tolist())
-rand_train   = set(all_uids) - rand_test
-
-fig, axes = plt.subplots(1, 2, figsize=(13, 3.5), gridspec_kw={"wspace": 0.35})
-for ax, (tr_s, te_s), title in [
-    (axes[0], (rand_train, rand_test),   "Random split"),
-    (axes[1], (train_uids, test_uids),   "Stratified split"),
-]:
-    tr_counts = [sum(1 for u in state_to_uids[s] if u in tr_s) for s in states_sorted]
-    te_counts = [sum(1 for u in state_to_uids[s] if u in te_s) for s in states_sorted]
-    x = np.arange(len(states_sorted))
-    ax.bar(x, tr_counts, label="train", color=C_TRAIN, alpha=0.8)
-    ax.bar(x, te_counts, bottom=tr_counts, label="test", color=C_STIM, alpha=0.8)
-    ax.set(xlabel="Latent state", ylabel="# images",
-           title=f"{title}  (train={len(tr_s)}, test={len(te_s)})")
-    ax.axhline(np.mean([c + t for c, t in zip(tr_counts, te_counts)]),
-               ls=":", color="gray", lw=0.8, label="mean/state")
-    ax.legend(fontsize=8)
-    min_tr = min(tr_counts)
-    ax.text(0.98, 0.97, f"min train/state = {min_tr}", transform=ax.transAxes,
-            ha="right", va="top", fontsize=8, color="red" if min_tr == 0 else "black")
-
-sns.despine(trim=True)
-out = plots_dir / f"plot_01_balance.png"
-plt.savefig(out, dpi=150, bbox_inches="tight")
-print(f"Saved: {out}")
-plt.close()
 
 # ---------------------------------------------------------------------------
 # Plot 2 — learning curves
@@ -122,6 +81,7 @@ for ax, tr, vl, tg, jg, ylabel in [
         ax.text(phase_boundary + 1, 0.98, "phase 2", fontsize=7,
                 va="top", transform=ax.get_xaxis_transform(), color="black", alpha=0.6)
     ax.set(ylabel=ylabel, xlabel="epoch", title=f"{model_label} — {ylabel}")
+    ax.set_ylim(bottom=0)
     ax.legend(fontsize=8)
 
 ax_mse.axhline(noise_floor, ls="--", color=C_TRAIN, alpha=0.4, lw=1)
@@ -151,11 +111,14 @@ def _summary_scatter(ax, pt: dict, task_names: list, color: str,
 
 
 panels = [
-    (dlbt_train, cfg.TRAIN_TASKS, C_TRAIN, f"{model_label} — Train",    cfg.N_MC, 0, 0),
-    (dlbt_stim,  cfg.TRAIN_TASKS, C_STIM,  f"{model_label} — Stim gen", cfg.N_MC, 0, 1),
+    # col 0: SLDA
+    (slda_train, cfg.TRAIN_TASKS, C_TRAIN, "SLDA — Train",              None,     0, 0),
+    (slda_stim,  cfg.TRAIN_TASKS, C_STIM,  "SLDA — Stim gen",           None,     1, 0),
+    # col 1: DLBT train / stim
+    (dlbt_train, cfg.TRAIN_TASKS, C_TRAIN, f"{model_label} — Train",    cfg.N_MC, 0, 1),
+    (dlbt_stim,  cfg.TRAIN_TASKS, C_STIM,  f"{model_label} — Stim gen", cfg.N_MC, 1, 1),
+    # col 2: generalization
     (dlbt_task,  cfg.VAL_TASKS,   C_TASK,  f"{model_label} — Task gen", cfg.N_MC, 0, 2),
-    (slda_train, cfg.TRAIN_TASKS, C_TRAIN, "SLDA — Train",              None,     1, 0),
-    (slda_stim,  cfg.TRAIN_TASKS, C_STIM,  "SLDA — Stim gen",           None,     1, 1),
     (dlbt_joint, cfg.VAL_TASKS,   C_JOINT, f"{model_label} — Joint gen",cfg.N_MC, 1, 2),
 ]
 
