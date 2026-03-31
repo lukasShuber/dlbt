@@ -4,13 +4,14 @@ ImageRef: a lightweight, immutable pointer to a rendered stimulus image.
 Each ImageRef carries the image's UID, its absolute path, and its
 pre-computed latent state index (an integer in [0, K-1]).
 
-The latent state is determined deterministically from the image's
-generative parameters via the five binary splits defined in constants.py:
-  - front/back    (y-position threshold)
+Four binary dimensions (K=16):
   - left/right    (x-position threshold)
   - transparency  (threshold)
   - glossiness    (threshold)
   - small/large   (scale threshold)
+
+Y position (depth) is intentionally excluded: in perspective rendering it
+correlates with apparent size and would confound the small/large dimension.
 """
 
 from __future__ import annotations
@@ -22,8 +23,8 @@ from typing import Dict, List
 
 from dlbt.constants import (
     K,
-    DIM_FRONT_BACK, DIM_LEFT_RIGHT, DIM_TRANSP, DIM_GLOSS, DIM_SMALL_LARGE,
-    Y_THRESHOLD, X_THRESHOLD, TRANSP_THRESH, GLOSS_THRESH, SCALE_THRESH,
+    DIM_LEFT_RIGHT, DIM_TRANSP, DIM_GLOSS, DIM_SMALL_LARGE,
+    X_THRESHOLD, TRANSP_THRESH, GLOSS_THRESH, SCALE_THRESH,
 )
 
 
@@ -48,22 +49,19 @@ def _latent_state_from_z(z: dict) -> int:
     Map a latent parameter dict (as stored in metadata.jsonl) to a state index.
 
     Bit layout:
-      bit 4 (front_back):  1 if y >= Y_THRESHOLD, else 0
       bit 3 (left_right):  1 if x >= X_THRESHOLD, else 0
       bit 2 (transp):      1 if transparency >= TRANSP_THRESH, else 0
       bit 1 (gloss):       1 if glossiness >= GLOSS_THRESH, else 0
       bit 0 (small_large): 1 if scale >= SCALE_THRESH, else 0
     """
-    front_back  = int(z["pos_xy"][1] >= Y_THRESHOLD)
     left_right  = int(z["pos_xy"][0] >= X_THRESHOLD)
     transp      = int(z["transparency"] >= TRANSP_THRESH)
     gloss       = int(z["glossiness"]   >= GLOSS_THRESH)
     small_large = int(z["scale"]        >= SCALE_THRESH)
 
-    return (front_back  << DIM_FRONT_BACK
-            | left_right  << DIM_LEFT_RIGHT
-            | transp      << DIM_TRANSP
-            | gloss       << DIM_GLOSS
+    return (left_right  << DIM_LEFT_RIGHT
+            | transp    << DIM_TRANSP
+            | gloss     << DIM_GLOSS
             | small_large << DIM_SMALL_LARGE)
 
 
@@ -99,7 +97,7 @@ def load_image_refs(
                 continue
             record = json.loads(line)
             uid = record["id"]
-            image_file = record["image_file"]  # e.g. "images/000048_shcub_...png"
+            image_file = record["image_file"]
             fname = Path(image_file).name
             path = images_dir / fname
             latent_state = _latent_state_from_z(record["z"])
@@ -123,14 +121,11 @@ def balanced_refs(
 
     Splits images into two response classes (action 0 vs action 1) according
     to task.delta_u, then subsamples the larger class to match the smaller.
-    This implements the stimulus balancing described in the paper (Section X):
-    P_t(X) is chosen so each response class is represented equally.
 
     Args:
         task:        Task whose delta_u defines the two response classes.
         image_refs:  full list of ImageRef objects.
         rng:         optional numpy.random.Generator for reproducible sampling.
-                     If None, uses a fixed seed (0).
 
     Returns:
         Balanced list of ImageRefs (shuffled).

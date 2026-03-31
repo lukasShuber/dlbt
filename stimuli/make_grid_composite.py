@@ -1,8 +1,8 @@
 # make_grid_composite.py
 # Usage:
-#   python polyhedra/make_grid_composite.py \
-#       --img_dir polyhedra/imgs/images \
-#       --out polyhedra/imgs/grid_5x5.png \
+#   python stimuli/make_grid_composite.py \
+#       --img_dir stimuli/imgs/images \
+#       --out stimuli/imgs/grid_5x5.png \
 #       --grid_n 5 \
 #       --labels \
 #       --row_prefix gloss \

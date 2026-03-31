@@ -929,10 +929,10 @@ def main():
     # Random dataset
     # ----------------------------
     random_n = int(cfg.get("random_n", 100))
-    for i in range(random_n):
-        uid = f"{i:06d}"
-        z = sample_random_latents(cfg, rng)
-        render_one(cfg, engine, img_dir, meta_path, uid, z, tag="random")
+    # for i in range(random_n):
+    #     uid = f"{i:06d}"
+    #     z = sample_random_latents(cfg, rng)
+    #     render_one(cfg, engine, img_dir, meta_path, uid, z, tag="random")
 
     # ----------------------------
     # Grid dataset

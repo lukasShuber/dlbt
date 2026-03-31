@@ -37,8 +37,8 @@ from sklearn.preprocessing import StandardScaler
 from scipy.optimize import minimize_scalar
 
 from dlbt.constants import (
-    K, DIM_FRONT_BACK, DIM_LEFT_RIGHT, DIM_TRANSP, DIM_GLOSS, DIM_SMALL_LARGE,
-    Y_THRESHOLD, X_THRESHOLD, TRANSP_THRESH, GLOSS_THRESH, SCALE_THRESH,
+    K, DIM_LEFT_RIGHT, DIM_TRANSP, DIM_GLOSS, DIM_SMALL_LARGE,
+    X_THRESHOLD, TRANSP_THRESH, GLOSS_THRESH, SCALE_THRESH,
 )
 from dlbt.data.image_ref import load_image_refs, image_refs_as_list, balanced_refs
 from dlbt.data.task import TASKS
@@ -63,46 +63,45 @@ SEED               = 42
 N_TRIALS           = 100    # SEU decisions per (image, task)
 PEAK               = 15.0   # peak concentration added to matching latent states
 BASE_CONCENTRATION = 1.0    # base concentration on all latent states
-BETA               = 5.0    # sigmoid sharpness for fb, lr, tr, gl dimensions
-SCALE_BETA         = 20.0   # higher sharpness for scale (range [0.5, 0.8] is narrow)
-N_EPOCHS           = 3000
+BETA               = 5.0    # sigmoid sharpness for lr, tr, gl dimensions
+SCALE_BETA         = 10.0   # sharpness for scale (range [0.2, 0.8], threshold 0.5)
+N_EPOCHS_PHASE1    = 500    # mapper warmup (encoder always frozen)
+PATIENCE_PHASE1    = 50     # early-stopping patience for phase 1
+N_EPOCHS_PHASE2    = 3000   # attnpool fine-tuning (only if FREEZE_ENCODER=False)
+PATIENCE_PHASE2    = 300    # early-stopping patience for phase 2
 LR                 = 1e-2   # mapper LR
-LR_ATTNPOOL        = 1e-5   # attnpool LR
+LR_ATTNPOOL        = 1e-5   # attnpool LR (phase 2 only)
 N_MC               = 200    # MC samples for choice_probs during training
-FREEZE_ENCODER     = True   # True → DLBT-frozen; False → DLBT-attnpool
+FREEZE_ENCODER     = True   # True → frozen only; False → phase 1 then attnpool fine-tune
 MAPPER_HIDDEN      = None   # None → linear mapper
 
 IMG_TEST_FRAC      = 0.20   # fraction of images held out for stimulus/joint gen
 
-# Holdout (Option B): all left_right × small_large conjunctions held out as T_test.
-# Training sees each dimension independently but never their combination.
+# Holdout (Option B): lr × sl conjunctions held out as T_test.
+# Training sees left_right and small_large independently but never combined.
 TRAIN_TASKS = [
-    # simple (one dimension each)
-    "front_back", "left_right", "transparent", "glossy", "large",
+    # simple
+    "left_right", "transparent", "glossy", "large",
     # simple-flipped
-    "front", "left", "opaque", "matte", "small",
-    # 2-way AND: location × location (fb × lr)
-    "back_and_right", "back_and_left", "front_and_left",
-    # 2-way AND: fb × material
-    "back_and_transparent", "front_and_transparent",
-    "back_and_glossy", "front_and_glossy",
+    "left", "opaque", "matte", "small",
     # 2-way AND: lr × material
-    "right_and_transparent", "right_and_glossy", "left_and_glossy",
+    "right_and_transparent", "left_and_transparent",
+    "right_and_glossy", "left_and_glossy",
     # 2-way AND: material × material
     "transparent_and_glossy",
-    # 2-way AND: sl × location/material (no lr × sl)
-    "large_and_back", "large_and_transparent", "large_and_glossy",
+    # 2-way AND: sl × material (no lr × sl)
+    "large_and_transparent", "large_and_glossy",
     # 3-way AND
-    "front_and_transparent_and_glossy", "back_and_transparent_and_glossy",
-    "back_and_right_and_glossy", "large_and_front_and_transparent",
+    "right_and_transparent_and_glossy", "left_and_transparent_and_glossy",
+    "large_and_transparent_and_glossy",
 ]
 VAL_TASKS = [
     # lr × sl conjunctions — never seen during training
     "right_and_large",
     "left_and_large",
     # 3-way extensions
-    "back_and_right_and_large",
     "right_and_large_and_glossy",
+    "right_and_large_and_transparent",
 ]
 
 # Regime colors (used consistently across all plots)
@@ -139,7 +138,6 @@ def _load_continuous_metadata(metadata_path: str) -> dict:
             rec = json.loads(line)
             z   = rec["z"]
             result[rec["id"]] = dict(
-                y            = z["pos_xy"][1],
                 x            = z["pos_xy"][0],
                 transparency = z["transparency"],
                 glossiness   = z["glossiness"],
@@ -159,34 +157,29 @@ def _sigmoid(x: float) -> float:
 def gt_alpha(uid: str) -> np.ndarray:
     """Structured Dirichlet: soft mean q_k + clarity-scaled concentration λ.
 
-    Five continuous dimensions — shape (categorical) is excluded.
-    SCALE_BETA is higher than BETA because the scale range [0.5, 0.8] is
-    narrower than the other dimensions' ranges.
+    Four continuous dimensions (front/back excluded — confounds with scale).
+    SCALE_BETA is calibrated for the render range [0.2, 0.8] with threshold 0.5.
     """
     z = cont_meta[uid]
-    p_back  = _sigmoid(BETA       * (z["y"]            - Y_THRESHOLD))
-    p_right = _sigmoid(BETA       * (z["x"]            - X_THRESHOLD))
-    p_transp = _sigmoid(BETA      * (z["transparency"] - TRANSP_THRESH))
-    p_glossy = _sigmoid(BETA      * (z["glossiness"]   - GLOSS_THRESH))
-    p_large  = _sigmoid(SCALE_BETA * (z["scale"]       - SCALE_THRESH))
+    p_right  = _sigmoid(BETA       * (z["x"]            - X_THRESHOLD))
+    p_transp = _sigmoid(BETA       * (z["transparency"] - TRANSP_THRESH))
+    p_glossy = _sigmoid(BETA       * (z["glossiness"]   - GLOSS_THRESH))
+    p_large  = _sigmoid(SCALE_BETA * (z["scale"]        - SCALE_THRESH))
 
     q = np.empty(K, dtype=np.float64)
     for k in range(K):
-        k_back  = (k >> DIM_FRONT_BACK)  & 1
-        k_right = (k >> DIM_LEFT_RIGHT)  & 1
-        k_transp = (k >> DIM_TRANSP)     & 1
-        k_glossy = (k >> DIM_GLOSS)      & 1
+        k_right  = (k >> DIM_LEFT_RIGHT)  & 1
+        k_transp = (k >> DIM_TRANSP)      & 1
+        k_glossy = (k >> DIM_GLOSS)       & 1
         k_large  = (k >> DIM_SMALL_LARGE) & 1
         q[k] = (
-            (p_back   if k_back   else (1.0 - p_back))   *
             (p_right  if k_right  else (1.0 - p_right))  *
             (p_transp if k_transp else (1.0 - p_transp)) *
             (p_glossy if k_glossy else (1.0 - p_glossy)) *
             (p_large  if k_large  else (1.0 - p_large))
         )
 
-    clarity = (abs(p_back   - 0.5) * 2.0 *
-               abs(p_right  - 0.5) * 2.0 *
+    clarity = (abs(p_right  - 0.5) * 2.0 *
                abs(p_transp - 0.5) * 2.0 *
                abs(p_glossy - 0.5) * 2.0 *
                abs(p_large  - 0.5) * 2.0)
@@ -212,15 +205,70 @@ def sample_behavior(ref, task, n_trials: int, rng) -> tuple:
 
 
 # ---------------------------------------------------------------------------
-# Image split  (X_train / X_test)
+# Image split — stratified by latent state  (X_train / X_test)
+#
+# With K=32 states and ~1000 images, a uniform random split can leave some
+# latent states with 0–1 training examples.  Stratified sampling ensures
+# each state contributes ~IMG_TEST_FRAC images to the test set.
 # ---------------------------------------------------------------------------
-all_uids   = sorted(refs_dict.keys())
-n_test     = max(1, int(len(all_uids) * IMG_TEST_FRAC))
-rng_split  = np.random.default_rng(SEED)
-test_uids  = set(rng_split.choice(all_uids, size=n_test, replace=False).tolist())
-train_uids = set(all_uids) - test_uids
-print(f"Image split: {len(train_uids)} train / {len(test_uids)} test "
-      f"({IMG_TEST_FRAC*100:.0f}% held out)")
+from collections import defaultdict
+
+all_uids  = sorted(refs_dict.keys())
+rng_split = np.random.default_rng(SEED)
+
+# Group UIDs by latent state
+state_to_uids: dict = defaultdict(list)
+for uid in all_uids:
+    state_to_uids[refs_dict[uid].latent_state].append(uid)
+
+train_uids: set = set()
+test_uids:  set = set()
+for state_uids in state_to_uids.values():
+    arr    = np.array(state_uids)
+    rng_split.shuffle(arr)
+    n_test = max(1, round(len(arr) * IMG_TEST_FRAC))
+    test_uids.update(arr[:n_test].tolist())
+    train_uids.update(arr[n_test:].tolist())
+
+print(f"Image split (stratified): {len(train_uids)} train / {len(test_uids)} test "
+      f"({len(test_uids)/len(all_uids)*100:.1f}% held out)")
+
+# ---------------------------------------------------------------------------
+# Plot 0 — latent-state balance: random vs stratified split
+# ---------------------------------------------------------------------------
+random_rng   = np.random.default_rng(SEED)
+n_test_rand  = max(1, int(len(all_uids) * IMG_TEST_FRAC))
+rand_test    = set(random_rng.choice(all_uids, size=n_test_rand, replace=False).tolist())
+rand_train   = set(all_uids) - rand_test
+
+states_sorted = sorted(state_to_uids.keys())
+fig, axes = plt.subplots(1, 2, figsize=(13, 3.5), sharey=False,
+                         gridspec_kw={"wspace": 0.35})
+
+for ax, (train_s, test_s), title in [
+    (axes[0], (rand_train, rand_test),   "Random split"),
+    (axes[1], (train_uids, test_uids),   "Stratified split"),
+]:
+    tr_counts = [sum(1 for u in state_to_uids[s] if u in train_s) for s in states_sorted]
+    te_counts = [sum(1 for u in state_to_uids[s] if u in test_s)  for s in states_sorted]
+    x = np.arange(len(states_sorted))
+    ax.bar(x, tr_counts, label="train", color=C_TRAIN, alpha=0.8)
+    ax.bar(x, te_counts, bottom=tr_counts, label="test",  color=C_STIM,  alpha=0.8)
+    ax.set(xlabel="Latent state (0–31)", ylabel="# images",
+           title=f"{title}  (train={len(train_s)}, test={len(test_s)})")
+    ax.axhline(np.mean([c + t for c, t in zip(tr_counts, te_counts)]),
+               ls=":", color="gray", lw=0.8, label="mean/state")
+    ax.legend(fontsize=8)
+    # annotate min train count
+    min_tr = min(tr_counts)
+    ax.text(0.98, 0.97, f"min train/state = {min_tr}",
+            transform=ax.transAxes, ha="right", va="top", fontsize=8,
+            color="red" if min_tr == 0 else "black")
+
+sns.despine(trim=True)
+plt.savefig("examples/plots/03_latent_state_balance.png", dpi=150, bbox_inches="tight")
+print("Saved: examples/plots/03_latent_state_balance.png")
+plt.close()
 
 # ---------------------------------------------------------------------------
 # Synthetic dataset generation
@@ -253,39 +301,64 @@ for name, ds in [("train", train_ds), ("stim_gen", stim_gen_ds),
     print(f"  {name:12s}: {ds}  noise_floor={ds.noise_floor():.4f}")
 
 # ---------------------------------------------------------------------------
-# Train — DLBT
+# Train — DLBT  (two-phase when FREEZE_ENCODER=False)
+#
+# Phase 1 (always): train mapper with frozen encoder until convergence.
+#   Ensures the mapper has a meaningful signal before any gradients flow
+#   into the encoder.
+# Phase 2 (FREEZE_ENCODER=False only): unfreeze attnpool and jointly
+#   fine-tune at a much lower LR.
 # ---------------------------------------------------------------------------
 model_label = "DLBT (frozen)" if FREEZE_ENCODER else "DLBT (attnpool)"
-agent = DlbtAgent(freeze_encoder=FREEZE_ENCODER, n_mc_samples=N_MC, device=DEVICE,
+
+# Always construct the agent in attnpool mode so phase 2 is possible,
+# but start with the encoder frozen for phase 1.
+agent = DlbtAgent(freeze_encoder=True, n_mc_samples=N_MC, device=DEVICE,
                   mapper_hidden=MAPPER_HIDDEN)
 
-if FREEZE_ENCODER:
-    if Path(CACHE_PATH).exists():
-        print(f"Loading cached CLIP features from {CACHE_PATH}")
-        agent.load_cache(CACHE_PATH)
-    else:
-        print(f"Precomputing CLIP features → {CACHE_PATH}")
-        agent.precompute_features(list(refs_dict.values()))
-        agent.save_cache(CACHE_PATH)
-        print("Saved.")
+if Path(CACHE_PATH).exists():
+    print(f"Loading cached CLIP features from {CACHE_PATH}")
+    agent.load_cache(CACHE_PATH)
+else:
+    print(f"Precomputing CLIP features → {CACHE_PATH}")
+    agent.precompute_features(list(refs_dict.values()))
+    agent.save_cache(CACHE_PATH)
+    print("Saved.")
 
-print(f"\nTraining {model_label}...")
-dlbt_optimizer = None
-if not FREEZE_ENCODER:
-    dlbt_optimizer = torch.optim.Adam([
-        {"params": agent.mapper.parameters(),          "lr": LR},
-        {"params": agent.encoder.attnpool.parameters(),"lr": LR_ATTNPOOL},
-    ])
-
-# stim_gen is the primary val for early stopping (unseen images, seen tasks).
-# task_gen and joint_gen are tracked but do not influence early stopping.
-result = train_dlbt(
+# ---- Phase 1: mapper warmup (frozen encoder) ------------------------------
+print(f"\nPhase 1 — mapper warmup (frozen encoder)...")
+phase1 = train_dlbt(
     agent, train_ds, stim_gen_ds, refs_dict,
-    n_epochs=N_EPOCHS, lr=LR, patience=300,
-    optimizer=dlbt_optimizer,
+    n_epochs=N_EPOCHS_PHASE1, lr=LR, patience=PATIENCE_PHASE1,
     extra_val_datasets={"task_gen": task_gen_ds, "joint_gen": joint_gen_ds},
 )
-print(f"Best epoch: {result.best_epoch}  best_stim_gen_mse: {result.best_val_mse:.4f}")
+print(f"  best epoch: {phase1.best_epoch}  stim_gen_mse: {phase1.best_val_mse:.4f}")
+
+# ---- Phase 2: attnpool fine-tuning (only when requested) ------------------
+phase2 = None
+if not FREEZE_ENCODER:
+    print(f"\nPhase 2 — attnpool fine-tuning...")
+    # Unfreeze attnpool; clear full-feature cache so train_dlbt switches to
+    # backbone-feature caching (pre-attnpool spatial maps).
+    for p in agent.encoder.attnpool.parameters():
+        p.requires_grad_(True)
+    agent.freeze_encoder = False
+    agent._cache.clear()
+
+    optimizer2 = torch.optim.Adam([
+        {"params": agent.mapper.parameters(),           "lr": LR * 0.1},
+        {"params": agent.encoder.attnpool.parameters(), "lr": LR_ATTNPOOL},
+    ])
+    phase2 = train_dlbt(
+        agent, train_ds, stim_gen_ds, refs_dict,
+        n_epochs=N_EPOCHS_PHASE2, lr=LR, patience=PATIENCE_PHASE2,
+        optimizer=optimizer2,
+        extra_val_datasets={"task_gen": task_gen_ds, "joint_gen": joint_gen_ds},
+    )
+    print(f"  best epoch: {phase2.best_epoch}  stim_gen_mse: {phase2.best_val_mse:.4f}")
+
+result = phase2 if phase2 is not None else phase1
+print(f"\nFinal best stim_gen_mse: {result.best_val_mse:.4f}")
 
 # ---------------------------------------------------------------------------
 # Fit per-task SLDA  (Ridge regression: CLIP features → empirical P(right))
@@ -404,34 +477,60 @@ slda_train     = collect_slda(train_ds)
 slda_stim      = collect_slda(stim_gen_ds)
 
 # ---------------------------------------------------------------------------
-# Plot 1 — DLBT learning curves  (4 regimes)
+# Plot 1 — DLBT learning curves  (4 regimes, both phases if applicable)
 # ---------------------------------------------------------------------------
-epochs = range(len(result.train_nlls))
+# Concatenate phase metrics into a single continuous x-axis.
+# Phase 2 epoch 0 repeats the restored best state from phase 1, so we drop it.
+def _concat(r1, r2, key):
+    v1 = getattr(r1, key) if hasattr(r1, key) else r1.extra_val_nlls.get(key) or r1.extra_val_mses.get(key)
+    if r2 is None:
+        return list(v1)
+    v2 = getattr(r2, key) if hasattr(r2, key) else r2.extra_val_nlls.get(key) or r2.extra_val_mses.get(key)
+    return list(v1) + list(v2)[1:]   # drop epoch-0 of phase 2 (duplicate)
+
+n_phase1  = len(phase1.train_nlls)   # number of points in phase 1 (epoch 0 … E1)
+phase_boundary = n_phase1 - 1        # x-axis position where phase 2 starts
+
+train_nlls_cat = _concat(phase1, phase2, "train_nlls")
+val_nlls_cat   = _concat(phase1, phase2, "val_nlls")
+train_mses_cat = _concat(phase1, phase2, "train_mses")
+val_mses_cat   = _concat(phase1, phase2, "val_mses")
+tg_nlls_cat    = (_concat(phase1, phase2, "extra_val_nlls")
+                  if False else   # extra_val stored as dicts, handled below
+                  list(phase1.extra_val_nlls["task_gen"]) +
+                  (list(phase2.extra_val_nlls["task_gen"])[1:] if phase2 else []))
+jg_nlls_cat    = (list(phase1.extra_val_nlls["joint_gen"]) +
+                  (list(phase2.extra_val_nlls["joint_gen"])[1:] if phase2 else []))
+tg_mses_cat    = (list(phase1.extra_val_mses["task_gen"]) +
+                  (list(phase2.extra_val_mses["task_gen"])[1:] if phase2 else []))
+jg_mses_cat    = (list(phase1.extra_val_mses["joint_gen"]) +
+                  (list(phase2.extra_val_mses["joint_gen"])[1:] if phase2 else []))
+
+epochs = range(len(train_nlls_cat))
 
 fig, (ax_nll, ax_mse) = plt.subplots(1, 2, figsize=(11, 3.8))
 
-for ax, metric, ylabel in [
-    (ax_nll, "nlls", "NLL"),
-    (ax_mse, "mses", "cMSE"),
+for ax, tr, vl, tg, jg, ylabel in [
+    (ax_nll, train_nlls_cat, val_nlls_cat, tg_nlls_cat, jg_nlls_cat, "NLL"),
+    (ax_mse, train_mses_cat, val_mses_cat, tg_mses_cat, jg_mses_cat, "cMSE"),
 ]:
-    train_vals = getattr(result, f"train_{metric}")
-    val_vals   = getattr(result, f"val_{metric}")
-    tg_vals    = result.extra_val_nlls["task_gen"]  if metric == "nlls" \
-                 else result.extra_val_mses["task_gen"]
-    jg_vals    = result.extra_val_nlls["joint_gen"] if metric == "nlls" \
-                 else result.extra_val_mses["joint_gen"]
-
-    ax.plot(epochs, train_vals, color=C_TRAIN, label="train",    lw=1.2)
-    ax.plot(epochs, val_vals,   color=C_STIM,  label="stim gen", lw=1.2)
-    ax.plot(epochs, tg_vals,    color=C_TASK,  label="task gen", lw=1.2)
-    ax.plot(epochs, jg_vals,    color=C_JOINT, label="joint gen",lw=1.2)
-    ax.axvline(result.best_epoch, ls=":", color="gray", lw=0.8)
+    ax.plot(epochs, tr, color=C_TRAIN, label="train",    lw=1.2)
+    ax.plot(epochs, vl, color=C_STIM,  label="stim gen", lw=1.2)
+    ax.plot(epochs, tg, color=C_TASK,  label="task gen", lw=1.2)
+    ax.plot(epochs, jg, color=C_JOINT, label="joint gen",lw=1.2)
+    # best epoch within the final phase (offset for phase 2)
+    best_x = result.best_epoch + (phase_boundary if phase2 else 0)
+    ax.axvline(best_x, ls=":", color="gray", lw=0.8)
+    # phase boundary
+    if phase2 is not None:
+        ax.axvline(phase_boundary, ls="--", color="black", lw=0.8, alpha=0.5)
+        ax.text(phase_boundary + 1, 0.98, "phase 2", fontsize=7,
+                va="top", transform=ax.get_xaxis_transform(), color="black", alpha=0.6)
     ax.set(ylabel=ylabel, xlabel="epoch", title=f"{model_label} — {ylabel}")
     ax.legend(fontsize=8)
 
-if ax_mse:
-    ax_mse.axhline(train_ds.noise_floor(), ls="--", color=C_TRAIN, alpha=0.4, lw=1,
-                   label=f"train floor ({train_ds.noise_floor():.4f})")
+ax_mse.axhline(train_ds.noise_floor(), ls="--", color=C_TRAIN, alpha=0.4, lw=1,
+               label=f"train floor ({train_ds.noise_floor():.4f})")
 
 sns.despine(trim=True)
 plt.tight_layout()
