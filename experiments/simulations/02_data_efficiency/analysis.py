@@ -59,19 +59,22 @@ def _plot_metric(ax, metric: str, ylabel: str):
         ("joint", C_JOINT, f"{model_label} joint gen"),
     ]:
         vals = dlbt[cond][metric]          # [n_seeds, n_budgets]
-        mean = vals.mean(axis=0)
-        std  = vals.std(axis=0)
+        mean = np.nanmean(vals, axis=0)
+        std  = np.nanstd(vals, axis=0)
         ax.plot(x, mean, color=color, lw=2.0, label=label)
         ax.fill_between(x, mean - std, mean + std, color=color, alpha=0.15)
 
     # SLDA — 2 conditions, dashed lines
+    # Use nanmean/nanstd: at very low budgets some seeds may have no fitted tasks
+    # (too few observations per task), so NaN is expected and should not mask
+    # the seeds that do have a valid fit.
     for cond, color, label in [
         ("train", C_TRAIN, "SLDA train"),
         ("stim",  C_STIM,  "SLDA stim gen"),
     ]:
         vals = slda[cond][metric]
-        mean = vals.mean(axis=0)
-        std  = vals.std(axis=0)
+        mean = np.nanmean(vals, axis=0)
+        std  = np.nanstd(vals, axis=0)
         ax.plot(x, mean, color=color, lw=2.0, ls="--", label=label)
         ax.fill_between(x, mean - std, mean + std, color=color, alpha=0.10)
 
@@ -84,7 +87,7 @@ def _plot_metric(ax, metric: str, ylabel: str):
     if metric == "cmse":
         ax.set_ylim(bottom=0)
     elif metric == "rho":
-        ax.set_ylim(0, 1)
+        ax.set_ylim(-0.1, 1)
     ax.legend(fontsize=8, ncol=2, frameon=False)
 
 

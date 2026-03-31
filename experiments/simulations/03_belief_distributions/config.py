@@ -55,7 +55,7 @@ N_EPOCHS_PHASE1 = 1000
 PATIENCE_PHASE1 = 100
 LR              = 1e-2
 N_MC            = 200
-FREEZE_ENCODER  = True
+FREEZE_ENCODER  = False
 MAPPER_HIDDEN   = None
 
 RUN_TAG = "frozen"
