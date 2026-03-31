@@ -24,7 +24,6 @@ Run from repo root:
     python examples/03_train_dlbt.py
 """
 
-import argparse
 import gc
 import math
 import random
@@ -75,16 +74,8 @@ PATIENCE_PHASE2    = 100    # early-stopping patience for phase 2
 LR                 = 1e-2   # mapper LR
 LR_ATTNPOOL        = 1e-4   # attnpool LR (phase 2 only)
 N_MC               = 200    # MC samples for choice_probs during training
-FREEZE_ENCODER     = False   # default; overridden by --frozen CLI flag
+FREEZE_ENCODER     = False   # True → frozen only; False → phase 1 then attnpool fine-tune
 MAPPER_HIDDEN      = None   # None → linear mapper
-
-# CLI override: python 03_train_dlbt.py --frozen
-_parser = argparse.ArgumentParser()
-_parser.add_argument("--frozen", action="store_true",
-                     help="Run frozen-encoder baseline (no attnpool fine-tuning)")
-_args, _ = _parser.parse_known_args()
-if _args.frozen:
-    FREEZE_ENCODER = True
 
 RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"  # used in all output paths
 
