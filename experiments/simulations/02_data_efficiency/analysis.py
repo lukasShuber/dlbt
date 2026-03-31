@@ -83,6 +83,8 @@ def _plot_metric(ax, metric: str, ylabel: str):
     ax.set_ylabel(ylabel, fontsize=10)
     if metric == "cmse":
         ax.set_ylim(bottom=0)
+    elif metric == "rho":
+        ax.set_ylim(0, 1)
     ax.legend(fontsize=8, ncol=2, frameon=False)
 
 
@@ -93,7 +95,7 @@ fig, ax = plt.subplots(figsize=(7, 4.5))
 _plot_metric(ax, "cmse", "cMSE")
 ax.set_title(f"Data efficiency — cMSE  ({run_tag}, {len(res['seeds'])} seeds ± 1 SD)",
              fontsize=11)
-sns.despine(trim=True)
+sns.despine(trim=False)
 plt.tight_layout()
 out = plots_dir / f"plot_efficiency_cmse_{run_tag}.png"
 plt.savefig(out, dpi=150, bbox_inches="tight")
@@ -107,7 +109,7 @@ fig, ax = plt.subplots(figsize=(7, 4.5))
 _plot_metric(ax, "rho", "Spearman ρ")
 ax.set_title(f"Data efficiency — ρ  ({run_tag}, {len(res['seeds'])} seeds ± 1 SD)",
              fontsize=11)
-sns.despine(trim=True)
+sns.despine(trim=False)
 plt.tight_layout()
 out = plots_dir / f"plot_efficiency_rho_{run_tag}.png"
 plt.savefig(out, dpi=150, bbox_inches="tight")

@@ -1,16 +1,18 @@
 """
 Simulation 01 — analysis and plots.
 
-Loads results saved by run.py and generates four figures:
+Loads results saved by run.py and generates five figures:
   plot_02_curves.png        — DLBT learning curves (NLL + cMSE)
   plot_03_summary.png       — 6-panel pred-vs-true scatter
   plot_04_per_task_dlbt.png — per-task scatter grid (DLBT)
   plot_05_per_task_slda.png — per-task scatter grid (SLDA)
+  plot_06_latent_pca.png    — PCA of mapper outputs coloured by each latent dim
 
 Run from repo root:
     python experiments/simulations/01_four_dim_generalization/analysis.py [--tag frozen|attnpool]
 """
 
+import json
 import math
 import pickle
 import sys
@@ -20,6 +22,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 from matplotlib.lines import Line2D
+from sklearn.decomposition import PCA
 
 import config as cfg
 
@@ -237,5 +240,90 @@ out = plots_dir / f"plot_05_per_task_slda_{run_tag}.png"
 plt.savefig(out, dpi=150, bbox_inches="tight")
 print(f"Saved: {out}")
 plt.close()
+
+# ---------------------------------------------------------------------------
+# Plot 6 — latent space PCA
+# ---------------------------------------------------------------------------
+agent_path = cfg.RESULTS_DIR / f"agent_{run_tag}.pt"
+if not agent_path.exists():
+    print(f"Agent weights not found at {agent_path} — skipping latent PCA plot.")
+else:
+    import torch
+    from dlbt.agents.dlbt import DlbtAgent
+    from dlbt.data.image_ref import load_image_refs, image_refs_as_list
+
+    # Load agent
+    _device = torch.device("cpu")
+    _agent  = DlbtAgent(freeze_encoder=True, n_mc_samples=cfg.N_MC,
+                        device=_device, mapper_hidden=cfg.MAPPER_HIDDEN)
+    _agent.load_state_dict(torch.load(agent_path, map_location="cpu"))
+
+    _cache_path = Path(cfg.CACHE_PATH)
+    if _cache_path.exists():
+        _agent.load_cache(str(_cache_path))
+    else:
+        _refs_all = image_refs_as_list(load_image_refs(cfg.METADATA))
+        _agent.precompute_features(_refs_all)
+
+    _agent.eval()
+
+    # All image refs + continuous metadata
+    _refs_dict = load_image_refs(cfg.METADATA)
+    _all_refs  = image_refs_as_list(_refs_dict)
+
+    _cont: dict = {}
+    with open(cfg.METADATA) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if not _line:
+                continue
+            _rec = json.loads(_line)
+            _z   = _rec["z"]
+            _cont[_rec["id"]] = dict(
+                x            = _z["pos_xy"][0],
+                transparency = _z["transparency"],
+                glossiness   = _z["glossiness"],
+                scale        = _z["scale"],
+            )
+
+    # Mapper outputs → Dirichlet means
+    with torch.no_grad():
+        _alpha = _agent.get_alpha(_all_refs).cpu().numpy()   # [N, K]
+    _q = _alpha / _alpha.sum(axis=1, keepdims=True)          # Dirichlet mean
+
+    # PCA into 2D
+    _pca    = PCA(n_components=2)
+    _coords = _pca.fit_transform(_q)                         # [N, 2]
+    _var    = _pca.explained_variance_ratio_
+
+    # 4-panel scatter, one per latent dimension
+    _dims = [
+        ("x",            "Left / Right",  "RdBu",   None,   None),
+        ("transparency", "Transparent",   "RdBu_r", 0.0,    1.0),
+        ("glossiness",   "Glossy",        "RdBu_r", 0.0,    1.0),
+        ("scale",        "Large / Small", "RdBu_r", 0.0,    1.0),
+    ]
+
+    fig, axes = plt.subplots(1, 4, figsize=(14, 3.6),
+                             gridspec_kw={"wspace": 0.35})
+    for ax, (key, title, cmap, vmin, vmax) in zip(axes, _dims):
+        _vals = np.array([_cont[r.uid][key] for r in _all_refs])
+        sc = ax.scatter(_coords[:, 0], _coords[:, 1],
+                        c=_vals, cmap=cmap, vmin=vmin, vmax=vmax,
+                        s=10, alpha=0.7, linewidths=0)
+        plt.colorbar(sc, ax=ax, shrink=0.75, pad=0.02)
+        ax.set_title(title, fontsize=10)
+        ax.set_xlabel(f"PC1 ({_var[0]:.1%})", fontsize=8)
+        ax.set_ylabel(f"PC2 ({_var[1]:.1%})", fontsize=8)
+        ax.tick_params(labelsize=7)
+
+    fig.suptitle(f"Mapper latent space — PCA of Dirichlet means  ({model_label})",
+                 fontsize=11, y=1.02)
+    sns.despine(fig=fig, trim=True)
+    plt.tight_layout()
+    out = plots_dir / f"plot_06_latent_pca_{run_tag}.png"
+    plt.savefig(out, dpi=150, bbox_inches="tight")
+    print(f"Saved: {out}")
+    plt.close()
 
 print("\nAll plots saved to", plots_dir)
