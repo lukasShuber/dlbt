@@ -574,26 +574,39 @@ def apply_material_latents(obj, glossiness: float, transparency: float, rgb, eng
     mix.location = (300, 0)
 
     # latent -> renderer mapping
-    r_min = 0.05
-    rough_mapped = r_min ** gloss          # log-linear: [1.0, 0.47, 0.22, 0.11, 0.05]
-    trans_mapped = 0.95 * (trans ** 0.3) 
+    #
+    # Glossiness drives metallic + roughness on the opaque BSDF, giving a
+    # clear plastic (gloss=0) → polished metal (gloss=1) progression that is
+    # visible regardless of transparency.
+    #
+    # Transparency drives the mix between the opaque and glass BSDFs as before.
+    #
+    r_min        = 0.05
+    rough_mapped = r_min ** gloss          # log-linear: [1.0 → 0.05] for glass roughness
+    trans_mapped = 0.95 * (trans ** 0.3)
 
+    # Opaque BSDF: metallic + roughness both driven by glossiness
+    #   gloss=0 → metallic=0, roughness=1.0  (diffuse plastic)
+    #   gloss=1 → metallic=1, roughness=0.05 (polished metal)
     opaque = nodes.new("ShaderNodeBsdfPrincipled")
     opaque.location = (0, 120)
     opaque.inputs["Base Color"].default_value = (r, g, b, 1.0)
-    opaque.inputs["Roughness"].default_value = 0.0
-    opaque.inputs["Specular"].default_value = 0.9
+    opaque.inputs["Metallic"].default_value   = gloss
+    opaque.inputs["Roughness"].default_value  = 1.0 - gloss * 0.95
+    opaque.inputs["Specular"].default_value   = 0.9
     opaque.inputs["Transmission"].default_value = 0.0
     opaque.inputs["IOR"].default_value = 1.45
 
+    # Glass BSDF: roughness controls frosted (gloss=0) vs clear (gloss=1) glass
     glass = nodes.new("ShaderNodeBsdfPrincipled")
     glass.location = (0, -120)
     glass.inputs["Base Color"].default_value = (r, g, b, 1.0)
-    glass.inputs["Roughness"].default_value = rough_mapped
-    glass.inputs["Specular"].default_value = 0.9
+    glass.inputs["Metallic"].default_value   = 0.0
+    glass.inputs["Roughness"].default_value  = rough_mapped
+    glass.inputs["Specular"].default_value   = 0.9
     glass.inputs["Transmission"].default_value = 1.0
     glass.inputs["IOR"].default_value = 1.45
-    glass.inputs["Transmission Roughness"].default_value = 0.0
+    glass.inputs["Transmission Roughness"].default_value = rough_mapped
 
     mix.inputs["Fac"].default_value = trans_mapped
     links.new(opaque.outputs["BSDF"], mix.inputs[1])

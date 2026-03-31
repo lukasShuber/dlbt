@@ -64,7 +64,7 @@ N_TRIALS           = 100    # SEU decisions per (image, task)
 PEAK               = 15.0   # peak concentration added to matching latent states
 BASE_CONCENTRATION = 1.0    # base concentration on all latent states
 BETA               = 5.0    # sigmoid sharpness for lr, tr, gl dimensions
-SCALE_BETA         = 10.0   # sharpness for scale (range [0.2, 0.8], threshold 0.5)
+SCALE_BETA         = 20.0   # sharpness for scale (old stimuli [0.5,0.8] thresh 0.65; new stimuli: 10.0 with thresh 0.5)
 N_EPOCHS_PHASE1    = 500    # mapper warmup (encoder always frozen)
 PATIENCE_PHASE1    = 50     # early-stopping patience for phase 1
 N_EPOCHS_PHASE2    = 3000   # attnpool fine-tuning (only if FREEZE_ENCODER=False)
