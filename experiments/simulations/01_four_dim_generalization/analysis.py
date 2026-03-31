@@ -292,36 +292,38 @@ else:
         _alpha = _agent.get_alpha(_all_refs).cpu().numpy()   # [N, K]
     _q = _alpha / _alpha.sum(axis=1, keepdims=True)          # Dirichlet mean
 
-    # PCA into 2D
-    _pca    = PCA(n_components=2)
-    _coords = _pca.fit_transform(_q)                         # [N, 2]
-    _var    = _pca.explained_variance_ratio_
+    # PCA into 4D — PC1/PC2 capture easy dims (position, scale);
+    # PC3/PC4 may encode harder material dims (transparency, gloss).
+    _pca4   = PCA(n_components=4)
+    _coords4 = _pca4.fit_transform(_q)          # [N, 4]
+    _var4    = _pca4.explained_variance_ratio_
 
-    # 4-panel scatter, one per latent dimension
-    # coolwarm: soft diverging (left/right centred at 0)
-    # viridis/plasma/cividis: perceptually-uniform sequential for 0→1 dims
-    _dims = [
-        ("x",            "Left / Right",  "coolwarm", None, None),
-        ("transparency", "Transparent",   "viridis",  0.0,  1.0),
-        ("glossiness",   "Glossy",        "plasma",   0.0,  1.0),
-        ("scale",        "Large / Small", "cividis",  0.0,  1.0),
+    # Layout: 2 rows × 2 cols
+    #   Row 0: PC1 vs PC2, coloured by x (left/right) and scale
+    #   Row 1: PC3 vs PC4, coloured by transparency and glossiness
+    _pca_panels = [
+        # (pc_x_idx, pc_y_idx, key,            title,            cmap,       vmin, vmax)
+        (0, 1, "x",            "Left / Right\n(PC1 vs PC2)",  "coolwarm", None, None),
+        (0, 1, "scale",        "Large / Small\n(PC1 vs PC2)", "cividis",  0.0,  1.0),
+        (2, 3, "transparency", "Transparent\n(PC3 vs PC4)",   "viridis",  0.0,  1.0),
+        (2, 3, "glossiness",   "Glossy\n(PC3 vs PC4)",        "plasma",   0.0,  1.0),
     ]
 
-    fig, axes = plt.subplots(1, 4, figsize=(14, 3.6),
-                             gridspec_kw={"wspace": 0.35})
-    for ax, (key, title, cmap, vmin, vmax) in zip(axes, _dims):
+    fig, axes = plt.subplots(2, 2, figsize=(8, 7),
+                             gridspec_kw={"wspace": 0.35, "hspace": 0.45})
+    for ax, (xi, yi, key, title, cmap, vmin, vmax) in zip(axes.flat, _pca_panels):
         _vals = np.array([_cont[r.uid][key] for r in _all_refs])
-        sc = ax.scatter(_coords[:, 0], _coords[:, 1],
+        sc = ax.scatter(_coords4[:, xi], _coords4[:, yi],
                         c=_vals, cmap=cmap, vmin=vmin, vmax=vmax,
                         s=10, alpha=0.7, linewidths=0)
         plt.colorbar(sc, ax=ax, shrink=0.75, pad=0.02)
-        ax.set_title(title, fontsize=10)
-        ax.set_xlabel(f"PC1 ({_var[0]:.1%})", fontsize=8)
-        ax.set_ylabel(f"PC2 ({_var[1]:.1%})", fontsize=8)
+        ax.set_title(title, fontsize=9)
+        ax.set_xlabel(f"PC{xi+1} ({_var4[xi]:.1%})", fontsize=8)
+        ax.set_ylabel(f"PC{yi+1} ({_var4[yi]:.1%})", fontsize=8)
         ax.tick_params(labelsize=7)
 
     fig.suptitle(f"Mapper latent space — PCA of Dirichlet means  ({model_label})",
-                 fontsize=11, y=1.02)
+                 fontsize=11)
     sns.despine(fig=fig, trim=True)
     plt.tight_layout()
     out = plots_dir / f"plot_06_latent_pca_{run_tag}.png"
@@ -331,20 +333,38 @@ else:
 
     # -----------------------------------------------------------------------
     # Plot 7 — t-SNE of first 8 PCA components
-    # PCA first to denoise, then t-SNE to reveal nonlinear structure.
+    # PCA first to denoise (captures most variance in fewer dims),
+    # then t-SNE reveals nonlinear cluster structure.
     # -----------------------------------------------------------------------
-    _n_pca  = min(8, _q.shape[1] - 1)
-    _pca8   = PCA(n_components=_n_pca, random_state=42)
-    _q_pca8 = _pca8.fit_transform(_q)           # [N, n_pca]
-    _cum_var = _pca8.explained_variance_ratio_.cumsum()
+    _n_pca8   = min(8, _q.shape[1] - 1)
+    _pca8     = PCA(n_components=_n_pca8)
+    _q_pca8   = _pca8.fit_transform(_q)                     # [N, n_pca8]
+    _cum_var8 = _pca8.explained_variance_ratio_.cumsum()
 
-    _tsne   = TSNE(n_components=2, perplexity=40, learning_rate="auto",
-                   init="pca", random_state=42, n_iter=1000)
-    _tsne_coords = _tsne.fit_transform(_q_pca8)  # [N, 2]
+    # n_iter was renamed max_iter in sklearn ≥ 1.5
+    import sklearn
+    _tsne_kwargs = dict(
+        n_components=2, perplexity=40, learning_rate="auto",
+        init="pca", random_state=42,
+    )
+    if tuple(int(x) for x in sklearn.__version__.split(".")[:2]) >= (1, 5):
+        _tsne_kwargs["max_iter"] = 1000
+    else:
+        _tsne_kwargs["n_iter"] = 1000
+    _tsne        = TSNE(**_tsne_kwargs)
+    _tsne_coords = _tsne.fit_transform(_q_pca8)             # [N, 2]
+
+    # Same 4-panel layout as PCA, same colormaps
+    _tsne_panels = [
+        ("x",            "Left / Right",  "coolwarm", None, None),
+        ("scale",        "Large / Small", "cividis",  0.0,  1.0),
+        ("transparency", "Transparent",   "viridis",  0.0,  1.0),
+        ("glossiness",   "Glossy",        "plasma",   0.0,  1.0),
+    ]
 
     fig, axes = plt.subplots(1, 4, figsize=(14, 3.6),
                              gridspec_kw={"wspace": 0.35})
-    for ax, (key, title, cmap, vmin, vmax) in zip(axes, _dims):
+    for ax, (key, title, cmap, vmin, vmax) in zip(axes, _tsne_panels):
         _vals = np.array([_cont[r.uid][key] for r in _all_refs])
         sc = ax.scatter(_tsne_coords[:, 0], _tsne_coords[:, 1],
                         c=_vals, cmap=cmap, vmin=vmin, vmax=vmax,
@@ -358,8 +378,8 @@ else:
         ax.set_yticks([])
 
     fig.suptitle(
-        f"Mapper latent space — t-SNE (PCA {_n_pca}D → 2D, "
-        f"{_cum_var[-1]:.0%} var.)  ({model_label})",
+        f"Mapper latent space — t-SNE  "
+        f"(PCA {_n_pca8}D → 2D, {_cum_var8[-1]:.0%} var.)  ({model_label})",
         fontsize=11, y=1.02,
     )
     sns.despine(fig=fig, left=True, bottom=True)

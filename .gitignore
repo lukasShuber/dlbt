@@ -32,8 +32,8 @@ build/
 # Logs
 logs/
 
-# Jupyter
-.ipynb_checkpoints/
+# latex
+/ms
 
 # Environment
 .env
