@@ -10,8 +10,8 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # Paths  (all relative to repo root)
 # ---------------------------------------------------------------------------
-METADATA   = "stimuli/imgs/metadata.jsonl"
-CACHE_PATH = "stimuli/imgs/clip_rn50_features_v2.pt"
+METADATA   = "stimuli/imgs_pink/metadata.jsonl"
+CACHE_PATH = "stimuli/imgs_pink/clip_rn50_features_v2.pt"
 RESULTS_DIR = Path(__file__).parent / "results"
 
 # ---------------------------------------------------------------------------
