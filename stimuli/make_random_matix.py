@@ -6,7 +6,7 @@ from PIL import Image
 def make_random_matrix(
     img_dir,
     out_path,
-    rows=5,
+    rows=10,
     cols=10,
     seed=0,
     padding=8,
@@ -51,8 +51,8 @@ def make_random_matrix(
 
 if __name__ == "__main__":
     make_random_matrix(
-        img_dir="polyhedra/imgs/images",
-        out_path="polyhedra/imgs/random_5x10.png",
+        img_dir="stimuli/imgs/images",
+        out_path="stimuli/imgs/random_5x10.png",
         rows=5,
         cols=10,
         seed=0,

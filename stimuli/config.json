@@ -69,7 +69,7 @@
   "grid_shape": "dodecahedron",
   "grid_pos_xy": [0.0, 0.5],
   "grid_yaw_deg": 0.0,
-  "grid_scale": 1.0,
+  "grid_scale": 0.6,
   "grid_rgb": [0.7, 0.8, 0.9],
   "grid_target_max_dim": 4.0
 }

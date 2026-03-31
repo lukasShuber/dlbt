@@ -29,4 +29,4 @@ DIM_SMALL_LARGE = 0
 X_THRESHOLD   = 0.0    # x >= 0.0 -> right; x < 0.0 -> left
 TRANSP_THRESH = 0.5    # transparency in [0,1]
 GLOSS_THRESH  = 0.5    # glossiness in [0,1]
-SCALE_THRESH  = 0.65   # scale >= 0.65 -> large  (old stimuli [0.5, 0.8]; update to 0.5 when new stimuli [0.2, 0.8] are ready)
+SCALE_THRESH  = 0.5    # scale >= 0.5  -> large  (new stimuli [0.2, 0.8])

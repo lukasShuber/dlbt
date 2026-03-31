@@ -10,8 +10,8 @@ Four evaluation regions arise from a joint split on stimuli (X_test) and tasks (
     │ Unseen images    │ Stim generalization│ Joint generalization │
     └──────────────────┴────────────────────┴──────────────────────┘
 
-Five latent dimensions (K=32): front/back (y), left/right (x), transparent,
-glossy, small/large (scale).  Shape (categorical) is excluded.
+Four latent dimensions (K=16): left/right (x), transparent, glossy,
+small/large (scale).
 
 Val tasks hold out all lr × sl conjunctions (left_right × small_large):
 the model trains on each dimension separately but never sees their combination.
@@ -24,11 +24,13 @@ Run from repo root:
     python examples/03_train_dlbt.py
 """
 
+import gc
 import math
 import random
 from pathlib import Path
 import numpy as np
 import torch
+from tqdm import tqdm
 import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy.stats import spearmanr
@@ -51,7 +53,7 @@ from dlbt.training.metrics import corrected_mse
 # Config
 # ---------------------------------------------------------------------------
 METADATA   = "stimuli/imgs/metadata.jsonl"
-CACHE_PATH = "stimuli/imgs/clip_rn50_features.pt"
+CACHE_PATH = "stimuli/imgs/clip_rn50_features_v2.pt"
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if DEVICE.type == "cuda":
@@ -64,7 +66,7 @@ N_TRIALS           = 100    # SEU decisions per (image, task)
 PEAK               = 15.0   # peak concentration added to matching latent states
 BASE_CONCENTRATION = 1.0    # base concentration on all latent states
 BETA               = 5.0    # sigmoid sharpness for lr, tr, gl dimensions
-SCALE_BETA         = 20.0   # sharpness for scale (old stimuli [0.5,0.8] thresh 0.65; new stimuli: 10.0 with thresh 0.5)
+SCALE_BETA         = 10.0   # sharpness for scale sigmoid (new stimuli [0.2, 0.8], thresh 0.5)
 N_EPOCHS_PHASE1    = 500    # mapper warmup (encoder always frozen)
 PATIENCE_PHASE1    = 50     # early-stopping patience for phase 1
 N_EPOCHS_PHASE2    = 3000   # attnpool fine-tuning (only if FREEZE_ENCODER=False)
@@ -338,6 +340,10 @@ print(f"  best epoch: {phase1.best_epoch}  stim_gen_mse: {phase1.best_val_mse:.4
 phase2 = None
 if not FREEZE_ENCODER:
     print(f"\nPhase 2 — attnpool fine-tuning...")
+    # Free phase-1 optimizer state and any other lingering GPU allocations
+    # before switching to the more memory-intensive attnpool training.
+    gc.collect()
+    torch.cuda.empty_cache()
     # Unfreeze attnpool; clear full-feature cache so train_dlbt switches to
     # backbone-feature caching (pre-attnpool spatial maps).
     for p in agent.encoder.attnpool.parameters():
@@ -359,6 +365,23 @@ if not FREEZE_ENCODER:
 
 result = phase2 if phase2 is not None else phase1
 print(f"\nFinal best stim_gen_mse: {result.best_val_mse:.4f}")
+
+# Phase 2 clears _cache before training; repopulate it now with the final
+# attnpool features so downstream SLDA code can read agent._cache[uid].
+if not FREEZE_ENCODER:
+    print("Repopulating feature cache with final attnpool features...")
+    all_refs_list = list(refs_dict.values())
+    agent.eval()
+    with torch.no_grad():
+        for i in tqdm(range(0, len(all_refs_list), 16),
+                      desc="caching features", unit="batch"):
+            batch   = all_refs_list[i : i + 16]
+            spatial = torch.stack(
+                [agent._backbone_cache[r.uid] for r in batch]
+            ).to(agent.device)
+            feats = agent.encoder.attnpool(spatial).float()
+            for ref, feat in zip(batch, feats):
+                agent._cache[ref.uid] = feat.cpu()
 
 # ---------------------------------------------------------------------------
 # Fit per-task SLDA  (Ridge regression: CLIP features → empirical P(right))
