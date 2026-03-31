@@ -1,13 +1,13 @@
 """
-Minimal DlbtAgent training example.
+Minimal SldaAgent training example.
 
-Trains on a single task (left_right) with synthetic behavioral data
-generated from a simple ground-truth observer: objects on the right
-side of the image (latent_state bit DIM_LEFT_RIGHT=1) are chosen
-with probability 0.8; objects on the left with probability 0.2.
+Fits an SLDA model on a single task (left_right) using the same simple
+ground-truth observer as examples/03_train_dlbt.py: objects on the right
+(latent_state bit DIM_LEFT_RIGHT=1) are chosen with probability 0.8;
+objects on the left with probability 0.2.
 
 Run from repo root:
-    python examples/03_train_dlbt.py
+    python examples/04_train_slda.py
 """
 
 import numpy as np
@@ -16,9 +16,8 @@ import torch
 from dlbt.constants import DIM_LEFT_RIGHT
 from dlbt.data.dataset import BehavioralDataset, Observation
 from dlbt.data.image_ref import load_image_refs, image_refs_as_list
-from dlbt.data.task import TASKS
-from dlbt.agents.dlbt import DlbtAgent
-from dlbt.training.train_dlbt import train_dlbt
+from dlbt.agents.slda import SldaAgent
+from dlbt.training.train_slda import fit_slda
 
 # ---------------------------------------------------------------------------
 # Config
@@ -53,11 +52,14 @@ ds = BehavioralDataset.from_records(records)
 print(f"Dataset: {ds}")
 
 # ---------------------------------------------------------------------------
-# Train
+# Fit SLDA
 # ---------------------------------------------------------------------------
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-agent  = DlbtAgent(freeze_encoder=True, device=device)
-agent.precompute_features(refs)
+agent  = SldaAgent(device=device)
 
-result = train_dlbt(agent, ds, ds, refs_dict, n_epochs=200, patience=30)
-print(f"\nBest val MSE: {result.best_val_mse:.4f}  (epoch {result.best_epoch})")
+result = fit_slda(agent, train_dataset=ds, val_dataset=ds, image_refs=refs_dict)
+
+mean_val_nll = np.mean(list(result.val_nlls.values()))
+mean_val_mse = np.mean(list(result.val_mses.values()))
+print(f"\nVal NLL: {mean_val_nll:.4f}   Val MSE: {mean_val_mse:.4f}")
+print(f"Temperature: {result.temperatures[TASK_NAME]:.3f}")
