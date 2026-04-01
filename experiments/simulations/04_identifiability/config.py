@@ -32,8 +32,8 @@ SCALE_BETA         = 10.0
 # ---------------------------------------------------------------------------
 N_EPOCHS  = 5000
 PATIENCE  = 100
-LR        = 1e-2
-N_MC      = 50    # small mapper converges easily; fewer MC samples needed
+LR        = 5e-2
+N_MC      = 100    # small mapper converges easily; fewer MC samples needed
 
 # ---------------------------------------------------------------------------
 # Feature modes

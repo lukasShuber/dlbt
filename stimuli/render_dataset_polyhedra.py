@@ -782,6 +782,45 @@ def sample_lab_color(cfg, rng, max_tries: int = 200):
     return {"lab": [L, a, b], "rgb": rgb}
 
 # ----------------------------
+# Camera-space geometry helpers
+# ----------------------------
+def _cam_axes(cfg):
+    """
+    Return (f_hat, r_hat) — unit vectors in the floor plane for the camera's
+    forward direction and its rightward direction.
+
+    forward = normalise(cam_target_xy - cam_location_xy)
+    right   = rotate forward 90° clockwise  →  (fy, -fx)
+    """
+    cam_loc = cfg.get("cam_location", [0.0, -8.0, 4.5])
+    cam_tgt = cfg.get("cam_target",   [0.0,  0.0, 1.8])
+    fx = cam_tgt[0] - cam_loc[0]
+    fy = cam_tgt[1] - cam_loc[1]
+    flen = (fx ** 2 + fy ** 2) ** 0.5
+    fx, fy = fx / flen, fy / flen
+    # right = 90° clockwise rotation of forward in the floor plane
+    rx, ry = fy, -fx
+    return (fx, fy), (rx, ry)
+
+
+def lateral_depth_to_world(lateral, depth, cfg):
+    """
+    Convert camera-relative (lateral, depth) to world (x, y).
+
+    lateral > 0  →  screen-right
+    depth   > 0  →  away from camera (toward back of room)
+
+    The reference origin is the camera target's floor projection.
+    """
+    (fx, fy), (rx, ry) = _cam_axes(cfg)
+    cam_tgt = cfg.get("cam_target", [0.0, 0.0, 1.8])
+    ref_x, ref_y = float(cam_tgt[0]), float(cam_tgt[1])
+    world_x = ref_x + lateral * rx + depth * fx
+    world_y = ref_y + lateral * ry + depth * fy
+    return world_x, world_y
+
+
+# ----------------------------
 # Latents
 # ----------------------------
 def sample_random_latents(cfg, rng: random.Random):
@@ -814,6 +853,20 @@ def sample_random_latents(cfg, rng: random.Random):
     else:
         color_sample = sample_lab_color(cfg, rng)
 
+    # Position: sample in camera-relative coordinates if obj_lateral_range is
+    # present in config; fall back to legacy world x/y sampling otherwise.
+    # pos_xy stores [lateral, depth] so that pos_xy[0] is the true screen
+    # left/right coordinate used by the left/right task.
+    if "obj_lateral_range" in cfg:
+        lateral = rng.uniform(*cfg["obj_lateral_range"])
+        depth   = rng.uniform(*cfg.get("obj_depth_range", [-0.5, 1.0]))
+        pos_xy  = [lateral, depth]
+    else:
+        pos_xy  = [
+            rng.uniform(*cfg.get("obj_x_range", [-2.5, 2.5])),
+            rng.uniform(*cfg.get("obj_y_range", [-1.5, 2.5])),
+        ]
+
     return {
         "shape_name": shape_name,
         "face_index": rng.randrange(face_counts[shape_name]),
@@ -822,10 +875,7 @@ def sample_random_latents(cfg, rng: random.Random):
         "lab": color_sample["lab"],
         "rgb": color_sample["rgb"],
         "scale": u("obj_scale_range", [0.3, 0.7]),
-        "pos_xy": [
-            rng.uniform(*cfg.get("obj_x_range", [-2.5, 2.5])),
-            rng.uniform(*cfg.get("obj_y_range", [-1.5, 2.5])),
-        ],
+        "pos_xy": pos_xy,
         "yaw_deg": u("yaw_deg_range", [0.0, 360.0]),
     }
 
@@ -892,7 +942,12 @@ def render_one(cfg, engine, img_dir, meta_path, uid, z, tag=None, target_max_dim
     scale_mul=z["scale"],
     face_index=z.get("face_index", 0),
 )
-    place_object_on_floor(obj, z["pos_xy"], floor_z=0.0)
+    # Convert pos_xy to world coordinates if camera-relative sampling was used.
+    if "obj_lateral_range" in cfg:
+        world_xy = lateral_depth_to_world(z["pos_xy"][0], z["pos_xy"][1], cfg)
+    else:
+        world_xy = z["pos_xy"]
+    place_object_on_floor(obj, world_xy, floor_z=0.0)
 
     apply_material_latents(
         obj=obj,
