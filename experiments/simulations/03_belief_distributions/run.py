@@ -23,8 +23,6 @@ import numpy as np
 import torch
 from scipy.optimize import minimize_scalar
 from scipy.stats import spearmanr
-from sklearn.linear_model import RidgeCV
-from sklearn.preprocessing import StandardScaler
 
 from dlbt.constants import (
     K, DIM_LEFT_RIGHT, DIM_TRANSP, DIM_GLOSS, DIM_SMALL_LARGE,
@@ -321,23 +319,22 @@ def collect_dlbt(agent, ds: BehavioralDataset,
     return out
 
 
-def collect_slda(slda_scalers, slda_models, slda_temps,
+def collect_slda(slda_temps, W_slda,
                  ds: BehavioralDataset, task_names: list,
                  clip_feat_fn) -> dict:
     out = {}
     for task_name in task_names:
-        if task_name not in slda_models:
+        if task_name not in slda_temps:
             continue
         group = ds.df[ds.df["task_name"] == task_name]
         if len(group) == 0:
             continue
-        uids     = group["uid"].tolist()
-        X        = clip_feat_fn(uids)
-        X_scaled = slda_scalers[task_name].transform(X)
-        p_pred   = np.clip(slda_models[task_name].predict(X_scaled), 1e-6, 1 - 1e-6)
-        logits   = np.log(p_pred / (1 - p_pred))
-        tau      = slda_temps[task_name]
-        pred     = 1.0 / (1.0 + np.exp(-logits / tau))
+        uids    = group["uid"].tolist()
+        X       = clip_feat_fn(uids)
+        delta_u = TASKS[task_name].delta_u.astype(np.float64)
+        logits  = (X @ W_slda) @ delta_u
+        tau     = slda_temps[task_name]
+        pred    = 1.0 / (1.0 + np.exp(-logits / tau))
         out[task_name] = dict(pred=pred, uids=uids)
     return out
 
@@ -446,23 +443,26 @@ for s_idx, seed in enumerate(cfg.SEEDS):
         def clip_features(uids: list) -> np.ndarray:
             return np.array([frozen_clip[uid].cpu().numpy() for uid in uids])
 
-        slda_scalers, slda_models, slda_temps = {}, {}, {}
+        # Fit SLDA: GT least-squares decoder (weights need no behavioral data)
+        # Only temperature τ is tuned from behavioral data.
+        _all_refs = list(refs_dict.values())
+        _X_all    = np.stack([frozen_clip[r.uid].cpu().numpy() for r in _all_refs])
+        _Y_oh     = np.zeros((len(_all_refs), K), dtype=np.float32)
+        for _i, _r in enumerate(_all_refs):
+            _Y_oh[_i, _r.latent_state] = 1.0
+        W_slda, _, _, _ = np.linalg.lstsq(_X_all, _Y_oh, rcond=None)  # [1024, K]
 
+        slda_temps = {}
         for task_name in cfg.TRAIN_TASKS:
             group = train_ds.df[train_ds.df["task_name"] == task_name]
             if len(group) == 0:
+                slda_temps[task_name] = 1.0
                 continue
             uids    = group["uid"].tolist()
-            X       = clip_features(uids)
+            X       = np.stack([frozen_clip[uid].cpu().numpy() for uid in uids])
             p_right = (group["count_1"] / (group["count_0"] + group["count_1"])).values
-
-            scaler   = StandardScaler()
-            X_scaled = scaler.fit_transform(X)
-            model    = RidgeCV(alphas=[1e1, 1e2, 1e3, 1e4, 1e5])
-            model.fit(X_scaled, p_right)
-
-            p_pred = np.clip(model.predict(X_scaled), 1e-6, 1 - 1e-6)
-            logits = np.log(p_pred / (1 - p_pred))
+            delta_u = TASKS[task_name].delta_u.astype(np.float64)
+            logits  = (X @ W_slda) @ delta_u
 
             def _nll_tau(log_tau, logits=logits, targets=p_right):
                 p = 1.0 / (1.0 + np.exp(-logits / np.exp(log_tau)))
@@ -470,9 +470,9 @@ for s_idx, seed in enumerate(cfg.SEEDS):
                 return -np.mean(targets * np.log(p) + (1 - targets) * np.log(1 - p))
 
             opt = minimize_scalar(_nll_tau, bounds=(-3.0, 3.0), method="bounded")
-            slda_scalers[task_name] = scaler
-            slda_models[task_name]  = model
-            slda_temps[task_name]   = float(np.exp(opt.x))
+            slda_temps[task_name] = float(np.exp(opt.x))
+
+        print(f"    SLDA  fitted temperatures for {len(slda_temps)}/{len(cfg.TRAIN_TASKS)} tasks")
 
         # -------------------------------------------------------------------
         # Collect predictions
@@ -485,9 +485,9 @@ for s_idx, seed in enumerate(cfg.SEEDS):
             "joint": collect_dlbt(agent, joint_gen_ds, dist_name, cfg.VAL_TASKS),
         }
         slda_preds = {
-            "train": collect_slda(slda_scalers, slda_models, slda_temps,
+            "train": collect_slda(slda_temps, W_slda,
                                    train_ds,    cfg.TRAIN_TASKS, clip_features),
-            "stim":  collect_slda(slda_scalers, slda_models, slda_temps,
+            "stim":  collect_slda(slda_temps, W_slda,
                                    stim_gen_ds, cfg.TRAIN_TASKS, clip_features),
         }
 

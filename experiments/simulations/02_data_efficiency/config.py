@@ -21,7 +21,7 @@ RESULTS_DIR = Path(__file__).parent / "results"
 # Synthetic data
 # ---------------------------------------------------------------------------
 BASE_SEED          = 42
-N_SEEDS            = 5
+N_SEEDS            = 1
 SEEDS              = [BASE_SEED + i for i in range(N_SEEDS)]
 
 BUDGETS    = [10, 100, 1_000, 10_000, 100_000, 1_000_000]  # total training trials
@@ -43,7 +43,7 @@ PATIENCE_PHASE2 = 100
 LR              = 1e-2
 LR_ATTNPOOL     = 1e-5
 N_MC            = 200
-FREEZE_ENCODER  = False    # True → frozen only; False → phase 1 + attnpool fine-tune
+FREEZE_ENCODER  = True    # True → frozen only; False → phase 1 + attnpool fine-tune
 MAPPER_HIDDEN   = None
 
 RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"

@@ -16,15 +16,15 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-METADATA    = "stimuli/imgs_pink/metadata.jsonl"
-CACHE_PATH  = "stimuli/imgs_pink/clip_rn50_features_v2.pt"
+METADATA    = "stimuli/imgs/metadata.jsonl"
+CACHE_PATH  = "stimuli/imgs/clip_rn50_features_v2.pt"
 RESULTS_DIR = Path(__file__).parent / "results"
 
 # ---------------------------------------------------------------------------
 # Synthetic data
 # ---------------------------------------------------------------------------
 BASE_SEED          = 42
-N_SEEDS            = 5
+N_SEEDS            = 1
 SEEDS              = [BASE_SEED + i for i in range(N_SEEDS)]
 
 N_TRIALS           = 100

@@ -180,14 +180,20 @@ def add_room_corner(cfg):
     wall_bsdf.inputs["Roughness"].default_value = float(cfg.get("wall_roughness", 1.0))
 
     # Back wall
+    extra_height = 0.3
+
+    # Back wall
     bpy.ops.mesh.primitive_cube_add(
         size=1.0,
         location=(0.0, floor_size / 2.0, wall_height / 2.0 - 3.0)
     )
     wall_back = bpy.context.object
     wall_back.name = "Wall_Back"
-    wall_back.scale = (wall_extent / 2.0, wall_thickness / 2.0, wall_height / 2.0)
-    wall_back.data.materials.append(wall_mat)
+    wall_back.scale = (
+        wall_extent / 2.0,
+        wall_thickness / 2.0,
+        wall_height / 2.0 + extra_height / 2.0
+    )
 
     # Side wall
     bpy.ops.mesh.primitive_cube_add(
@@ -196,8 +202,11 @@ def add_room_corner(cfg):
     )
     wall_side = bpy.context.object
     wall_side.name = "Wall_Side"
-    wall_side.scale = (wall_thickness / 2.0, wall_extent / 2.0, wall_height / 2.0)
-    wall_side.data.materials.append(wall_mat)
+    wall_side.scale = (
+        wall_thickness / 2.0,
+        wall_extent / 2.0,
+        wall_height / 2.0 + extra_height / 2.0
+    )
 
     return floor, wall_back, wall_side
 
@@ -582,8 +591,8 @@ def apply_material_latents(obj, glossiness: float, transparency: float, rgb, eng
     # Transparency drives the mix between the opaque and glass BSDFs as before.
     #
     r_min        = 0.05
-    rough_mapped = r_min ** gloss          # log-linear: [1.0 → 0.05] for glass roughness
-    trans_mapped = 0.95 * (trans ** 0.3)
+    rough_mapped = r_min ** gloss
+    trans_mapped = 0.75 * trans          # linear, max 75% glass — keeps colour at all steps
 
     # Opaque BSDF: metallic + roughness both driven by glossiness
     #   gloss=0 → metallic=0,    roughness=1.0  (diffuse plastic)
