@@ -21,7 +21,7 @@ RESULTS_DIR = Path(__file__).parent / "results"
 # ---------------------------------------------------------------------------
 # Synthetic data
 # ---------------------------------------------------------------------------
-N_TRIALS           = 500    # per (image, task) pair — large for clean signal
+N_TRIALS           = 5000    # per (image, task) pair — large for clean signal
 PEAK               = 15.0
 BASE_CONCENTRATION = 1.0
 BETA               = 5.0
@@ -30,7 +30,7 @@ SCALE_BETA         = 10.0
 # ---------------------------------------------------------------------------
 # Training  (single run, no seeds — deterministic oracle features)
 # ---------------------------------------------------------------------------
-N_EPOCHS  = 500
+N_EPOCHS  = 5000
 PATIENCE  = 100
 LR        = 1e-2
 N_MC      = 50    # small mapper converges easily; fewer MC samples needed
