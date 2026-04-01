@@ -15,7 +15,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-METADATA    = "stimuli/imgs_pink/metadata.jsonl"
+METADATA    = "stimuli/imgs/metadata.jsonl"
 RESULTS_DIR = Path(__file__).parent / "results"
 
 # ---------------------------------------------------------------------------
