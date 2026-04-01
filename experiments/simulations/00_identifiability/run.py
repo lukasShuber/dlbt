@@ -196,25 +196,62 @@ for mode in cfg.FEATURE_MODES:
 
     q_rec = alpha_rec / alpha_rec.sum(axis=1, keepdims=True)    # [N, K]
 
-    # Flatten over (stimulus × state) for scatter
+    # Flatten over (stimulus × state) for belief-mean scatter
     q_gt_flat  = q_gt.flatten()
     q_rec_flat = q_rec.flatten()
 
-    rho, _ = spearmanr(q_gt_flat, q_rec_flat)
-    mse    = float(np.mean((q_gt_flat - q_rec_flat) ** 2))
-    print(f"  Recovery  ρ={rho:.4f}  MSE={mse:.6f}")
+    rho_q, _ = spearmanr(q_gt_flat, q_rec_flat)
+    mse_q    = float(np.mean((q_gt_flat - q_rec_flat) ** 2))
+    print(f"  Belief mean recovery  ρ={rho_q:.4f}  MSE={mse_q:.6f}")
+
+    # Collect p(right) true vs predicted for all (stimulus, task) pairs
+    uid_to_ref = {r.uid: r for r in all_refs}
+    p_true_list, p_pred_list, task_list = [], [], []
+    for task_name in cfg.ALL_TASKS:
+        task  = TASKS[task_name]
+        group = ds.df[ds.df["task_name"] == task_name]
+        uids  = group["uid"].tolist()
+        batch_refs = [uid_to_ref[u] for u in uids]
+
+        # GT p(right): MC under GT Dirichlet
+        gt_alphas = np.array([gt_alpha(u) for u in uids])
+        _rng_mc   = np.random.default_rng(0)
+        beliefs   = np.stack([_rng_mc.dirichlet(a, size=2000) for a in gt_alphas])
+        p_true    = (beliefs @ task.delta_u > 0).mean(axis=1)
+
+        # Predicted p(right)
+        with torch.no_grad():
+            p_pred = agent.choice_probs(batch_refs, task)[:, 1].cpu().numpy()
+
+        p_true_list.append(p_true)
+        p_pred_list.append(p_pred)
+        task_list.extend([task_name] * len(uids))
+
+    p_true_all = np.concatenate(p_true_list)
+    p_pred_all = np.concatenate(p_pred_list)
+    rho_p, _   = spearmanr(p_true_all, p_pred_all)
+    mse_p      = float(np.mean((p_true_all - p_pred_all) ** 2))
+    print(f"  p(right) prediction   ρ={rho_p:.4f}  MSE={mse_p:.6f}")
 
     results[mode] = dict(
+        # belief mean recovery
         q_gt       = q_gt,
         q_rec      = q_rec,
         q_gt_flat  = q_gt_flat,
         q_rec_flat = q_rec_flat,
         alpha_gt   = alpha_gt,
         alpha_rec  = alpha_rec,
+        rho_q      = rho_q,
+        mse_q      = mse_q,
+        # p(right) prediction
+        p_true     = p_true_all,
+        p_pred     = p_pred_all,
+        task_names = task_list,
+        rho_p      = rho_p,
+        mse_p      = mse_p,
+        # meta
         states     = states,
         uids       = [r.uid for r in all_refs],
-        rho        = rho,
-        mse        = mse,
         best_epoch = result.best_epoch,
     )
 
