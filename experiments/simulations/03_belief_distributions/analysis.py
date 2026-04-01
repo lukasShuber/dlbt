@@ -1,15 +1,16 @@
 """
 Simulation 03 — belief distribution robustness analysis.
 
-Loads results_frozen.pkl and produces:
-  plot_robustness_cmse.png        — cMSE across distributions, all conditions
-  plot_robustness_rho.png         — ρ    across distributions, all conditions
-  plot_robustness_reldeg.png      — relative cMSE degradation vs Dirichlet baseline
+Loads results_{tag}.pkl and produces:
+  plot_robustness_cmse_{tag}.png        — cMSE across distributions, all conditions
+  plot_robustness_rho_{tag}.png         — ρ    across distributions, all conditions
+  plot_robustness_reldeg_{tag}.png      — relative cMSE degradation vs Dirichlet baseline
 
 Run from repo root:
-    python experiments/simulations/03_belief_distributions/analysis.py
+    python experiments/simulations/03_belief_distributions/analysis.py [--tag frozen|attnpool]
 """
 
+import argparse
 import pickle
 import sys
 
@@ -21,9 +22,19 @@ import seaborn as sns
 import config as cfg
 
 # ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+parser = argparse.ArgumentParser()
+parser.add_argument("--tag", default=cfg.RUN_TAG,
+                    choices=["frozen", "attnpool"],
+                    help="Which results file to load (default: cfg.RUN_TAG)")
+args = parser.parse_args()
+run_tag = args.tag
+
+# ---------------------------------------------------------------------------
 # Load
 # ---------------------------------------------------------------------------
-results_path = cfg.RESULTS_DIR / f"results_{cfg.RUN_TAG}.pkl"
+results_path = cfg.RESULTS_DIR / f"results_{run_tag}.pkl"
 if not results_path.exists():
     sys.exit(f"Results file not found: {results_path}\nRun run.py first.")
 
@@ -67,17 +78,18 @@ def _plot_metric(ax, metric: str, ylabel: str):
         mean = data.mean(axis=0)   # [n_dist]
         std  = data.std(axis=0)
 
-        bars = ax.bar(x + offsets[i], mean, width,
-                      color=color, alpha=0.85 if model == "dlbt" else 0.5,
-                      hatch=hatch, edgecolor="white", linewidth=0.4,
-                      label=label)
+        ax.bar(x + offsets[i], mean, width,
+               color=color, alpha=0.85 if model == "dlbt" else 0.5,
+               hatch=hatch, edgecolor="white", linewidth=0.4,
+               label=label)
         ax.errorbar(x + offsets[i], mean, yerr=std,
-                    fmt="none", color="black", capsize=2, linewidth=0.8)
+                    fmt="none", color="black", capsize=2.5, linewidth=1.0)
 
     ax.set_xticks(x)
     ax.set_xticklabels([dist_labels[d] for d in distributions],
-                       rotation=0, ha="center", fontsize=9)
-    ax.set_ylabel(ylabel, fontsize=10)
+                       rotation=0, ha="center", fontsize=10)
+    ax.tick_params(axis="y", labelsize=9)
+    ax.set_ylabel(ylabel, fontsize=12)
     if metric == "cmse":
         ax.set_ylim(bottom=0)
 
@@ -85,47 +97,37 @@ def _plot_metric(ax, metric: str, ylabel: str):
 # ---------------------------------------------------------------------------
 # Plot 1 — cMSE
 # ---------------------------------------------------------------------------
-fig, ax = plt.subplots(figsize=(12, 4.5))
+fig, ax = plt.subplots(figsize=(9, 3))
 _plot_metric(ax, "cmse", "cMSE")
-ax.set_title(
-    f"Belief distribution robustness — cMSE  "
-    f"({res['n_seeds'] if 'n_seeds' in res else cfg.N_SEEDS} seeds ± 1 SD)",
-    fontsize=11,
-)
 
 handles = [
     mpatches.Patch(facecolor=color, alpha=0.85 if model == "dlbt" else 0.5,
                    hatch=hatch, label=label, edgecolor="gray")
     for _, _, color, label, hatch, model in COND_STYLES
 ]
-ax.legend(handles=handles, fontsize=8, ncol=2, frameon=False,
+ax.legend(handles=handles, fontsize=9, ncol=2, frameon=False,
           bbox_to_anchor=(1.01, 1), loc="upper left")
 
-sns.despine(trim=True)
+sns.despine(trim=False)
 plt.tight_layout()
-out = plots_dir / "plot_robustness_cmse.png"
-plt.savefig(out, dpi=150, bbox_inches="tight")
+out = plots_dir / f"plot_robustness_cmse_{run_tag}.png"
+plt.savefig(out, dpi=200, bbox_inches="tight")
 print(f"Saved: {out}")
 plt.close()
 
 # ---------------------------------------------------------------------------
 # Plot 2 — ρ
 # ---------------------------------------------------------------------------
-fig, ax = plt.subplots(figsize=(12, 4.5))
+fig, ax = plt.subplots(figsize=(9, 3))
 _plot_metric(ax, "rho", "Spearman ρ")
-ax.set_title(
-    f"Belief distribution robustness — ρ  "
-    f"({res['n_seeds'] if 'n_seeds' in res else cfg.N_SEEDS} seeds ± 1 SD)",
-    fontsize=11,
-)
 
-ax.legend(handles=handles, fontsize=8, ncol=2, frameon=False,
+ax.legend(handles=handles, fontsize=9, ncol=2, frameon=False,
           bbox_to_anchor=(1.01, 1), loc="upper left")
 
-sns.despine(trim=True)
+sns.despine(trim=False)
 plt.tight_layout()
-out = plots_dir / "plot_robustness_rho.png"
-plt.savefig(out, dpi=150, bbox_inches="tight")
+out = plots_dir / f"plot_robustness_rho_{run_tag}.png"
+plt.savefig(out, dpi=200, bbox_inches="tight")
 print(f"Saved: {out}")
 plt.close()
 
@@ -191,7 +193,7 @@ ax.legend(handles=rel_handles, fontsize=8, ncol=2, frameon=False,
 
 sns.despine(trim=True)
 plt.tight_layout()
-out = plots_dir / "plot_robustness_reldeg.png"
+out = plots_dir / f"plot_robustness_reldeg_{run_tag}.png"
 plt.savefig(out, dpi=150, bbox_inches="tight")
 print(f"Saved: {out}")
 plt.close()

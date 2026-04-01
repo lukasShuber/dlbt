@@ -383,7 +383,7 @@ for s_idx, seed in enumerate(cfg.SEEDS):
         random.seed(seed)
         np.random.seed(seed)
 
-        agent = DlbtAgent(freeze_encoder=True, n_mc_samples=cfg.N_MC,
+        agent = DlbtAgent(freeze_encoder=cfg.FREEZE_ENCODER, n_mc_samples=cfg.N_MC,
                           device=device, mapper_hidden=cfg.MAPPER_HIDDEN)
 
         cache_path = Path(cfg.CACHE_PATH)
@@ -402,8 +402,43 @@ for s_idx, seed in enumerate(cfg.SEEDS):
             patience=cfg.PATIENCE_PHASE1,
             extra_val_datasets={"task": task_gen_ds, "joint": joint_gen_ds},
         )
-        print(f"    DLBT  best epoch {phase1.best_epoch:4d}  "
+        print(f"    DLBT phase1  best epoch {phase1.best_epoch:4d}  "
               f"stim_mse={phase1.best_val_mse:.4f}")
+
+        # Phase 2 — attnpool fine-tuning (only when FREEZE_ENCODER=False)
+        phase2 = None
+        if not cfg.FREEZE_ENCODER:
+            for p in agent.mapper.parameters():
+                p.requires_grad_(False)
+            for p in agent.encoder.attnpool.parameters():
+                p.requires_grad_(True)
+            agent.freeze_encoder = False
+            agent._cache.clear()
+
+            optimizer2 = torch.optim.Adam(
+                agent.encoder.attnpool.parameters(), lr=cfg.LR_ATTNPOOL
+            )
+            phase2 = train_dlbt(
+                agent, train_ds, stim_gen_ds, refs_dict,
+                n_epochs=cfg.N_EPOCHS_PHASE2, patience=cfg.PATIENCE_PHASE2,
+                optimizer=optimizer2,
+                extra_val_datasets={"task": task_gen_ds, "joint": joint_gen_ds},
+            )
+            print(f"    DLBT phase2  best epoch {phase2.best_epoch:4d}  "
+                  f"stim_mse={phase2.best_val_mse:.4f}")
+
+            # Repopulate _cache with fine-tuned attnpool features for DLBT predictions
+            agent.eval()
+            all_refs_list = list(refs_dict.values())
+            with torch.no_grad():
+                for i in range(0, len(all_refs_list), 16):
+                    batch   = all_refs_list[i : i + 16]
+                    spatial = torch.stack(
+                        [agent._backbone_cache[r.uid] for r in batch]
+                    ).to(agent.device)
+                    feats = agent.encoder.attnpool(spatial).float()
+                    for ref, feat in zip(batch, feats):
+                        agent._cache[ref.uid] = feat.cpu()
 
         # -------------------------------------------------------------------
         # Fit SLDA  (always on frozen CLIP features)

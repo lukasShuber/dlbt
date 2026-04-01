@@ -63,12 +63,14 @@ class DlbtAgent(nn.Module, Agent):
         n_mc_samples: int = 1000,
         device: torch.device = torch.device("cpu"),
         mapper_hidden: Optional[int] = None,
+        feature_dim: int = 1024,
     ):
         super().__init__()
 
         self.freeze_encoder = freeze_encoder
         self.n_mc_samples   = n_mc_samples
         self.device         = device
+        self.feature_dim    = feature_dim
 
         # ---- CLIP RN50 encoder --------------------------------------------
         import open_clip
@@ -86,26 +88,28 @@ class DlbtAgent(nn.Module, Agent):
             for p in self.encoder.attnpool.parameters():
                 p.requires_grad_(True)
 
-        # ---- Distribution mapper: 1024 -> K -------------------------------
+        # ---- Distribution mapper: feature_dim -> K ------------------------
         # Linear + Softplus guarantees strictly positive Dirichlet parameters.
         # Bias initialised so Softplus output starts at ~2.0 (moderate Dirichlet).
+        # feature_dim defaults to 1024 (CLIP RN50 output); set to a smaller
+        # value (e.g. 16 or 4) to use oracle features instead of CLIP.
         # mapper_hidden=None → single linear layer (default, fast, interpretable).
         # mapper_hidden=256  → MLP with one hidden layer (more expressive).
         if mapper_hidden is None:
-            linear = nn.Linear(1024, K)
+            linear = nn.Linear(feature_dim, K)
             nn.init.xavier_uniform_(linear.weight)
             nn.init.constant_(linear.bias, 1.1)
             self.mapper = nn.Sequential(linear, nn.Softplus()).to(device)
         else:
-            h1 = nn.Linear(1024, mapper_hidden)
+            h1 = nn.Linear(feature_dim, mapper_hidden)
             h2 = nn.Linear(mapper_hidden, K)
             nn.init.xavier_uniform_(h1.weight);  nn.init.zeros_(h1.bias)
             nn.init.xavier_uniform_(h2.weight);  nn.init.constant_(h2.bias, 1.1)
             self.mapper = nn.Sequential(h1, nn.GELU(), h2, nn.Softplus()).to(device)
 
         # ---- Feature caches -----------------------------------------------
-        # _cache:          uid -> [1024]      full CLIP features (freeze_encoder=True)
-        # _backbone_cache: uid -> [C, H, W]   pre-attnpool spatial maps (freeze_encoder=False)
+        # _cache:          uid -> [feature_dim]  CLIP or oracle features (freeze_encoder=True)
+        # _backbone_cache: uid -> [C, H, W]      pre-attnpool spatial maps (freeze_encoder=False)
         # In the attnpool variant the backbone is frozen, so its output is
         # constant — caching it reduces each epoch to attnpool + mapper only.
         self._cache:          Dict[str, torch.Tensor] = {}

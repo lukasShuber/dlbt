@@ -107,11 +107,13 @@ def _summary_scatter(ax, pt: dict, task_names: list, color: str,
     cmse  = raw - float(np.mean(preds * (1 - preds))) / (mc_n - 1) if mc_n else raw
     from scipy.stats import spearmanr
     rho, _ = spearmanr(preds, trues)
-    ax.plot([0, 1], [0, 1], ls=":", color="gray", lw=0.8, zorder=0)
-    ax.scatter(preds, trues, alpha=0.3, s=8, color=color, linewidths=0)
-    ax.set(title=f"{title}\ncMSE={cmse:.4f}   ρ={rho:.3f}",
-           xlim=(-0.05, 1.05), ylim=(-0.05, 1.05))
-    ax.tick_params(labelsize=8)
+    ax.plot([0, 1], [0, 1], ls="--", color="gray", lw=1.2, zorder=0)
+    ax.scatter(preds, trues, alpha=0.35, s=14, color=color, linewidths=0)
+    ax.set_title(f"{title}\ncMSE={cmse:.4f}   ρ={rho:.3f}", fontsize=10, pad=4)
+    ax.set(xlim=(-0.02, 1.02), ylim=(-0.02, 1.02))
+    ax.set_xticks([0, 0.5, 1])
+    ax.set_yticks([0, 0.5, 1])
+    ax.tick_params(labelsize=9)
 
 
 panels = [
@@ -126,19 +128,20 @@ panels = [
     (dlbt_joint, cfg.VAL_TASKS,   C_JOINT, f"{model_label} — Joint gen",cfg.N_MC, 1, 2),
 ]
 
-fig, axes = plt.subplots(2, 3, figsize=(10, 7), sharex=True, sharey=True,
-                         gridspec_kw={"hspace": 0.45, "wspace": 0.12})
+fig, axes = plt.subplots(2, 3, figsize=(9, 6.5), sharex=True, sharey=True,
+                         gridspec_kw={"hspace": 0.52, "wspace": 0.10})
 for pt, task_names, color, title, mc_n, row, col in panels:
     ax = axes[row, col]
     _summary_scatter(ax, pt, task_names, color, title, mc_n)
-    if col == 0:
-        ax.set_ylabel("True P(right)", fontsize=9)
-    if row == 1:
-        ax.set_xlabel("Predicted P(right)", fontsize=9)
 
-sns.despine(fig=fig, trim=True)
+# Single shared axis labels
+fig.supxlabel("Predicted P(right)", fontsize=12, y=0.01)
+fig.supylabel("True P(right)", fontsize=12, x=0.01)
+
+sns.despine(fig=fig, trim=False)
+plt.tight_layout(rect=[0.04, 0.04, 1, 1])
 out = plots_dir / f"plot_03_summary_{run_tag}.png"
-plt.savefig(out, dpi=150, bbox_inches="tight")
+plt.savefig(out, dpi=200, bbox_inches="tight")
 print(f"Saved: {out}")
 plt.close()
 

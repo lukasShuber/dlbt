@@ -49,16 +49,19 @@ THRESHOLD_SIGMA = 1.5
 DISTRIBUTIONS = ["dirichlet", "logistic_normal", "lapse", "threshold"]
 
 # ---------------------------------------------------------------------------
-# Training  (frozen encoder only — fast, apples-to-apples across distributions)
+# Training
 # ---------------------------------------------------------------------------
 N_EPOCHS_PHASE1 = 1000
 PATIENCE_PHASE1 = 100
+N_EPOCHS_PHASE2 = 3000
+PATIENCE_PHASE2 = 100
 LR              = 1e-2
+LR_ATTNPOOL     = 1e-5
 N_MC            = 200
-FREEZE_ENCODER  = False
+FREEZE_ENCODER  = True   # False → run phase 2 attnpool fine-tuning
 MAPPER_HIDDEN   = None
 
-RUN_TAG = "frozen"
+RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"
 
 # ---------------------------------------------------------------------------
 # Tasks  (identical to simulation 01)

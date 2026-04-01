@@ -61,7 +61,7 @@ def _plot_metric(ax, metric: str, ylabel: str):
         vals = dlbt[cond][metric]          # [n_seeds, n_budgets]
         mean = np.nanmean(vals, axis=0)
         std  = np.nanstd(vals, axis=0)
-        ax.plot(x, mean, color=color, lw=2.0, label=label)
+        ax.plot(x, mean, color=color, lw=2.5, label=label)
         ax.fill_between(x, mean - std, mean + std, color=color, alpha=0.15)
 
     # SLDA — 2 conditions, dashed lines
@@ -75,47 +75,44 @@ def _plot_metric(ax, metric: str, ylabel: str):
         vals = slda[cond][metric]
         mean = np.nanmean(vals, axis=0)
         std  = np.nanstd(vals, axis=0)
-        ax.plot(x, mean, color=color, lw=2.0, ls="--", label=label)
+        ax.plot(x, mean, color=color, lw=2.5, ls="--", label=label)
         ax.fill_between(x, mean - std, mean + std, color=color, alpha=0.10)
 
     ax.set_xscale("log")
     ax.set_xticks(budgets)
-    labels = [f"{b:,}" if b < 1_000_000 else "1M" for b in budgets]
-    ax.set_xticklabels(labels)
-    ax.set_xlabel("Total training trials", fontsize=10)
-    ax.set_ylabel(ylabel, fontsize=10)
+    tick_labels = [f"{b:,}" if b < 1_000_000 else "1M" for b in budgets]
+    ax.set_xticklabels(tick_labels, fontsize=9)
+    ax.tick_params(axis="y", labelsize=9)
+    ax.set_xlabel("Total training trials", fontsize=12)
+    ax.set_ylabel(ylabel, fontsize=12)
     if metric == "cmse":
         ax.set_ylim(bottom=0)
     elif metric == "rho":
         ax.set_ylim(-0.1, 1)
-    ax.legend(fontsize=8, ncol=2, frameon=False)
+    ax.legend(fontsize=9, ncol=2, frameon=False)
 
 
 # ---------------------------------------------------------------------------
 # Plot 1 — cMSE
 # ---------------------------------------------------------------------------
-fig, ax = plt.subplots(figsize=(7, 4.5))
+fig, ax = plt.subplots(figsize=(5.5, 4))
 _plot_metric(ax, "cmse", "cMSE")
-ax.set_title(f"Data efficiency — cMSE  ({run_tag}, {len(res['seeds'])} seeds ± 1 SD)",
-             fontsize=11)
 sns.despine(trim=False)
 plt.tight_layout()
 out = plots_dir / f"plot_efficiency_cmse_{run_tag}.png"
-plt.savefig(out, dpi=150, bbox_inches="tight")
+plt.savefig(out, dpi=200, bbox_inches="tight")
 print(f"Saved: {out}")
 plt.close()
 
 # ---------------------------------------------------------------------------
 # Plot 2 — ρ
 # ---------------------------------------------------------------------------
-fig, ax = plt.subplots(figsize=(7, 4.5))
+fig, ax = plt.subplots(figsize=(5.5, 4))
 _plot_metric(ax, "rho", "Spearman ρ")
-ax.set_title(f"Data efficiency — ρ  ({run_tag}, {len(res['seeds'])} seeds ± 1 SD)",
-             fontsize=11)
 sns.despine(trim=False)
 plt.tight_layout()
 out = plots_dir / f"plot_efficiency_rho_{run_tag}.png"
-plt.savefig(out, dpi=150, bbox_inches="tight")
+plt.savefig(out, dpi=200, bbox_inches="tight")
 print(f"Saved: {out}")
 plt.close()
 
