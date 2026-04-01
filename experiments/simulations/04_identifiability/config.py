@@ -30,10 +30,10 @@ SCALE_BETA         = 10.0
 # ---------------------------------------------------------------------------
 # Training  (single run, no seeds — deterministic oracle features)
 # ---------------------------------------------------------------------------
-N_EPOCHS  = 3000
-PATIENCE  = 300
+N_EPOCHS  = 500
+PATIENCE  = 100
 LR        = 1e-2
-N_MC      = 200
+N_MC      = 50    # small mapper converges easily; fewer MC samples needed
 
 # ---------------------------------------------------------------------------
 # Feature modes

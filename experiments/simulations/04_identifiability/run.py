@@ -40,8 +40,8 @@ import config as cfg
 # ---------------------------------------------------------------------------
 cfg.RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-device = torch.device("cpu")   # small oracle features; CPU is fine
-print(f"Device: {device}")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Device: {device}" + (f" ({torch.cuda.get_device_name(0)})" if device.type == "cuda" else ""))
 
 # ---------------------------------------------------------------------------
 # Load stimuli
@@ -165,7 +165,7 @@ for mode in cfg.FEATURE_MODES:
 
     # Build oracle feature cache (no CLIP, no image loading)
     oracle_cache = {
-        uid: torch.tensor(feat_fn(uid)) for uid in refs_dict
+        uid: torch.tensor(feat_fn(uid)).to(device) for uid in refs_dict
     }
 
     # Agent: mapper only, oracle features injected via _cache
