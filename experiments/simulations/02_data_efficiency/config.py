@@ -21,7 +21,7 @@ RESULTS_DIR = Path(__file__).parent / "results"
 # Synthetic data
 # ---------------------------------------------------------------------------
 BASE_SEED          = 42
-N_SEEDS            = 1
+N_SEEDS            = 5
 SEEDS              = [BASE_SEED + i for i in range(N_SEEDS)]
 
 BUDGETS    = [10, 100, 1_000, 10_000, 100_000, 1_000_000]  # total training trials
@@ -45,7 +45,6 @@ LR_ATTNPOOL     = 1e-5
 N_MC            = 200
 FREEZE_ENCODER  = True    # True → frozen only; False → phase 1 + attnpool fine-tune
 MAPPER_HIDDEN   = None
-SLDA_GT         = False   # True → GT lstsq decoder; False → RidgeCV on behavioral data
 
 RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"
 
