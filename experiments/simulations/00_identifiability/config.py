@@ -29,8 +29,9 @@ RESULTS_DIR = Path(__file__).parent / "results"
 # Ground-truth linear map
 # ---------------------------------------------------------------------------
 GT_SEED        = 0        # seed for sampling W*, b*  (never changes)
-ALPHA_SCALE    = 4.0      # controls spread / concentration of gt alphas
-                          # higher → more peaked beliefs per image
+ALPHA_SCALE    = 4.0      # std of W* weights; std(logit) ≈ ALPHA_SCALE × ||feat||
+                          # with ||feat|| ≈ 1.45 for CLIP RN50: std(logit) ≈ 5.8
+                          # → one dominant state per image, concentration ≈ 10-15
 
 # ---------------------------------------------------------------------------
 # Synthetic data

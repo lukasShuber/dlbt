@@ -90,7 +90,7 @@ del _bootstrap
 # ---------------------------------------------------------------------------
 _rng_gt_params = np.random.default_rng(cfg.GT_SEED)
 W_star = _rng_gt_params.normal(
-    0.0, cfg.ALPHA_SCALE / np.sqrt(D_clip), size=(K, D_clip)
+    0.0, cfg.ALPHA_SCALE, size=(K, D_clip)
 ).astype(np.float32)
 b_star = _rng_gt_params.normal(0.0, 0.1, size=(K,)).astype(np.float32)
 
