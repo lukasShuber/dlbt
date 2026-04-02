@@ -1,7 +1,7 @@
 """
 Minimal DlbtAgent training example.
 
-Trains on a single task (left_right) with synthetic behavioral data
+Trains on a single task (right) with synthetic behavioral data
 generated from a simple ground-truth observer: objects on the right
 side of the image (latent_state bit DIM_LEFT_RIGHT=1) are chosen
 with probability 0.8; objects on the left with probability 0.2.
@@ -24,7 +24,7 @@ from dlbt.training.train_dlbt import train_dlbt
 # Config
 # ---------------------------------------------------------------------------
 METADATA  = "stimuli/imgs/metadata.jsonl"
-TASK_NAME = "left_right"
+TASK_NAME = "right"
 N_TRIALS  = 50
 SEED      = 42
 

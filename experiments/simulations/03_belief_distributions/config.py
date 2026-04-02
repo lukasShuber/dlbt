@@ -67,7 +67,7 @@ RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"
 # Tasks  (identical to simulation 01)
 # ---------------------------------------------------------------------------
 TRAIN_TASKS = [
-    "left_right", "transparent", "glossy", "large",
+    "right", "transparent", "glossy", "large",
     "left", "opaque", "matte", "small",
     "right_and_transparent", "left_and_transparent",
     "right_and_glossy",      "left_and_glossy",

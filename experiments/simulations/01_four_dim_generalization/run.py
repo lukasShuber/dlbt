@@ -13,7 +13,6 @@ import gc
 import json
 import pickle
 import random
-from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
@@ -29,7 +28,7 @@ from dlbt.constants import (
     X_THRESHOLD, TRANSP_THRESH, GLOSS_THRESH, SCALE_THRESH,
 )
 from dlbt.data.dataset import BehavioralDataset, Observation
-from dlbt.data.image_ref import load_image_refs, image_refs_as_list, balanced_refs
+from dlbt.data.image_ref import load_image_refs, image_refs_as_list
 from dlbt.data.task import TASKS
 from dlbt.agents.dlbt import DlbtAgent
 from dlbt.training.train_dlbt import train_dlbt
@@ -124,23 +123,15 @@ def sample_behavior(ref, task, rng) -> tuple:
     return cfg.N_TRIALS - count_1, count_1
 
 # ---------------------------------------------------------------------------
-# Image split — stratified by latent state
+# Image split — random (no stratification)
 # ---------------------------------------------------------------------------
 all_uids  = sorted(refs_dict.keys())
 rng_split = np.random.default_rng(cfg.SEED)
+rng_split.shuffle(all_uids := np.array(all_uids))
 
-state_to_uids: dict = defaultdict(list)
-for uid in all_uids:
-    state_to_uids[refs_dict[uid].latent_state].append(uid)
-
-train_uids: set = set()
-test_uids:  set = set()
-for state_uids in state_to_uids.values():
-    arr    = np.array(state_uids)
-    rng_split.shuffle(arr)
-    n_test = max(1, round(len(arr) * cfg.IMG_TEST_FRAC))
-    test_uids.update(arr[:n_test].tolist())
-    train_uids.update(arr[n_test:].tolist())
+n_test     = max(1, round(len(all_uids) * cfg.IMG_TEST_FRAC))
+test_uids  = set(all_uids[:n_test].tolist())
+train_uids = set(all_uids[n_test:].tolist())
 
 print(f"Image split: {len(train_uids)} train / {len(test_uids)} test")
 
@@ -155,7 +146,7 @@ def make_dataset(task_names: list, allowed_uids: set) -> BehavioralDataset:
     records = []
     for task_name in task_names:
         task = TASKS[task_name]
-        for ref in balanced_refs(task, avail, rng=rng):
+        for ref in avail:
             c0, c1 = sample_behavior(ref, task, rng)
             records.append(Observation(
                 uid=ref.uid, task_name=task_name, count_0=c0, count_1=c1,
@@ -421,7 +412,6 @@ results = dict(
     curves         = curves,           # from last seed
     dlbt           = dlbt_preds,       # {cond: {task: {pred: [n_seeds, n_pts], true, uids}}}
     slda           = slda_preds,       # {cond: {task: {pred: [n_pts], true, uids}}}
-    state_to_uids  = dict(state_to_uids),
     train_uids     = train_uids,
     test_uids      = test_uids,
 )

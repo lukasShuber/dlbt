@@ -4,7 +4,7 @@ Global constants for DLBT.
 Latent ontology: K=16 states = 2^4, one per combination of four binary dimensions.
 
 Bit layout (MSB to LSB):
-  bit 3  left_right    0=left   (x < 0.0),    1=right (x >= 0.0)
+  bit 3  lr            0=left   (x < 0.0),    1=right (x >= 0.0)
   bit 2  transp        0=opaque (t < 0.5),     1=transparent (t >= 0.5)
   bit 1  gloss         0=matte  (gl < 0.5),    1=glossy (gl >= 0.5)
   bit 0  small_large   0=small  (s < 0.63),    1=large (s >= 0.63)

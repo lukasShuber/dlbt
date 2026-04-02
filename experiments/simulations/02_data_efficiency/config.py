@@ -53,7 +53,7 @@ RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"
 # ---------------------------------------------------------------------------
 TRAIN_TASKS = [
     # simple
-    "left_right", "transparent", "glossy", "large",
+    "right", "transparent", "glossy", "large",
     "left", "opaque", "matte", "small",
     # 2-way: lr × material
     "right_and_transparent", "left_and_transparent",

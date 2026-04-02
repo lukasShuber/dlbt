@@ -12,7 +12,7 @@ Run from repo root:
 """
 
 import torch
-from dlbt.data.image_ref import load_image_refs, image_refs_as_list, balanced_refs
+from dlbt.data.image_ref import load_image_refs, image_refs_as_list
 from dlbt.data.task import TASKS
 from dlbt.agents.dlbt import DlbtAgent
 from dlbt.agents.slda import SldaAgent
@@ -20,7 +20,7 @@ from dlbt.agents.dummy import DummyAgent
 
 METADATA  = "stimuli/imgs/metadata.jsonl"
 N_IMAGES  = 10   # use only the first N images to keep this fast
-TASKS_TO_CHECK = ["front_back", "triangular", "front_and_transparent"]
+TASKS_TO_CHECK = ["right", "transparent", "right_and_transparent"]
 
 # ---------------------------------------------------------------------------
 # Load images
@@ -67,25 +67,20 @@ for task_name in TASKS_TO_CHECK:
 print("DlbtAgent:   OK\n")
 
 # ---------------------------------------------------------------------------
-# SldaAgent
+# SldaAgent  (untrained — smoke-test forward pass only)
 # ---------------------------------------------------------------------------
 slda = SldaAgent()
 slda.precompute_features(refs)
+slda.eval()
 
 for task_name in TASKS_TO_CHECK:
     task = TASKS[task_name]
-    slda.fit(task, balanced_refs(task, refs))
-
-    probs = slda.choice_probs(refs, task)
-    assert probs.shape == (N_IMAGES, 2)
+    with torch.no_grad():
+        probs = slda.choice_probs(refs, task)
+    assert probs.shape == (N_IMAGES, 2), f"Bad shape: {probs.shape}"
     assert torch.allclose(probs.sum(dim=1), torch.ones(N_IMAGES), atol=1e-5)
 
-    # With the correct latent labels, SLDA should lean toward the right action
-    correct = torch.tensor(
-        [task.optimal_action(r.latent_state) for r in refs], dtype=torch.long
-    )
-    chosen = probs.argmax(dim=1)
-    acc = (chosen == correct).float().mean().item()
-    print(f"  SldaAgent  [{task_name}]: accuracy on own training data = {acc:.2f}")
+    p_right = probs[:, 1].tolist()
+    print(f"  SldaAgent  [{task_name}]: P(right) = {[f'{p:.2f}' for p in p_right]}")
 
-print("SldaAgent:   OK")
+print("SldaAgent:   OK  (untrained; use examples/04_train_slda.py for full training)")

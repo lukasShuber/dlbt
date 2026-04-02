@@ -6,6 +6,7 @@ scripts/
 
 # Legacy
 analyses_legacy/
+experiments/simulations/00_identifiability/
 
 # macOS
 .DS_Store

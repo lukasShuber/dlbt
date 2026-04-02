@@ -92,8 +92,8 @@ def _task(name: str, condition) -> Task:
 TASKS: Dict[str, Task] = {
 
     # ---- simple (right = property present) ----------------------------------
-    "left_right": _task(
-        "left_right",
+    "right": _task(
+        "right",
         lambda lr, tr, gl, sl: lr == 1,        # right = rightward
     ),
     "transparent": _task(

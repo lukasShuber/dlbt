@@ -73,7 +73,7 @@ def _summary_scatter(ax, pt: dict, task_names: list, color: str, marker: str,
     ax.plot([0, 1], [0, 1], ls="--", color="gray", lw=1.2, zorder=0)
     ax.errorbar(pred_mean, all_trues,
                 xerr=pred_sem, yerr=true_sem,
-                fmt=marker, ms=4, alpha=0.35, color=color,
+                fmt=marker, ms=4, alpha=0.1, color=color,
                 elinewidth=0.5, capsize=0, linewidth=0)
     ax.set_title(f"{title}\ncMSE={cmse:.4f}   ρ={rho:.3f}", fontsize=10, pad=4)
     ax.set(xlim=(-0.02, 1.02), ylim=(-0.02, 1.02))
@@ -130,6 +130,13 @@ for results_path in available:
     curves         = res["curves"]
     dlbt           = res["dlbt"]    # {cond: {task: {pred: [n_seeds, n_pts], true, uids}}}
     slda           = res["slda"]    # {cond: {task: {pred: [n_pts], true, uids}}}
+
+    # Backward compat: old pkls stored the simple lateral task as "left_right";
+    # current code uses "right".
+    for _preds in (dlbt, slda):
+        for _cond_dict in _preds.values():
+            if "left_right" in _cond_dict and "right" not in _cond_dict:
+                _cond_dict["right"] = _cond_dict.pop("left_right")
     n_seeds        = res.get("n_seeds", 1)
     n_trials       = res.get("n_trials", cfg.N_TRIALS)
 
@@ -227,7 +234,7 @@ for results_path in available:
                     true_sem  = np.sqrt(true_vals * (1 - true_vals) / n_trials)
                     ax.errorbar(pred_mean, true_vals,
                                 xerr=pred_sem, yerr=true_sem,
-                                fmt='o', ms=3, alpha=0.5, color=color,
+                                fmt='o', ms=3, alpha=0.2, color=color,
                                 elinewidth=0.4, capsize=0, linewidth=0)
             # rho on mean predictions
             def _rho_mean(cond, tn):
@@ -251,7 +258,7 @@ for results_path in available:
                     true_sem  = np.sqrt(true_vals * (1 - true_vals) / n_trials)
                     ax.errorbar(pred_mean, true_vals,
                                 xerr=pred_sem, yerr=true_sem,
-                                fmt='o', ms=3, alpha=0.5, color=color,
+                                fmt='o', ms=3, alpha=0.2, color=color,
                                 elinewidth=0.4, capsize=0, linewidth=0)
             def _rho_mean_val(cond, tn):
                 if tn not in dlbt[cond]:
@@ -307,7 +314,7 @@ for results_path in available:
                 true_sem = np.sqrt(d["true"] * (1 - d["true"]) / n_trials)
                 ax.errorbar(d["pred"], d["true"],
                             yerr=true_sem,
-                            fmt="s", ms=3, alpha=0.5, color=color,
+                            fmt="s", ms=3, alpha=0.2, color=color,
                             elinewidth=0.4, capsize=0, linewidth=0)
         def _rho_slda(cond, tn):
             if tn not in slda[cond]:
