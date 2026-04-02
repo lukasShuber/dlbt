@@ -18,7 +18,7 @@ RESULTS_DIR = Path(__file__).parent / "results"
 # Synthetic data
 # ---------------------------------------------------------------------------
 SEED               = 42
-N_SEEDS            = 2
+N_SEEDS            = 5
 SEEDS              = [42, 43, 44, 45, 46]   # SEEDS[0] == SEED (data seed)
 N_TRIALS           = 100    # simulated decisions per (image, task)
 PEAK               = 15.0   # peak Dirichlet concentration for clear images
@@ -38,7 +38,7 @@ PATIENCE_PHASE2 = 100
 LR              = 1e-2
 LR_ATTNPOOL     = 1e-5
 N_MC            = 200       # MC samples for choice_probs during training
-FREEZE_ENCODER  = True     # True → frozen only; False → phase 1 + attnpool fine-tune
+FREEZE_ENCODER  = False     # True → frozen only; False → phase 1 + attnpool fine-tune
 MAPPER_HIDDEN   = None      # None → linear mapper
 
 RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"
