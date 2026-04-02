@@ -25,5 +25,5 @@ Each rendered image is named according to all latent parameters used to generate
 | `lab` | `042--027-+034` | CIELab colour: L, a, b (integer-rounded, signed). Negative `a` produces a double-dash (e.g. `a=−27` → `--027`) | sampled or fixed per config | — |
 | `t` | `031` | Transparency × 100 (integer-rounded) | 0–100 | `t` ≥ 50 → **transparent** |
 | `gl` | `035` | Glossiness × 100 (integer-rounded) | 0–100 | `gl` ≥ 50 → **glossy** |
-| `xy` | `-0164-+0058` | Camera-relative lateral × 100 then depth × 100 (both signed). `xy[0]` is the left/right axis. | lateral −250–+250, depth −30–+30 | `xy[0]` ≥ 0 → **right** |
+| `xy` | `-0164-+0058` | Camera-relative lateral × 100 then depth × 100 (both signed). `xy[0]` is the left/right axis. | lateral −250–+250, depth −250–+250 | `xy[0]` ≥ 0 → **right** |
 | suffix | `random` | Sampling mode: `random` (randomly sampled) or `grid` (grid sweep) | — | — |
