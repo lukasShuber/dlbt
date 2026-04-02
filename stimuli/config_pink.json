@@ -20,16 +20,16 @@
   "floor_specular": 0.25,
   "gloss_energy": 350.0,
   "gloss_size": 1.5,
-  "wall_color_rgba": [0.1, 0.1, 0.1, 1.0],
+  "wall_color_rgba": [0.5, 0.5, 0.5, 1.0],
   "wall_roughness": 0.95,
 
   "cam_location": [6.0, -6.0, 4.8],
   "cam_focal_length_mm": 45.0,
   "cam_target": [0.0, 0.0, 2.2],
 
-  "key_energy": 2200.0,
-  "fill_energy": 700.0,
-  "back_energy": 500.0,
+  "key_energy": 1100.0,
+  "fill_energy": 350.0,
+  "back_energy": 250.0,
   "key_size": 4.5,
   "fill_size": 5.0,
 
