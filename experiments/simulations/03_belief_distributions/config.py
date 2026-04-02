@@ -58,7 +58,7 @@ PATIENCE_PHASE2 = 100
 LR              = 1e-2
 LR_ATTNPOOL     = 1e-5
 N_MC            = 200
-FREEZE_ENCODER  = False   # False → run phase 2 attnpool fine-tuning
+FREEZE_ENCODER  = True   # False → run phase 2 attnpool fine-tuning
 MAPPER_HIDDEN   = None
 
 RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"
