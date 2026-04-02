@@ -22,6 +22,8 @@ import numpy as np
 import torch
 from scipy.optimize import minimize_scalar
 from scipy.stats import spearmanr
+from sklearn.linear_model import RidgeCV
+from sklearn.preprocessing import StandardScaler
 
 from dlbt.constants import (
     K, DIM_LEFT_RIGHT, DIM_TRANSP, DIM_GLOSS, DIM_SMALL_LARGE,
@@ -42,6 +44,8 @@ cfg.RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}" + (f" ({torch.cuda.get_device_name(0)})" if device.type == "cuda" else ""))
+
+run_tag = "frozen" if cfg.FREEZE_ENCODER else "attnpool"
 
 # ---------------------------------------------------------------------------
 # Load stimuli + continuous metadata
@@ -253,12 +257,17 @@ def collect_slda(slda_temps, W_slda,
         group = ds.df[ds.df["task_name"] == task_name]
         if len(group) == 0:
             continue
-        uids    = group["uid"].tolist()
-        X       = clip_feat_fn(uids)
-        delta_u = TASKS[task_name].delta_u.astype(np.float64)
-        logits  = (X @ W_slda) @ delta_u
-        tau     = slda_temps[task_name]
-        pred    = 1.0 / (1.0 + np.exp(-logits / tau))
+        uids = group["uid"].tolist()
+        X    = clip_feat_fn(uids)
+        if W_slda is not None:
+            delta_u = TASKS[task_name].delta_u.astype(np.float64)
+            logits  = (X @ W_slda) @ delta_u
+        else:
+            X_scaled = slda_scalers[task_name].transform(X)
+            p_pred   = np.clip(slda_models[task_name].predict(X_scaled), 1e-6, 1 - 1e-6)
+            logits   = np.log(p_pred / (1 - p_pred))
+        tau  = slda_temps[task_name]
+        pred = 1.0 / (1.0 + np.exp(-logits / tau))
         out[task_name] = dict(pred=pred, uids=uids)
     return out
 
@@ -373,41 +382,69 @@ for s_idx, seed in enumerate(cfg.SEEDS):
                         agent._cache[ref.uid] = feat.cpu()
 
         # ---------------------------------------------------------------
-        # Fit SLDA  (only on tasks present in training data)
+        # Fit SLDA
         # ---------------------------------------------------------------
         def clip_features(uids: list) -> np.ndarray:
             return np.array([frozen_clip[uid].cpu().numpy() for uid in uids])
 
-        # Fit SLDA: GT least-squares decoder (weights need no behavioral data)
-        # Only temperature τ is tuned from behavioral data.
-        _all_refs = list(refs_dict.values())
-        _X_all    = np.stack([frozen_clip[r.uid].cpu().numpy() for r in _all_refs])
-        _Y_oh     = np.zeros((len(_all_refs), K), dtype=np.float32)
-        for _i, _r in enumerate(_all_refs):
-            _Y_oh[_i, _r.latent_state] = 1.0
-        W_slda, _, _, _ = np.linalg.lstsq(_X_all, _Y_oh, rcond=None)  # [1024, K]
+        if cfg.SLDA_GT:
+            _all_refs = list(refs_dict.values())
+            _X_all    = np.stack([frozen_clip[r.uid].cpu().numpy() for r in _all_refs])
+            _Y_oh     = np.zeros((len(_all_refs), K), dtype=np.float32)
+            for _i, _r in enumerate(_all_refs):
+                _Y_oh[_i, _r.latent_state] = 1.0
+            W_slda, _, _, _ = np.linalg.lstsq(_X_all, _Y_oh, rcond=None)
 
-        slda_temps = {}
-        for task_name in cfg.TRAIN_TASKS:
-            group = train_ds.df[train_ds.df["task_name"] == task_name]
-            if len(group) == 0:
-                slda_temps[task_name] = 1.0
-                continue
-            uids    = group["uid"].tolist()
-            X       = np.stack([frozen_clip[uid].cpu().numpy() for uid in uids])
-            p_right = (group["count_1"] / (group["count_0"] + group["count_1"])).values
-            delta_u = TASKS[task_name].delta_u.astype(np.float64)
-            logits  = (X @ W_slda) @ delta_u
+            slda_temps = {}
+            for task_name in cfg.TRAIN_TASKS:
+                group = train_ds.df[train_ds.df["task_name"] == task_name]
+                if len(group) == 0:
+                    slda_temps[task_name] = 1.0
+                    continue
+                uids    = group["uid"].tolist()
+                X       = np.stack([frozen_clip[uid].cpu().numpy() for uid in uids])
+                p_right = (group["count_1"] / (group["count_0"] + group["count_1"])).values
+                delta_u = TASKS[task_name].delta_u.astype(np.float64)
+                logits  = (X @ W_slda) @ delta_u
 
-            def _nll_tau(log_tau, logits=logits, targets=p_right):
-                p = 1.0 / (1.0 + np.exp(-logits / np.exp(log_tau)))
-                p = np.clip(p, 1e-7, 1 - 1e-7)
-                return -np.mean(targets * np.log(p) + (1 - targets) * np.log(1 - p))
+                def _nll_tau(log_tau, logits=logits, targets=p_right):
+                    p = 1.0 / (1.0 + np.exp(-logits / np.exp(log_tau)))
+                    p = np.clip(p, 1e-7, 1 - 1e-7)
+                    return -np.mean(targets * np.log(p) + (1 - targets) * np.log(1 - p))
 
-            opt = minimize_scalar(_nll_tau, bounds=(-3.0, 3.0), method="bounded")
-            slda_temps[task_name] = float(np.exp(opt.x))
+                opt = minimize_scalar(_nll_tau, bounds=(-3.0, 3.0), method="bounded")
+                slda_temps[task_name] = float(np.exp(opt.x))
 
-        print(f"    SLDA  fitted temperatures for {len(slda_temps)}/{len(cfg.TRAIN_TASKS)} tasks")
+        else:
+            slda_scalers, slda_models, slda_temps = {}, {}, {}
+            W_slda = None
+            for task_name in cfg.TRAIN_TASKS:
+                group = train_ds.df[train_ds.df["task_name"] == task_name]
+                if len(group) < 3:
+                    continue
+                uids    = group["uid"].tolist()
+                X       = clip_features(uids)
+                p_right = (group["count_1"] / (group["count_0"] + group["count_1"])).values
+
+                scaler   = StandardScaler()
+                X_scaled = scaler.fit_transform(X)
+                model    = RidgeCV(alphas=[1e1, 1e2, 1e3, 1e4, 1e5])
+                model.fit(X_scaled, p_right)
+
+                p_pred = np.clip(model.predict(X_scaled), 1e-6, 1 - 1e-6)
+                logits = np.log(p_pred / (1 - p_pred))
+
+                def _nll_tau(log_tau, logits=logits, targets=p_right):
+                    p = 1.0 / (1.0 + np.exp(-logits / np.exp(log_tau)))
+                    p = np.clip(p, 1e-7, 1 - 1e-7)
+                    return -np.mean(targets * np.log(p) + (1 - targets) * np.log(1 - p))
+
+                opt = minimize_scalar(_nll_tau, bounds=(-3.0, 3.0), method="bounded")
+                slda_scalers[task_name] = scaler
+                slda_models[task_name]  = model
+                slda_temps[task_name]   = float(np.exp(opt.x))
+
+        print(f"    SLDA  fitted {len(slda_temps)}/{len(cfg.TRAIN_TASKS)} tasks (GT={cfg.SLDA_GT})")
 
         # ---------------------------------------------------------------
         # Collect predictions
@@ -454,12 +491,12 @@ results = dict(
     budgets  = cfg.BUDGETS,
     seeds    = cfg.SEEDS,
     n_full   = cfg.N_FULL_PER_PAIR,
-    run_tag  = cfg.RUN_TAG,
+    run_tag  = run_tag,
     dlbt     = res_dlbt,
     slda     = res_slda,
 )
 
-out_path = cfg.RESULTS_DIR / f"results_{cfg.RUN_TAG}.pkl"
+out_path = cfg.RESULTS_DIR / f"results_{run_tag}.pkl"
 with open(out_path, "wb") as f:
     pickle.dump(results, f)
 print(f"\nSaved results → {out_path}")

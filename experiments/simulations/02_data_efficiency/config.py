@@ -13,8 +13,8 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # Paths  (all relative to repo root)
 # ---------------------------------------------------------------------------
-METADATA    = "stimuli/imgs_pink/metadata.jsonl"
-CACHE_PATH  = "stimuli/imgs_pink/clip_rn50_features_v2.pt"
+METADATA    = "stimuli/imgs/metadata.jsonl"
+CACHE_PATH  = "stimuli/imgs/clip_rn50_features_v2.pt"
 RESULTS_DIR = Path(__file__).parent / "results"
 
 # ---------------------------------------------------------------------------
@@ -45,6 +45,7 @@ LR_ATTNPOOL     = 1e-5
 N_MC            = 200
 FREEZE_ENCODER  = True    # True → frozen only; False → phase 1 + attnpool fine-tune
 MAPPER_HIDDEN   = None
+SLDA_GT         = False   # True → GT lstsq decoder; False → RidgeCV on behavioral data
 
 RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"
 

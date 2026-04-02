@@ -37,6 +37,7 @@ LR_ATTNPOOL     = 1e-5
 N_MC            = 200       # MC samples for choice_probs during training
 FREEZE_ENCODER  = True     # True → frozen only; False → phase 1 + attnpool fine-tune
 MAPPER_HIDDEN   = None      # None → linear mapper
+SLDA_GT         = False     # True → GT lstsq decoder; False → RidgeCV on behavioral data
 
 RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"
 

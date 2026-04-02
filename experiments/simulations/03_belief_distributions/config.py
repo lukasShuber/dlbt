@@ -60,6 +60,7 @@ LR_ATTNPOOL     = 1e-5
 N_MC            = 200
 FREEZE_ENCODER  = True   # False → run phase 2 attnpool fine-tuning
 MAPPER_HIDDEN   = None
+SLDA_GT         = False  # True → GT lstsq decoder; False → RidgeCV on behavioral data
 
 RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"
 
