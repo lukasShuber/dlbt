@@ -10,6 +10,17 @@ from mathutils import Vector, Quaternion
 
 #from root run:  /Applications/Blender.app/Contents/MacOS/Blender -b -P stimuli/render_dataset_polyhedra.py -- --config stimuli/config.json
 
+
+# All shapes:
+
+#   "shape_names": [
+#     "tetrahedron",
+#     "cube",
+#     "octahedron",
+#     "dodecahedron",
+#     "icosahedron"
+#   ]
+
 # ----------------------------
 # CLI + utils
 # ----------------------------
@@ -225,33 +236,6 @@ def hide_light_from_camera(light_obj):
             light_obj.cycles_visibility.camera = False
         except Exception:
             pass
-
-
-# def add_lighting(cfg):
-#     key_energy = float(cfg.get("key_energy", 2200.0))
-#     fill_energy = float(cfg.get("fill_energy", 700.0))
-#     back_energy = float(cfg.get("back_energy", 700.0))
-
-#     bpy.ops.object.light_add(type="AREA", location=(4.0, -5.5, 6.0))
-#     key = bpy.context.object
-#     key.data.energy = key_energy
-#     key.data.size = float(cfg.get("key_size", 4.5))
-#     key.rotation_euler = (math.radians(58), 0.0, math.radians(28))
-#     hide_light_from_camera(key)
-
-#     bpy.ops.object.light_add(type="AREA", location=(-3.5, -5.0, 5.0))
-#     fill = bpy.context.object
-#     fill.data.energy = fill_energy
-#     fill.data.size = float(cfg.get("fill_size", 5.0))
-#     fill.rotation_euler = (math.radians(62), 0.0, math.radians(-18))
-#     hide_light_from_camera(fill)
-
-#     bpy.ops.object.light_add(type="POINT", location=(0.0, 4.5, 8.0))
-#     back = bpy.context.object
-#     back.data.energy = back_energy
-#     hide_light_from_camera(back)
-
-#     return key, fill, back
 
 def add_lighting(cfg):
     key_energy = float(cfg.get("key_energy", 2200.0))
@@ -592,7 +576,7 @@ def apply_material_latents(obj, glossiness: float, transparency: float, rgb, eng
     #
     r_min        = 0.05
     rough_mapped = r_min ** gloss          # log-linear: [1.0 → 0.05] for glass roughness
-    trans_mapped = 0.07 + 0.88 * (trans ** 0.3)  # floor at 7% so col0 matches tint of other cols
+    trans_mapped = 0.1 + 0.88 * (trans ** 0.35)  # floor at 7%; ^0.45 compresses early steps, preserves high-end spacing
 
     # Opaque BSDF: metallic + roughness both driven by glossiness
     #   gloss=0 → metallic=0,    roughness=1.0  (diffuse plastic)
@@ -603,7 +587,7 @@ def apply_material_latents(obj, glossiness: float, transparency: float, rgb, eng
     opaque.location = (0, 120)
     opaque.inputs["Base Color"].default_value = (r, g, b, 1.0)
     opaque.inputs["Metallic"].default_value   = gloss ** 0.6
-    opaque.inputs["Roughness"].default_value  = 1.0 - gloss * 0.80
+    opaque.inputs["Roughness"].default_value  = 1.0 - gloss * 0.67
     opaque.inputs["Specular"].default_value   = 0.9
     opaque.inputs["Transmission"].default_value = 0.0
     opaque.inputs["IOR"].default_value = 1.45
@@ -639,44 +623,6 @@ def apply_material_latents(obj, glossiness: float, transparency: float, rgb, eng
         obj.data.materials[0] = mat
     else:
         obj.data.materials.append(mat)
-
-# def apply_material_latents(obj, glossiness: float, transparency: float, rgb, engine: str):
-#     gloss = float(glossiness)
-#     trans = float(transparency)
-#     r, g, b = float(rgb[0]), float(rgb[1]), float(rgb[2])
-
-#     mat = bpy.data.materials.new(name="MAT_Object")
-#     mat.use_nodes = True
-#     nodes = mat.node_tree.nodes
-#     links = mat.node_tree.links
-#     for n in list(nodes):
-#         nodes.remove(n)
-
-#     out = nodes.new("ShaderNodeOutputMaterial")
-#     out.location = (300, 0)
-
-#     bsdf = nodes.new("ShaderNodeBsdfPrincipled")
-#     bsdf.location = (0, 0)
-
-#     r_min = 0.05
-#     rough_mapped = r_min ** gloss          # [1.0, 0.47, 0.22, 0.11, 0.05]
-#     alpha_mapped = 1.0 - 0.80 * (trans ** 0.5)  # [1.0, 0.64, 0.47, 0.36, 0.20]
-
-#     bsdf.inputs["Base Color"].default_value = (r, g, b, 1.0)
-#     bsdf.inputs["Roughness"].default_value = rough_mapped
-#     bsdf.inputs["Specular"].default_value = 0.9
-#     bsdf.inputs["Alpha"].default_value = alpha_mapped
-#     bsdf.inputs["IOR"].default_value = 1.45
-
-#     links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
-
-#     mat.blend_method = "BLEND"
-#     mat.shadow_method = "HASHED"
-
-#     if obj.data.materials:
-#         obj.data.materials[0] = mat
-#     else:
-#         obj.data.materials.append(mat)
 
 def lab_to_xyz(L, a, b):
     """
@@ -1019,73 +965,73 @@ def main():
     # Random dataset
     # ----------------------------
     random_n = int(cfg.get("random_n", 100))
-    # for i in range(random_n):
-    #     uid = f"{i:06d}"
-    #     z = sample_random_latents(cfg, rng)
-    #     render_one(cfg, engine, img_dir, meta_path, uid, z, tag="random")
+    for i in range(random_n):
+        uid = f"{i:06d}"
+        z = sample_random_latents(cfg, rng)
+        render_one(cfg, engine, img_dir, meta_path, uid, z, tag="random")
 
     # ----------------------------
     # Grid dataset
     # same shape / same position / same color / same size
     # vary only roughness x transparency
     # ----------------------------
-    grid_n = int(cfg.get("grid_n", 5))
-    g0, g1 = cfg.get("glossiness_range", [0.0, 1.0])
-    t0, t1 = cfg.get("transparency_range", [0.0, 1.0])
-    gloss_vals = linspace(g0, g1, grid_n)
-    trans_vals = linspace(t0, t1, grid_n)
+    # grid_n = int(cfg.get("grid_n", 5))
+    # g0, g1 = cfg.get("glossiness_range", [0.0, 1.0])
+    # t0, t1 = cfg.get("transparency_range", [0.0, 1.0])
+    # gloss_vals = linspace(g0, g1, grid_n)
+    # trans_vals = linspace(t0, t1, grid_n)
 
-    grid_shape = cfg.get("grid_shape", "icosahedron")
-    grid_pos_xy = cfg.get("grid_pos_xy", [0.0, 0.5])
-    grid_yaw_deg = float(cfg.get("grid_yaw_deg", 0.0))
-    grid_scale = float(cfg.get("grid_scale", 1.0))
-    grid_target_max_dim = float(
-        cfg.get("grid_target_max_dim", float(cfg.get("target_max_dim", 2.8)) * 1.25)
-    )
+    # grid_shape = cfg.get("grid_shape", "icosahedron")
+    # grid_pos_xy = cfg.get("grid_pos_xy", [0.0, 0.5])
+    # grid_yaw_deg = float(cfg.get("grid_yaw_deg", 0.0))
+    # grid_scale = float(cfg.get("grid_scale", 1.0))
+    # grid_target_max_dim = float(
+    #     cfg.get("grid_target_max_dim", float(cfg.get("target_max_dim", 2.8)) * 1.25)
+    # )
 
-    # Grid color in Lab
-    grid_sample_L = bool(cfg.get("grid_sample_L", False))
-    if grid_sample_L:
-        grid_color_sample = sample_lab_color(cfg, rng)
-        grid_lab = grid_color_sample["lab"]
-        grid_rgb = grid_color_sample["rgb"]
-    else:
-        grid_L = float(cfg.get("grid_fixed_L", cfg.get("fixed_L", 65.0)))
-        grid_a = float(cfg.get("grid_a", 0.0))
-        grid_b = float(cfg.get("grid_b", 0.0))
-        grid_rgb, in_gamut = lab_to_rgb(grid_L, grid_a, grid_b)
-        if not in_gamut:
-            grid_rgb = [min(1.0, max(0.0, c)) for c in grid_rgb]
-        grid_lab = [grid_L, grid_a, grid_b]
+    # # Grid color in Lab
+    # grid_sample_L = bool(cfg.get("grid_sample_L", False))
+    # if grid_sample_L:
+    #     grid_color_sample = sample_lab_color(cfg, rng)
+    #     grid_lab = grid_color_sample["lab"]
+    #     grid_rgb = grid_color_sample["rgb"]
+    # else:
+    #     grid_L = float(cfg.get("grid_fixed_L", cfg.get("fixed_L", 65.0)))
+    #     grid_a = float(cfg.get("grid_a", 0.0))
+    #     grid_b = float(cfg.get("grid_b", 0.0))
+    #     grid_rgb, in_gamut = lab_to_rgb(grid_L, grid_a, grid_b)
+    #     if not in_gamut:
+    #         grid_rgb = [min(1.0, max(0.0, c)) for c in grid_rgb]
+    #     grid_lab = [grid_L, grid_a, grid_b]
 
-    base_uid = random_n
-    idx = 0
-    for i_g, gloss in enumerate(gloss_vals):
-        for j_t, trans in enumerate(trans_vals):
-            uid = f"{(base_uid + idx):06d}"
-            z = {
-                "shape_name": grid_shape,
-                "face_index": 0,
-                "glossiness": float(gloss),
-                "transparency": float(trans),
-                "lab": [float(grid_lab[0]), float(grid_lab[1]), float(grid_lab[2])],
-                "rgb": [float(grid_rgb[0]), float(grid_rgb[1]), float(grid_rgb[2])],
-                "scale": float(grid_scale),
-                "pos_xy": [float(grid_pos_xy[0]), float(grid_pos_xy[1])],
-                "yaw_deg": float(grid_yaw_deg),
-            }
-            tag = f"grid_r{i_g:02d}_t{j_t:02d}"
-            render_one(
-                cfg,
-                engine,
-                img_dir,
-                meta_path,
-                uid,
-                z,
-                tag=tag,
-                target_max_dim=grid_target_max_dim,
-            )
-            idx += 1
+    # base_uid = random_n
+    # idx = 0
+    # for i_g, gloss in enumerate(gloss_vals):
+    #     for j_t, trans in enumerate(trans_vals):
+    #         uid = f"{(base_uid + idx):06d}"
+    #         z = {
+    #             "shape_name": grid_shape,
+    #             "face_index": 0,
+    #             "glossiness": float(gloss),
+    #             "transparency": float(trans),
+    #             "lab": [float(grid_lab[0]), float(grid_lab[1]), float(grid_lab[2])],
+    #             "rgb": [float(grid_rgb[0]), float(grid_rgb[1]), float(grid_rgb[2])],
+    #             "scale": float(grid_scale),
+    #             "pos_xy": [float(grid_pos_xy[0]), float(grid_pos_xy[1])],
+    #             "yaw_deg": float(grid_yaw_deg),
+    #         }
+    #         tag = f"grid_r{i_g:02d}_t{j_t:02d}"
+    #         render_one(
+    #             cfg,
+    #             engine,
+    #             img_dir,
+    #             meta_path,
+    #             uid,
+    #             z,
+    #             tag=tag,
+    #             target_max_dim=grid_target_max_dim,
+    #         )
+    #         idx += 1
 
     print(f"Done. Random={random_n}, Grid={grid_n}x{grid_n}. Images in {img_dir}")
 if __name__ == "__main__":

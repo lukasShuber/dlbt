@@ -48,6 +48,7 @@ print(f"Device: {device}" + (f" ({torch.cuda.get_device_name(0)})" if device.typ
 random.seed(cfg.SEED)
 np.random.seed(cfg.SEED)
 torch.manual_seed(cfg.SEED)
+# NOTE: cfg.SEED is the data seed only; training seeds are cfg.SEEDS
 
 model_label = "DLBT (frozen)" if cfg.FREEZE_ENCODER else "DLBT (attnpool)"
 
@@ -172,83 +173,30 @@ for name, ds in [("train", train_ds), ("stim_gen", stim_gen_ds),
     print(f"  {name:12s}: {ds}")
 
 # ---------------------------------------------------------------------------
-# Train DLBT — phase 1 (mapper warmup, encoder always frozen)
+# CLIP feature cache — precomputed ONCE (shared across all seeds)
 # ---------------------------------------------------------------------------
-agent = DlbtAgent(freeze_encoder=True, n_mc_samples=cfg.N_MC, device=device,
-                  mapper_hidden=cfg.MAPPER_HIDDEN)
+# Build a temporary agent just to precompute / load the CLIP cache.
+_agent_for_cache = DlbtAgent(freeze_encoder=True, n_mc_samples=cfg.N_MC, device=device,
+                              mapper_hidden=cfg.MAPPER_HIDDEN)
 
 cache_path = Path(cfg.CACHE_PATH)
 if cache_path.exists():
     print(f"Loading CLIP feature cache from {cache_path}")
-    agent.load_cache(str(cache_path))
+    _agent_for_cache.load_cache(str(cache_path))
 else:
     print(f"Precomputing CLIP features → {cache_path}")
-    agent.precompute_features(list(refs_dict.values()))
-    agent.save_cache(str(cache_path))
+    _agent_for_cache.precompute_features(list(refs_dict.values()))
+    _agent_for_cache.save_cache(str(cache_path))
 
 # Snapshot frozen CLIP features — SLDA always uses these, even in attnpool runs,
 # so that it is never evaluated on fine-tuned representations.
-frozen_clip: dict = {uid: feat.clone() for uid, feat in agent._cache.items()}
+frozen_clip: dict = {uid: feat.clone() for uid, feat in _agent_for_cache._cache.items()}
+frozen_clip_copy  = {uid: feat.clone() for uid, feat in frozen_clip.items()}
 
-print("\nPhase 1 — mapper warmup...")
-phase1 = train_dlbt(
-    agent, train_ds, stim_gen_ds, refs_dict,
-    n_epochs=cfg.N_EPOCHS_PHASE1, lr=cfg.LR, patience=cfg.PATIENCE_PHASE1,
-    extra_val_datasets={"task_gen": task_gen_ds, "joint_gen": joint_gen_ds},
-)
-print(f"  best epoch: {phase1.best_epoch}  stim_gen_mse: {phase1.best_val_mse:.4f}")
+del _agent_for_cache
 
 # ---------------------------------------------------------------------------
-# Phase 2 — attnpool fine-tuning (only when FREEZE_ENCODER=False)
-# ---------------------------------------------------------------------------
-phase2 = None
-if not cfg.FREEZE_ENCODER:
-    print("\nPhase 2 — attnpool fine-tuning...")
-    gc.collect()
-    torch.cuda.empty_cache()
-
-    for p in agent.mapper.parameters():
-        p.requires_grad_(False)
-    for p in agent.encoder.attnpool.parameters():
-        p.requires_grad_(True)
-    agent.freeze_encoder = False
-    agent._cache.clear()
-
-    optimizer2 = torch.optim.Adam(
-        agent.encoder.attnpool.parameters(), lr=cfg.LR_ATTNPOOL
-    )
-    phase2 = train_dlbt(
-        agent, train_ds, stim_gen_ds, refs_dict,
-        n_epochs=cfg.N_EPOCHS_PHASE2, patience=cfg.PATIENCE_PHASE2,
-        optimizer=optimizer2,
-        extra_val_datasets={"task_gen": task_gen_ds, "joint_gen": joint_gen_ds},
-    )
-    print(f"  best epoch: {phase2.best_epoch}  stim_gen_mse: {phase2.best_val_mse:.4f}")
-
-    # Repopulate _cache with final attnpool features for DLBT predictions
-    print("Repopulating feature cache...")
-    agent.eval()
-    all_refs_list = list(refs_dict.values())
-    with torch.no_grad():
-        for i in tqdm(range(0, len(all_refs_list), 16), desc="caching", unit="batch"):
-            batch   = all_refs_list[i : i + 16]
-            spatial = torch.stack(
-                [agent._backbone_cache[r.uid] for r in batch]
-            ).to(agent.device)
-            feats = agent.encoder.attnpool(spatial).float()
-            for ref, feat in zip(batch, feats):
-                agent._cache[ref.uid] = feat.cpu()
-
-result = phase2 if phase2 is not None else phase1
-print(f"\nFinal best stim_gen_mse: {result.best_val_mse:.4f}")
-
-# Save agent weights
-agent_path = cfg.RESULTS_DIR / f"agent_{cfg.RUN_TAG}.pt"
-torch.save(agent.state_dict(), agent_path)
-print(f"Saved agent weights → {agent_path}")
-
-# ---------------------------------------------------------------------------
-# Fit per-task SLDA  (always on frozen CLIP features)
+# Fit per-task SLDA  (always on frozen CLIP features, deterministic — fitted once)
 # ---------------------------------------------------------------------------
 def clip_features(uids: list) -> np.ndarray:
     return np.array([frozen_clip[uid].cpu().numpy() for uid in uids])
@@ -296,10 +244,9 @@ def slda_predict(task_name: str, uids: list) -> np.ndarray:
     return 1.0 / (1.0 + np.exp(-logits / tau))
 
 # ---------------------------------------------------------------------------
-# Collect predictions
+# Ground-truth cache (shared across seeds)
 # ---------------------------------------------------------------------------
-agent.eval()
-rng_gt   = np.random.default_rng(cfg.SEED + 1)
+rng_gt    = np.random.default_rng(cfg.SEED + 1)
 _gt_cache: dict = {}
 
 
@@ -309,50 +256,34 @@ def get_true_p(uid: str, task_name: str) -> float:
         _gt_cache[key] = gt_p_right(uid, TASKS[task_name], n_mc=1000, rng=rng_gt)
     return _gt_cache[key]
 
+# ---------------------------------------------------------------------------
+# Collect SLDA predictions (once, no seed dimension)
+# ---------------------------------------------------------------------------
+print("\nCollecting SLDA predictions...")
+slda_preds: dict = {cond: {} for cond in ["train", "stim"]}
 
-def collect_dlbt(ds: BehavioralDataset) -> dict:
-    out = {}
-    for task_name, group in ds.iter_tasks():
-        task       = TASKS[task_name]
-        batch_refs = [refs_dict[uid] for uid in group["uid"]]
-        true_p     = np.array([get_true_p(r.uid, task_name) for r in batch_refs])
-        with torch.no_grad():
-            pred = agent.choice_probs(batch_refs, task)[:, 1].cpu().numpy()
-        raw_mse = float(np.mean((pred - true_p) ** 2))
-        mc_corr = float(np.mean(pred * (1 - pred))) / (cfg.N_MC - 1)
-        rho_val, _ = spearmanr(pred, true_p)
-        out[task_name] = dict(pred=pred, true=true_p,
-                              cmse=raw_mse - mc_corr, rho=float(rho_val))
-    return out
-
-
-def collect_slda(ds: BehavioralDataset) -> dict:
-    out = {}
+for cond, ds in [("train", train_ds), ("stim", stim_gen_ds)]:
     for task_name, group in ds.iter_tasks():
         if task_name not in slda_models:
             continue
         uids   = group["uid"].tolist()
         true_p = np.array([get_true_p(uid, task_name) for uid in uids])
         pred   = slda_predict(task_name, uids)
-        raw_mse = float(np.mean((pred - true_p) ** 2))
-        rho_val, _ = spearmanr(pred, true_p)
-        out[task_name] = dict(pred=pred, true=true_p, cmse=raw_mse, rho=float(rho_val))
-    return out
-
-
-print("\nCollecting predictions...")
-dlbt_train  = collect_dlbt(train_ds)
-dlbt_stim   = collect_dlbt(stim_gen_ds)
-dlbt_task   = collect_dlbt(task_gen_ds)
-dlbt_joint  = collect_dlbt(joint_gen_ds)
-slda_train  = collect_slda(train_ds)
-slda_stim   = collect_slda(stim_gen_ds)
+        slda_preds[cond][task_name] = {"pred": pred, "true": true_p, "uids": uids}
 
 # ---------------------------------------------------------------------------
-# Build learning-curve arrays
+# Multi-seed DLBT training loop
 # ---------------------------------------------------------------------------
-n_phase1       = len(phase1.train_nlls)
-phase_boundary = n_phase1 - 1
+print(f"\nTraining DLBT with {cfg.N_SEEDS} seeds: {cfg.SEEDS}")
+
+# Accumulators: pred will be a list of [n_pts] arrays, stacked after the loop
+dlbt_preds: dict = {cond: {} for cond in ["train", "stim", "task", "joint"]}
+
+# Variables from the last seed (used for curves / agent weights / phase_boundary)
+phase1 = phase2 = result = None
+curves = None
+phase_boundary = best_epoch_offset = 0
+agent = None
 
 
 def _concat(p1_list, p2_list):
@@ -361,46 +292,138 @@ def _concat(p1_list, p2_list):
     return list(p1_list) + list(p2_list)[1:]
 
 
-curves = dict(
-    train_nlls  = _concat(phase1.train_nlls,  phase2.train_nlls  if phase2 else None),
-    val_nlls    = _concat(phase1.val_nlls,     phase2.val_nlls    if phase2 else None),
-    train_mses  = _concat(phase1.train_mses,   phase2.train_mses  if phase2 else None),
-    val_mses    = _concat(phase1.val_mses,     phase2.val_mses    if phase2 else None),
-    task_nlls   = _concat(phase1.extra_val_nlls["task_gen"],
-                          phase2.extra_val_nlls["task_gen"]  if phase2 else None),
-    joint_nlls  = _concat(phase1.extra_val_nlls["joint_gen"],
-                          phase2.extra_val_nlls["joint_gen"] if phase2 else None),
-    task_mses   = _concat(phase1.extra_val_mses["task_gen"],
-                          phase2.extra_val_mses["task_gen"]  if phase2 else None),
-    joint_mses  = _concat(phase1.extra_val_mses["joint_gen"],
-                          phase2.extra_val_mses["joint_gen"] if phase2 else None),
-)
+for seed_idx, seed in enumerate(cfg.SEEDS):
+    print(f"\n--- Seed {seed_idx + 1}/{cfg.N_SEEDS}  (seed={seed}) ---")
 
-best_epoch_offset = result.best_epoch + (phase_boundary if phase2 else 0)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+    # -- Build fresh agent and restore frozen CLIP cache --
+    agent = DlbtAgent(freeze_encoder=True, n_mc_samples=cfg.N_MC, device=device,
+                      mapper_hidden=cfg.MAPPER_HIDDEN)
+    agent._cache = {uid: feat.clone() for uid, feat in frozen_clip_copy.items()}
+
+    # -- Phase 1: mapper warmup --
+    print("  Phase 1 — mapper warmup...")
+    phase1 = train_dlbt(
+        agent, train_ds, stim_gen_ds, refs_dict,
+        n_epochs=cfg.N_EPOCHS_PHASE1, lr=cfg.LR, patience=cfg.PATIENCE_PHASE1,
+        extra_val_datasets={"task_gen": task_gen_ds, "joint_gen": joint_gen_ds},
+    )
+    print(f"    best epoch: {phase1.best_epoch}  stim_gen_mse: {phase1.best_val_mse:.4f}")
+
+    # -- Phase 2: attnpool fine-tuning (only when FREEZE_ENCODER=False) --
+    phase2 = None
+    if not cfg.FREEZE_ENCODER:
+        print("  Phase 2 — attnpool fine-tuning...")
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        for p in agent.mapper.parameters():
+            p.requires_grad_(False)
+        for p in agent.encoder.attnpool.parameters():
+            p.requires_grad_(True)
+        agent.freeze_encoder = False
+        agent._cache.clear()
+
+        optimizer2 = torch.optim.Adam(
+            agent.encoder.attnpool.parameters(), lr=cfg.LR_ATTNPOOL
+        )
+        phase2 = train_dlbt(
+            agent, train_ds, stim_gen_ds, refs_dict,
+            n_epochs=cfg.N_EPOCHS_PHASE2, patience=cfg.PATIENCE_PHASE2,
+            optimizer=optimizer2,
+            extra_val_datasets={"task_gen": task_gen_ds, "joint_gen": joint_gen_ds},
+        )
+        print(f"    best epoch: {phase2.best_epoch}  stim_gen_mse: {phase2.best_val_mse:.4f}")
+
+        # Repopulate _cache with final attnpool features for DLBT predictions
+        print("  Repopulating feature cache...")
+        agent.eval()
+        all_refs_list = list(refs_dict.values())
+        with torch.no_grad():
+            for i in tqdm(range(0, len(all_refs_list), 16), desc="  caching", unit="batch"):
+                batch   = all_refs_list[i : i + 16]
+                spatial = torch.stack(
+                    [agent._backbone_cache[r.uid] for r in batch]
+                ).to(agent.device)
+                feats = agent.encoder.attnpool(spatial).float()
+                for ref, feat in zip(batch, feats):
+                    agent._cache[ref.uid] = feat.cpu()
+
+    result = phase2 if phase2 is not None else phase1
+    print(f"  Final best stim_gen_mse: {result.best_val_mse:.4f}")
+
+    # -- Collect DLBT predictions for this seed --
+    agent.eval()
+    for cond, ds in [("train", train_ds), ("stim", stim_gen_ds),
+                     ("task", task_gen_ds), ("joint", joint_gen_ds)]:
+        for task_name, group in ds.iter_tasks():
+            task       = TASKS[task_name]
+            batch_refs = [refs_dict[uid] for uid in group["uid"]]
+            true_p     = np.array([get_true_p(r.uid, task_name) for r in batch_refs])
+            with torch.no_grad():
+                pred = agent.choice_probs(batch_refs, task)[:, 1].cpu().numpy()
+
+            if task_name not in dlbt_preds[cond]:
+                dlbt_preds[cond][task_name] = {
+                    "pred": [],
+                    "true": true_p,
+                    "uids": [r.uid for r in batch_refs],
+                }
+            dlbt_preds[cond][task_name]["pred"].append(pred)
+
+    # -- Build learning curves from this seed (overwritten each iteration;
+    #    curves from the last seed are kept for plot_02) --
+    n_phase1       = len(phase1.train_nlls)
+    phase_boundary = n_phase1 - 1
+    curves = dict(
+        train_nlls  = _concat(phase1.train_nlls,  phase2.train_nlls  if phase2 else None),
+        val_nlls    = _concat(phase1.val_nlls,     phase2.val_nlls    if phase2 else None),
+        train_mses  = _concat(phase1.train_mses,   phase2.train_mses  if phase2 else None),
+        val_mses    = _concat(phase1.val_mses,     phase2.val_mses    if phase2 else None),
+        task_nlls   = _concat(phase1.extra_val_nlls["task_gen"],
+                              phase2.extra_val_nlls["task_gen"]  if phase2 else None),
+        joint_nlls  = _concat(phase1.extra_val_nlls["joint_gen"],
+                              phase2.extra_val_nlls["joint_gen"] if phase2 else None),
+        task_mses   = _concat(phase1.extra_val_mses["task_gen"],
+                              phase2.extra_val_mses["task_gen"]  if phase2 else None),
+        joint_mses  = _concat(phase1.extra_val_mses["joint_gen"],
+                              phase2.extra_val_mses["joint_gen"] if phase2 else None),
+    )
+    best_epoch_offset = result.best_epoch + (phase_boundary if phase2 else 0)
+
+# -- Stack per-seed predictions to [n_seeds, n_pts] --
+for cond in dlbt_preds:
+    for task_name in dlbt_preds[cond]:
+        dlbt_preds[cond][task_name]["pred"] = np.stack(
+            dlbt_preds[cond][task_name]["pred"]
+        )  # [n_seeds, n_pts]
+
+# Save agent weights from the last seed
+agent_path = cfg.RESULTS_DIR / f"agent_{cfg.RUN_TAG}.pt"
+torch.save(agent.state_dict(), agent_path)
+print(f"\nSaved agent weights (last seed) → {agent_path}")
 
 # ---------------------------------------------------------------------------
 # Save results
 # ---------------------------------------------------------------------------
 results = dict(
-    # metadata
-    model_label       = model_label,
-    run_tag           = cfg.RUN_TAG,
-    phase_boundary    = phase_boundary,
-    best_epoch        = best_epoch_offset,
-    noise_floor       = train_ds.noise_floor(),
-    # curves
-    curves            = curves,
-    # predictions
-    dlbt_train        = dlbt_train,
-    dlbt_stim         = dlbt_stim,
-    dlbt_task         = dlbt_task,
-    dlbt_joint        = dlbt_joint,
-    slda_train        = slda_train,
-    slda_stim         = slda_stim,
-    # split info (for balance plot)
-    state_to_uids     = dict(state_to_uids),
-    train_uids        = train_uids,
-    test_uids         = test_uids,
+    model_label    = model_label,
+    run_tag        = cfg.RUN_TAG,
+    n_seeds        = cfg.N_SEEDS,
+    seeds          = cfg.SEEDS,
+    n_trials       = cfg.N_TRIALS,
+    phase_boundary = phase_boundary,   # from last seed's phase1
+    best_epoch     = best_epoch_offset,
+    noise_floor    = train_ds.noise_floor(),
+    curves         = curves,           # from last seed
+    dlbt           = dlbt_preds,       # {cond: {task: {pred: [n_seeds, n_pts], true, uids}}}
+    slda           = slda_preds,       # {cond: {task: {pred: [n_pts], true, uids}}}
+    state_to_uids  = dict(state_to_uids),
+    train_uids     = train_uids,
+    test_uids      = test_uids,
 )
 
 results_path = cfg.RESULTS_DIR / f"results_{cfg.RUN_TAG}.pkl"

@@ -245,6 +245,18 @@ def collect_dlbt(agent, ds: BehavioralDataset, task_names: list) -> dict:
     return out
 
 
+def collect_dummy(ds: BehavioralDataset, task_names: list) -> dict:
+    """Always predicts P(right)=0.5 regardless of stimulus or task."""
+    out = {}
+    for task_name in task_names:
+        group = ds.df[ds.df["task_name"] == task_name]
+        if len(group) == 0:
+            continue
+        uids = group["uid"].tolist()
+        out[task_name] = dict(pred=np.full(len(uids), 0.5), uids=uids)
+    return out
+
+
 def collect_slda(slda_scalers, slda_models, slda_temps,
                  ds: BehavioralDataset, task_names: list,
                  clip_feat_fn) -> dict:
@@ -272,10 +284,12 @@ def collect_slda(slda_scalers, slda_models, slda_temps,
 S, B = cfg.N_SEEDS, len(cfg.BUDGETS)
 _nan = lambda: np.full((S, B), np.nan)
 
-res_dlbt = {cond: {"cmse": _nan(), "rho": _nan()}
-            for cond in ["train", "stim", "task", "joint"]}
-res_slda = {cond: {"cmse": _nan(), "rho": _nan()}
-            for cond in ["train", "stim"]}
+res_dlbt  = {cond: {"cmse": _nan(), "rho": _nan()}
+             for cond in ["train", "stim", "task", "joint"]}
+res_slda  = {cond: {"cmse": _nan(), "rho": _nan()}
+             for cond in ["train", "stim"]}
+res_dummy = {cond: {"cmse": np.full(S, np.nan), "rho": np.full(S, np.nan)}
+             for cond in ["stim", "task", "joint"]}
 
 # ---------------------------------------------------------------------------
 # Main loop
@@ -300,6 +314,16 @@ for s_idx, seed in enumerate(cfg.SEEDS):
     rng_pairs  = np.random.default_rng(seed + 77_777)
     train_pairs = make_pair_pool(cfg.TRAIN_TASKS, train_uids, rng_pairs)
     print(f"  pair pool: {len(train_pairs)} training (image, task) pairs")
+
+    # Dummy — constant across budgets, compute once per seed
+    for cond, ds, task_names in [
+        ("stim",  test_stim,  cfg.TRAIN_TASKS),
+        ("task",  test_task,  cfg.VAL_TASKS),
+        ("joint", test_joint, cfg.VAL_TASKS),
+    ]:
+        cmse, rho = agg_metrics(collect_dummy(ds, task_names), task_names, None)
+        res_dummy[cond]["cmse"][s_idx] = cmse
+        res_dummy[cond]["rho"][s_idx]  = rho
 
     for b_idx, budget in enumerate(cfg.BUDGETS):
         print(f"\n  Budget {budget:>9,} total trials  ({b_idx + 1}/{len(cfg.BUDGETS)})")
@@ -459,6 +483,7 @@ results = dict(
     run_tag  = cfg.RUN_TAG,
     dlbt     = res_dlbt,
     slda     = res_slda,
+    dummy    = res_dummy,
 )
 
 out_path = cfg.RESULTS_DIR / f"results_{cfg.RUN_TAG}.pkl"

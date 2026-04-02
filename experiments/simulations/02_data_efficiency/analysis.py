@@ -1,16 +1,13 @@
 """
 Simulation 02 — data efficiency analysis.
 
-Loads results_{tag}.pkl saved by run.py and produces:
+Loads results_frozen.pkl / results_attnpool.pkl saved by run.py and produces:
   plot_efficiency_cmse_{tag}.png  — cMSE vs. budget
   plot_efficiency_rho_{tag}.png   — ρ vs. budget
-
-Run from repo root:
-    python experiments/simulations/02_data_efficiency/analysis.py [--tag frozen|attnpool]
 """
 
 import pickle
-import sys
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -19,69 +16,76 @@ import seaborn as sns
 import config as cfg
 
 # ---------------------------------------------------------------------------
-# CLI: --tag frozen | attnpool  (default: cfg.RUN_TAG)
+# Colours / line styles
 # ---------------------------------------------------------------------------
-run_tag = cfg.RUN_TAG
-for i, arg in enumerate(sys.argv[1:]):
-    if arg == "--tag" and i + 1 < len(sys.argv) - 1:
-        run_tag = sys.argv[i + 2]
+C_DLBT = "#C44F52"
+C_SLDA = "#7D6EAE"
 
-results_path = cfg.RESULTS_DIR / f"results_{run_tag}.pkl"
-if not results_path.exists():
-    sys.exit(f"Results file not found: {results_path}\nRun run.py first.")
+DLBT_CONDITIONS = [
+    ("stim",  "dotted", "DLBT — stim gen"),
+    ("task",  "dashed", "DLBT — task gen"),
+    ("joint", "solid",  "DLBT — joint gen"),
+]
+SLDA_CONDITIONS = [
+    ("stim",  "dotted", "SLDA — stim gen"),
+]
 
-with open(results_path, "rb") as f:
-    res = pickle.load(f)
-
+# ---------------------------------------------------------------------------
+# Auto-detect available result files
+# ---------------------------------------------------------------------------
 plots_dir = cfg.RESULTS_DIR / "plots"
 plots_dir.mkdir(exist_ok=True)
 
-budgets = res["budgets"]
-dlbt    = res["dlbt"]
-slda    = res["slda"]
-
-model_label = "DLBT (frozen)" if run_tag == "frozen" else "DLBT (attnpool)"
-
-C_TRAIN, C_STIM, C_TASK, C_JOINT = cfg.C_TRAIN, cfg.C_STIM, cfg.C_TASK, cfg.C_JOINT
+available = sorted(
+    [p for p in [cfg.RESULTS_DIR / "results_frozen.pkl",
+                 cfg.RESULTS_DIR / "results_attnpool.pkl"]
+     if p.exists()]
+)
+if not available:
+    raise FileNotFoundError(f"No results_*.pkl found in {cfg.RESULTS_DIR}. Run run.py first.")
 
 # ---------------------------------------------------------------------------
 # Plotting helper
 # ---------------------------------------------------------------------------
-def _plot_metric(ax, metric: str, ylabel: str):
-    """Draw all conditions for both models on ax."""
-    x = np.array(budgets)
+def _plot_metric(ax, res, metric: str, ylabel: str, run_tag: str):
+    budgets = res["budgets"]
+    dlbt    = res["dlbt"]
+    slda    = res["slda"]
+    x       = np.array(budgets)
 
-    # DLBT — 4 conditions, solid lines
-    for cond, color, label in [
-        ("train", C_TRAIN, f"{model_label} train"),
-        ("stim",  C_STIM,  f"{model_label} stim gen"),
-        ("task",  C_TASK,  f"{model_label} task gen"),
-        ("joint", C_JOINT, f"{model_label} joint gen"),
-    ]:
-        vals = dlbt[cond][metric]          # [n_seeds, n_budgets]
+    model_label = "DLBT (frozen)" if run_tag == "frozen" else "DLBT (attnpool)"
+
+    for cond, ls, label in DLBT_CONDITIONS:
+        if cond not in dlbt:
+            continue
+        vals = dlbt[cond][metric]
         mean = np.nanmean(vals, axis=0)
         std  = np.nanstd(vals, axis=0)
-        ax.plot(x, mean, color=color, lw=2.5, label=label)
-        ax.fill_between(x, mean - std, mean + std, color=color, alpha=0.15)
+        lbl  = label.replace("DLBT", model_label)
+        ax.plot(x, mean, color=C_DLBT, lw=2.5, ls=ls, label=lbl)
+        ax.fill_between(x, mean - std, mean + std, color=C_DLBT, alpha=0.15)
 
-    # SLDA — 2 conditions, dashed lines
-    # Use nanmean/nanstd: at very low budgets some seeds may have no fitted tasks
-    # (too few observations per task), so NaN is expected and should not mask
-    # the seeds that do have a valid fit.
-    for cond, color, label in [
-        ("train", C_TRAIN, "SLDA train"),
-        ("stim",  C_STIM,  "SLDA stim gen"),
-    ]:
+    for cond, ls, label in SLDA_CONDITIONS:
+        if cond not in slda:
+            continue
         vals = slda[cond][metric]
         mean = np.nanmean(vals, axis=0)
         std  = np.nanstd(vals, axis=0)
-        ax.plot(x, mean, color=color, lw=2.5, ls="--", label=label)
-        ax.fill_between(x, mean - std, mean + std, color=color, alpha=0.10)
+        ax.plot(x, mean, color=C_SLDA, lw=2.5, ls=ls, label=label)
+        ax.fill_between(x, mean - std, mean + std, color=C_SLDA, alpha=0.10)
+
+    # Dummy — flat reference line (stim gen condition, constant across budgets)
+    dummy = res.get("dummy", {})
+    if "stim" in dummy and metric in dummy["stim"]:
+        vals = dummy["stim"][metric]   # [n_seeds]
+        mean = float(np.nanmean(vals))
+        std  = float(np.nanstd(vals))
+        ax.axhline(mean, color="gray", lw=1.5, ls=(0, (3, 3)), label="Chance (P=0.5)")
+        ax.axhspan(mean - std, mean + std, color="gray", alpha=0.08)
 
     ax.set_xscale("log")
     ax.set_xticks(budgets)
-    tick_labels = [f"{b:,}" if b < 1_000_000 else "1M" for b in budgets]
-    ax.set_xticklabels(tick_labels, fontsize=9)
+    ax.set_xticklabels([f"{b:,}" for b in budgets], fontsize=9)
     ax.tick_params(axis="y", labelsize=9)
     ax.set_xlabel("Total training trials", fontsize=12)
     ax.set_ylabel(ylabel, fontsize=12)
@@ -89,31 +93,29 @@ def _plot_metric(ax, metric: str, ylabel: str):
         ax.set_ylim(bottom=0)
     elif metric == "rho":
         ax.set_ylim(-0.1, 1)
-    ax.legend(fontsize=9, ncol=2, frameon=False)
+    ax.legend(fontsize=9, frameon=False)
 
 
 # ---------------------------------------------------------------------------
-# Plot 1 — cMSE
+# Loop over available result files
 # ---------------------------------------------------------------------------
-fig, ax = plt.subplots(figsize=(5.5, 4))
-_plot_metric(ax, "cmse", "cMSE")
-sns.despine(trim=False)
-plt.tight_layout()
-out = plots_dir / f"plot_efficiency_cmse_{run_tag}.png"
-plt.savefig(out, dpi=200, bbox_inches="tight")
-print(f"Saved: {out}")
-plt.close()
+for results_path in available:
+    run_tag = results_path.stem[len("results_"):]
 
-# ---------------------------------------------------------------------------
-# Plot 2 — ρ
-# ---------------------------------------------------------------------------
-fig, ax = plt.subplots(figsize=(5.5, 4))
-_plot_metric(ax, "rho", "Spearman ρ")
-sns.despine(trim=False)
-plt.tight_layout()
-out = plots_dir / f"plot_efficiency_rho_{run_tag}.png"
-plt.savefig(out, dpi=200, bbox_inches="tight")
-print(f"Saved: {out}")
-plt.close()
+    with open(results_path, "rb") as f:
+        res = pickle.load(f)
+
+    for metric, ylabel, fname in [
+        ("cmse", "cMSE",        f"plot_efficiency_cmse_{run_tag}.png"),
+        ("rho",  "Spearman ρ",  f"plot_efficiency_rho_{run_tag}.png"),
+    ]:
+        fig, ax = plt.subplots(figsize=(5.5, 4))
+        _plot_metric(ax, res, metric, ylabel, run_tag)
+        sns.despine(trim=False)
+        plt.tight_layout()
+        out = plots_dir / fname
+        plt.savefig(out, dpi=200, bbox_inches="tight")
+        print(f"Saved: {out}")
+        plt.close()
 
 print("\nAll plots saved to", plots_dir)
