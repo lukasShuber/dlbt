@@ -1,0 +1,17 @@
+filename,verbal_description,latent_state,prototypicality_score
+000274_shoct_f05_yaw244_s043_lab058-+048-+027_t010_gl004_xy-0185--0016_random.png,left_opaque_matte_small,0,0.3694
+000611_shoct_f04_yaw343_s078_lab056--034-+040_t014_gl002_xy-0208-+0136_random.png,left_opaque_matte_large,1,0.2965
+000502_shico_f08_yaw120_s040_lab070--051-+031_t007_gl089_xy-0163--0242_random.png,left_opaque_glossy_small,2,0.3258
+000489_shico_f06_yaw244_s087_lab075--008-+053_t018_gl098_xy-0194--0212_random.png,left_opaque_glossy_large,3,0.3243
+000695_shoct_f02_yaw320_s043_lab047--004-+045_t093_gl016_xy-0184--0046_random.png,left_transparent_matte_small,4,0.3385
+000801_shico_f10_yaw097_s081_lab037-+015-+038_t098_gl019_xy-0227--0175_random.png,left_transparent_matte_large,5,0.3062
+000157_shico_f04_yaw155_s044_lab054--024-+052_t089_gl076_xy-0238--0033_random.png,left_transparent_glossy_small,6,0.2616
+000434_shoct_f03_yaw071_s084_lab061-+006-+051_t096_gl092_xy-0217--0212_random.png,left_transparent_glossy_large,7,0.4107
+000790_shoct_f06_yaw034_s050_lab064--019-+038_t016_gl023_xy+0175--0207_random.png,right_opaque_matte_small,8,0.2639
+000207_shico_f09_yaw049_s086_lab073-+048--025_t018_gl016_xy+0182--0151_random.png,right_opaque_matte_large,9,0.3163
+000457_shico_f04_yaw016_s043_lab069-+040--038_t008_gl081_xy+0149-+0017_random.png,right_opaque_glossy_small,10,0.298
+000585_shoct_f07_yaw176_s085_lab061--013--040_t015_gl091_xy+0172--0079_random.png,right_opaque_glossy_large,11,0.3449
+000105_shoct_f01_yaw045_s047_lab052--032-+043_t093_gl014_xy+0167-+0006_random.png,right_transparent_matte_small,12,0.3174
+000069_shdod_f03_yaw115_s085_lab057-+048--042_t087_gl013_xy+0229--0125_random.png,right_transparent_matte_large,13,0.3711
+000771_shico_f15_yaw186_s044_lab065--036-+048_t079_gl088_xy+0163--0232_random.png,right_transparent_glossy_small,14,0.2892
+000594_shoct_f00_yaw306_s084_lab072-+030--036_t083_gl079_xy+0243--0214_random.png,right_transparent_glossy_large,15,0.294

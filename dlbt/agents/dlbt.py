@@ -280,6 +280,11 @@ class DlbtAgent(nn.Module, Agent):
             task.delta_u, dtype=torch.float32, device=self.device
         )
 
+        # Clamp to a numerically safe minimum before rsample.
+        # PyTorch's Dirichlet uses Gamma sampling internally; very small
+        # concentrations (< ~0.01) cause NaN on GPU even though the values
+        # are technically positive.  1e-6 in get_alpha is not enough.
+        alpha  = alpha.clamp(min=0.1)
         b      = Dirichlet(alpha).rsample((N,))                     # [N, B, K]
         logit  = torch.einsum("nbk,k->nb", b, delta_u)             # [N, B]
 
@@ -307,7 +312,7 @@ class DlbtAgent(nn.Module, Agent):
           5. Average over N samples                      [B, 2]
         """
         N     = self.n_mc_samples
-        alpha = self.get_alpha(image_refs)                          # [B, K]
+        alpha = self.get_alpha(image_refs).clamp(min=0.1)          # [B, K]
         delta_u = torch.tensor(
             task.delta_u, dtype=torch.float32, device=self.device
         )

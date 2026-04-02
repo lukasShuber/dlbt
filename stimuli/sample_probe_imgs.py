@@ -1,5 +1,5 @@
 """
-sample_exemplars.py
+sample_probe_imgs.py
 -------------------
 Sample one image per latent state (16 states, 4 binary dimensions).
 
@@ -9,14 +9,14 @@ Latent state encoding (from dlbt/constants.py):
   bit 1 (DIM_GLOSS):       1 = glossy (glossiness   >= 0.5)
   bit 0 (DIM_SMALL_LARGE): 1 = large  (scale        >= 0.63)
 
-Outputs (in stimuli/exemplars/):
+Outputs (in stimuli/probe_imgs/):
   - one symlink / copy of each selected image
-  - exemplars_metadata.jsonl   (full metadata for the 16 images)
-  - exemplars.csv              (filename, verbal_description)
+  - probe_imgs_metadata.jsonl   (full metadata for the 16 images)
+  - probe_imgs.csv              (filename, verbal_description)
 
 Usage:
     cd <repo root>
-    python stimuli/sample_exemplars.py
+    python stimuli/sample_probe_imgs.py
 """
 
 import csv
@@ -29,7 +29,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-SEED          = 37
+SEED          = 14
 METADATA      = Path("stimuli/imgs/metadata.jsonl")
 IMG_ROOT      = Path("stimuli/imgs")          # images live at IMG_ROOT / rec["image_file"]
 OUT_DIR       = Path("stimuli/imgs/probe_imgs")
@@ -100,7 +100,7 @@ for state in range(16):
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 csv_rows = []
-with open(OUT_DIR / "exemplars_metadata.jsonl", "w") as meta_f:
+with open(OUT_DIR / "probe_imgs_metadata.jsonl", "w") as meta_f:
     for rec in selected:
         src = IMG_ROOT / rec["image_file"]
         dst = OUT_DIR  / src.name
@@ -113,11 +113,11 @@ with open(OUT_DIR / "exemplars_metadata.jsonl", "w") as meta_f:
         })
         print(f"  [{rec['_latent_state']:02d}] {rec['_verbal_description']:30s}  →  {src.name}")
 
-with open(OUT_DIR / "exemplars.csv", "w", newline="") as csv_f:
+with open(OUT_DIR / "probe_imgs.csv", "w", newline="") as csv_f:
     writer = csv.DictWriter(csv_f, fieldnames=["filename", "verbal_description", "latent_state"])
     writer.writeheader()
     writer.writerows(csv_rows)
 
-print(f"\nSaved {len(selected)} exemplars to {OUT_DIR}/")
-print(f"  exemplars_metadata.jsonl")
-print(f"  exemplars.csv")
+print(f"\nSaved {len(selected)} probe_imgs to {OUT_DIR}/")
+print(f"  probe_imgs_metadata.jsonl")
+print(f"  probe_imgs.csv")
