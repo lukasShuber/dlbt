@@ -13,6 +13,7 @@ Run from repo root:
     python experiments/simulations/01_four_dim_generalization/analysis.py
 """
 
+import argparse
 import json
 import math
 import pickle
@@ -82,18 +83,37 @@ def _summary_scatter(ax, pt: dict, task_names: list, color: str, marker: str,
 
 
 # ---------------------------------------------------------------------------
-# Auto-detect available result files and loop
+# CLI: optional --tag to restrict which result file to process
 # ---------------------------------------------------------------------------
-available = sorted([
+parser = argparse.ArgumentParser()
+parser.add_argument("--tag", default=None, choices=["frozen", "attnpool"],
+                    help="Process only this tag (default: all available)")
+args = parser.parse_args()
+
+# ---------------------------------------------------------------------------
+# Auto-detect available result files (new format only — must have "dlbt" key)
+# ---------------------------------------------------------------------------
+candidates = sorted([
     p for p in [
         cfg.RESULTS_DIR / "results_frozen.pkl",
         cfg.RESULTS_DIR / "results_attnpool.pkl",
     ] if p.exists()
 ])
+if args.tag:
+    candidates = [p for p in candidates if args.tag in p.stem]
+
+available = []
+for p in candidates:
+    with open(p, "rb") as _f:
+        _r = pickle.load(_f)
+    if "dlbt" in _r:
+        available.append(p)
+    else:
+        print(f"Skipping {p.name} — old format (missing 'dlbt' key), re-run run.py first.")
 
 if not available:
     raise FileNotFoundError(
-        f"No results files found in {cfg.RESULTS_DIR}. Run run.py first."
+        f"No compatible results files found in {cfg.RESULTS_DIR}. Run run.py first."
     )
 
 for results_path in available:
