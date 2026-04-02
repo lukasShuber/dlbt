@@ -147,6 +147,15 @@ def _make_agent():
     agent = DlbtAgent(freeze_encoder=True, n_mc_samples=cfg.N_MC, device=device,
                       mapper_hidden=cfg.MAPPER_HIDDEN)
     agent._cache = {uid: feat.clone() for uid, feat in frozen_clip_copy.items()}
+    # Initialize mapper at the same weight scale as W* so the optimizer starts
+    # in the right ballpark.  W* ~ N(0, ALPHA_SCALE²) per entry, so logit std
+    # ≈ ALPHA_SCALE × ||feat||.  Default PyTorch init is ~130× smaller, causing
+    # very slow convergence toward W*.  This is not cheating — we draw a fresh
+    # random init from the same distribution, not from W* itself.
+    with torch.no_grad():
+        torch.nn.init.normal_(agent.mapper[0].weight, 0.0,
+                              cfg.ALPHA_SCALE / np.sqrt(D_clip))
+        torch.nn.init.zeros_(agent.mapper[0].bias)
     return agent
 
 

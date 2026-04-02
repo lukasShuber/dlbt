@@ -36,8 +36,8 @@ N_TRIALS = 100    # decisions per (image, task)
 # ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
-N_EPOCHS      = 1000
-PATIENCE      = 150
+N_EPOCHS      = 3000
+PATIENCE      = 500
 LR            = 1e-2
 N_MC          = 200
 FREEZE_ENCODER = True   # linear mapper only — keeps the test clean
