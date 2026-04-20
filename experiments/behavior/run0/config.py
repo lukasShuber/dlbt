@@ -40,7 +40,7 @@ MIN_CATCH_PERF = 1.0   # must get 4/4 catch trials
 MAIN_PERF_QUANTILE = 0.95   # above the 95th pctile of Binom(100, 0.5)
 
 # ---------------------------------------------------------------------------
-# Training
+# Training (matches simulation 01)
 # ---------------------------------------------------------------------------
 N_EPOCHS_PHASE1 = 1000
 PATIENCE_PHASE1 = 300
@@ -49,7 +49,7 @@ PATIENCE_PHASE2 = 100
 LR              = 1e-2
 LR_ATTNPOOL     = 1e-5
 N_MC            = 1000
-FREEZE_ENCODER  = False
+FREEZE_ENCODER  = True
 MAPPER_HIDDEN   = None
 
 RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"
@@ -59,21 +59,19 @@ RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"
 # ---------------------------------------------------------------------------
 TRAIN_TASKS = [
     # simple
-    "right", "transparent", "glossy", "large",
-    # 2-way
-    "right_and_transparent",
-    "right_and_glossy",
-    "transparent_and_glossy",
-    "large_and_transparent",
-    "large_and_glossy",
-    # 3-way
-    "right_and_transparent_and_glossy",
-    "large_and_transparent_and_glossy",
+    "right", "transparent", "glossy", "large"
 ]
 VAL_TASKS = [
+    "right_and_glossy", 
+    "right_and_transparent",
+    "transparent_and_glossy",
+    "large_and_glossy",
+    "large_and_transparent",
     "right_and_large",
     "right_and_large_and_glossy",
     "right_and_large_and_transparent",
+    "right_and_transparent_and_glossy",
+    "large_and_transparent_and_glossy",
 ]
 
 # ---------------------------------------------------------------------------
