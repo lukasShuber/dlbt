@@ -120,7 +120,7 @@ TRAIN_TASKS = [
     "right_and_large_and_glossy",
     "right_and_large_and_transparent",
 ]
-VAL_TASKS = []   # no held-out tasks; val is main-image holdout only
+VAL_TASKS = ["right"]   # just to make the code run.
 
 # ---------------------------------------------------------------------------
 # Behavioural task_id  ->  DLBT task name
