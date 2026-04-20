@@ -250,6 +250,9 @@ for results_path in candidates:
         cond_list = ([("train", C_TRAIN), ("stim", C_STIM)]
                      if not is_val else
                      [("task", C_TASK), ("joint", C_JOINT)])
+        cond_list = ([("stim", C_STIM)]
+                     if not is_val else
+                     [("joint", C_JOINT)])
 
         for cond, color in cond_list:
             if task_name not in dlbt[cond]:

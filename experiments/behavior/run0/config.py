@@ -22,8 +22,8 @@ RESULTS_DIR = Path(__file__).parent / "results"
 # Data handling
 # ---------------------------------------------------------------------------
 SEED          = 42
-N_SEEDS       = 1
-SEEDS         = [42]
+N_SEEDS       = 2
+SEEDS         = [42, 43]
 
 # Image split: the behavioural experiment collects ~20 trials per (uid, task)
 # on 16 probe images and ~3 trials per (uid, task) on ~980 main images.
@@ -43,9 +43,9 @@ MAIN_PERF_QUANTILE = 0.95   # above the 95th pctile of Binom(100, 0.5)
 # Training (matches simulation 01)
 # ---------------------------------------------------------------------------
 N_EPOCHS_PHASE1 = 1000
-PATIENCE_PHASE1 = 100
+PATIENCE_PHASE1 = 150
 N_EPOCHS_PHASE2 = 3000
-PATIENCE_PHASE2 = 100
+PATIENCE_PHASE2 = 150
 LR              = 1e-2
 LR_ATTNPOOL     = 1e-5
 N_MC            = 200
@@ -66,14 +66,15 @@ TRAIN_TASKS = [
     "right_and_glossy",      "left_and_glossy",
     "transparent_and_glossy",
     "large_and_transparent", "large_and_glossy",
+    "right_and_large",
+    "left_and_large",
     # 3-way
     "right_and_transparent_and_glossy",
     "left_and_transparent_and_glossy",
     "large_and_transparent_and_glossy",
 ]
 VAL_TASKS = [
-    "right_and_large",
-    "left_and_large",
+    "right", "left",
     "right_and_large_and_glossy",
     "right_and_large_and_transparent",
 ]
