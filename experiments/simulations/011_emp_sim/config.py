@@ -19,8 +19,8 @@ N_SEEDS = 1
 SEEDS   = [42]
 
 # [011] Asymmetric trial counts matching behavioural collection
-N_TRIALS_MAIN  = 100      # main images  (~3 trials / (uid, task) in behaviour)
-N_TRIALS_PROBE = 100     # probe images (~20 trials / (uid, task) in behaviour)
+N_TRIALS_MAIN  = 3      # main images  (~3 trials / (uid, task) in behaviour)
+N_TRIALS_PROBE = 20     # probe images (~20 trials / (uid, task) in behaviour)
 N_PROBE_IMAGES = 16     # first N sorted UIDs treated as probe set
 
 PEAK               = 15.0
@@ -30,9 +30,9 @@ BASE_CONCENTRATION = 1.0
 #   lr=0.85  tr=0.73  gl=0.62  sl=0.76
 BETA_PER_DIM = dict(
     lr = 5.0,
-    tr = 5.0,
-    gl = 5.0,
-    sl = 5.0,
+    tr = 3.0,
+    gl = 1.5,
+    sl = 3.5,
 )
 
 # ---- Training (mirrors sim 01) ---------------------------------------------
@@ -47,7 +47,7 @@ FREEZE_ENCODER  = True
 MAPPER_HIDDEN   = None
 RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"
 
-# ---- Tasks (full 22-task behavioural set, Option A) ------------------------
+# ---- Tasks ------------------------
 TRAIN_TASKS = [
     # simple
     "right", "transparent", "glossy", "large",
