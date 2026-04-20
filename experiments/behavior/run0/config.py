@@ -70,7 +70,7 @@ VAL_TASKS = [
     "right",
     "transparent",
     "glossy",
-    "large"
+    "large",
     "right_and_large_and_glossy",
     "right_and_large_and_transparent",
     "right_and_transparent_and_glossy",
