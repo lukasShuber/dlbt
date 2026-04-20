@@ -59,22 +59,22 @@ RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"
 # ---------------------------------------------------------------------------
 TRAIN_TASKS = [
     # simple
-        "right_and_glossy", 
+    "right_and_glossy", 
     "right_and_transparent",
     "transparent_and_glossy",
     "large_and_glossy",
     "large_and_transparent",
     "right_and_large",
+    "right_and_large_and_glossy",
+    "right_and_large_and_transparent",
+    "right_and_transparent_and_glossy",
+    "large_and_transparent_and_glossy",
 ]
 VAL_TASKS = [
     "right",
     "transparent",
     "glossy",
     "large",
-    "right_and_large_and_glossy",
-    "right_and_large_and_transparent",
-    "right_and_transparent_and_glossy",
-    "large_and_transparent_and_glossy",
 ]
 
 # ---------------------------------------------------------------------------
