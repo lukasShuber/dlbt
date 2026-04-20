@@ -1,0 +1,81 @@
+task_id,prompt,transparency,glossiness,size,side
+transparent,Is there a rather **transparent** object?,transparent,,,
+opaque,Is there a rather **opaque** object?,opaque,,,
+glossy,Is there a rather **glossy** object?,,glossy,,
+matte,Is there a rather **matte** object?,,matte,,
+large,Is there a rather **large** object?,,,large,
+small,Is there a rather **small** object?,,,small,
+right,Is there an object on the **right**?,,,,right
+left,Is there an object on the **left**?,,,,left
+"transparent,glossy","Is there a rather **transparent**, **glossy** object?",transparent,glossy,,
+"transparent,matte","Is there a rather **transparent**, **matte** object?",transparent,matte,,
+"opaque,glossy","Is there a rather **opaque**, **glossy** object?",opaque,glossy,,
+"opaque,matte","Is there a rather **opaque**, **matte** object?",opaque,matte,,
+"transparent,large","Is there a rather **transparent**, **large** object?",transparent,,large,
+"transparent,small","Is there a rather **transparent**, **small** object?",transparent,,small,
+"opaque,large","Is there a rather **opaque**, **large** object?",opaque,,large,
+"opaque,small","Is there a rather **opaque**, **small** object?",opaque,,small,
+"transparent,right",Is there a rather **transparent** object on the **right**?,transparent,,,right
+"transparent,left",Is there a rather **transparent** object on the **left**?,transparent,,,left
+"opaque,right",Is there a rather **opaque** object on the **right**?,opaque,,,right
+"opaque,left",Is there a rather **opaque** object on the **left**?,opaque,,,left
+"glossy,large","Is there a rather **glossy**, **large** object?",,glossy,large,
+"glossy,small","Is there a rather **glossy**, **small** object?",,glossy,small,
+"matte,large","Is there a rather **matte**, **large** object?",,matte,large,
+"matte,small","Is there a rather **matte**, **small** object?",,matte,small,
+"glossy,right",Is there a rather **glossy** object on the **right**?,,glossy,,right
+"glossy,left",Is there a rather **glossy** object on the **left**?,,glossy,,left
+"matte,right",Is there a rather **matte** object on the **right**?,,matte,,right
+"matte,left",Is there a rather **matte** object on the **left**?,,matte,,left
+"large,right",Is there a rather **large** object on the **right**?,,,large,right
+"large,left",Is there a rather **large** object on the **left**?,,,large,left
+"small,right",Is there a rather **small** object on the **right**?,,,small,right
+"small,left",Is there a rather **small** object on the **left**?,,,small,left
+"transparent,glossy,large","Is there a rather **transparent**, **glossy**, **large** object?",transparent,glossy,large,
+"transparent,glossy,small","Is there a rather **transparent**, **glossy**, **small** object?",transparent,glossy,small,
+"transparent,matte,large","Is there a rather **transparent**, **matte**, **large** object?",transparent,matte,large,
+"transparent,matte,small","Is there a rather **transparent**, **matte**, **small** object?",transparent,matte,small,
+"opaque,glossy,large","Is there a rather **opaque**, **glossy**, **large** object?",opaque,glossy,large,
+"opaque,glossy,small","Is there a rather **opaque**, **glossy**, **small** object?",opaque,glossy,small,
+"opaque,matte,large","Is there a rather **opaque**, **matte**, **large** object?",opaque,matte,large,
+"opaque,matte,small","Is there a rather **opaque**, **matte**, **small** object?",opaque,matte,small,
+"transparent,glossy,right","Is there a rather **transparent**, **glossy** object on the **right**?",transparent,glossy,,right
+"transparent,glossy,left","Is there a rather **transparent**, **glossy** object on the **left**?",transparent,glossy,,left
+"transparent,matte,right","Is there a rather **transparent**, **matte** object on the **right**?",transparent,matte,,right
+"transparent,matte,left","Is there a rather **transparent**, **matte** object on the **left**?",transparent,matte,,left
+"opaque,glossy,right","Is there a rather **opaque**, **glossy** object on the **right**?",opaque,glossy,,right
+"opaque,glossy,left","Is there a rather **opaque**, **glossy** object on the **left**?",opaque,glossy,,left
+"opaque,matte,right","Is there a rather **opaque**, **matte** object on the **right**?",opaque,matte,,right
+"opaque,matte,left","Is there a rather **opaque**, **matte** object on the **left**?",opaque,matte,,left
+"transparent,large,right","Is there a rather **transparent**, **large** object on the **right**?",transparent,,large,right
+"transparent,large,left","Is there a rather **transparent**, **large** object on the **left**?",transparent,,large,left
+"transparent,small,right","Is there a rather **transparent**, **small** object on the **right**?",transparent,,small,right
+"transparent,small,left","Is there a rather **transparent**, **small** object on the **left**?",transparent,,small,left
+"opaque,large,right","Is there a rather **opaque**, **large** object on the **right**?",opaque,,large,right
+"opaque,large,left","Is there a rather **opaque**, **large** object on the **left**?",opaque,,large,left
+"opaque,small,right","Is there a rather **opaque**, **small** object on the **right**?",opaque,,small,right
+"opaque,small,left","Is there a rather **opaque**, **small** object on the **left**?",opaque,,small,left
+"glossy,large,right","Is there a rather **glossy**, **large** object on the **right**?",,glossy,large,right
+"glossy,large,left","Is there a rather **glossy**, **large** object on the **left**?",,glossy,large,left
+"glossy,small,right","Is there a rather **glossy**, **small** object on the **right**?",,glossy,small,right
+"glossy,small,left","Is there a rather **glossy**, **small** object on the **left**?",,glossy,small,left
+"matte,large,right","Is there a rather **matte**, **large** object on the **right**?",,matte,large,right
+"matte,large,left","Is there a rather **matte**, **large** object on the **left**?",,matte,large,left
+"matte,small,right","Is there a rather **matte**, **small** object on the **right**?",,matte,small,right
+"matte,small,left","Is there a rather **matte**, **small** object on the **left**?",,matte,small,left
+"transparent,glossy,large,right","Is there a rather **transparent**, **glossy**, **large** object on the **right**?",transparent,glossy,large,right
+"transparent,glossy,large,left","Is there a rather **transparent**, **glossy**, **large** object on the **left**?",transparent,glossy,large,left
+"transparent,glossy,small,right","Is there a rather **transparent**, **glossy**, **small** object on the **right**?",transparent,glossy,small,right
+"transparent,glossy,small,left","Is there a rather **transparent**, **glossy**, **small** object on the **left**?",transparent,glossy,small,left
+"transparent,matte,large,right","Is there a rather **transparent**, **matte**, **large** object on the **right**?",transparent,matte,large,right
+"transparent,matte,large,left","Is there a rather **transparent**, **matte**, **large** object on the **left**?",transparent,matte,large,left
+"transparent,matte,small,right","Is there a rather **transparent**, **matte**, **small** object on the **right**?",transparent,matte,small,right
+"transparent,matte,small,left","Is there a rather **transparent**, **matte**, **small** object on the **left**?",transparent,matte,small,left
+"opaque,glossy,large,right","Is there a rather **opaque**, **glossy**, **large** object on the **right**?",opaque,glossy,large,right
+"opaque,glossy,large,left","Is there a rather **opaque**, **glossy**, **large** object on the **left**?",opaque,glossy,large,left
+"opaque,glossy,small,right","Is there a rather **opaque**, **glossy**, **small** object on the **right**?",opaque,glossy,small,right
+"opaque,glossy,small,left","Is there a rather **opaque**, **glossy**, **small** object on the **left**?",opaque,glossy,small,left
+"opaque,matte,large,right","Is there a rather **opaque**, **matte**, **large** object on the **right**?",opaque,matte,large,right
+"opaque,matte,large,left","Is there a rather **opaque**, **matte**, **large** object on the **left**?",opaque,matte,large,left
+"opaque,matte,small,right","Is there a rather **opaque**, **matte**, **small** object on the **right**?",opaque,matte,small,right
+"opaque,matte,small,left","Is there a rather **opaque**, **matte**, **small** object on the **left**?",opaque,matte,small,left
