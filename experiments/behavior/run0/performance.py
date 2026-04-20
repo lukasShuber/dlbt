@@ -62,6 +62,13 @@ for k, v in diag.items():
 # Use scientific trials only (drop warmup, catch) — same as training pipeline
 df = df_filtered[df_filtered["trial_kind"].isin(cfg.USE_TRIAL_KINDS)].copy()
 
+# Re-rank `trial` within each assignment so that trial=0 is the first kept
+# scientific trial, regardless of its original position in the 130-trial
+# sequence.  This removes the catch-induced gaps and makes the x-axis run
+# from 1 to 116 (100 main + 16 probe).
+df = df.sort_values(["assignment_id", "trial"]).reset_index(drop=True)
+df["trial"] = df.groupby("assignment_id").cumcount()
+
 # Map the behavioural task_id -> DLBT task name (drops unmapped rows)
 df = df[df["task_id"].isin(cfg.BEH_ID_TO_TASK)]
 df["task_name"] = df["task_id"].map(cfg.BEH_ID_TO_TASK)
@@ -112,6 +119,16 @@ for idx, task_name in enumerate(task_order):
     # Aggregate across assignments at each trial index
     perf = sub.groupby("trial")["perf"].agg(["mean", "sem"]).reset_index()
     rt   = sub.groupby("trial")["reaction_time_msec"].agg(["mean", "sem"]).reset_index()
+
+    # Smooth with a centred rolling window (10 trials).
+    # - mean: rolling average of per-trial means
+    # - sem:  rolling average of per-trial SEMs, then ÷ √ROLL  (the smoothed
+    #         mean has 10× more effective observations than any single trial)
+    ROLL = 10
+    perf["mean"] = perf["mean"].rolling(ROLL, center=True, min_periods=1).mean()
+    perf["sem"]  = perf["sem"].rolling(ROLL, center=True, min_periods=1).mean() / np.sqrt(ROLL)
+    rt["mean"]   = rt["mean"].rolling(ROLL,   center=True, min_periods=1).mean()
+    rt["sem"]    = rt["sem"].rolling(ROLL,   center=True, min_periods=1).mean() / np.sqrt(ROLL)
 
     # Performance — line + 95% CI shaded band
     x_p = perf["trial"].values + 1
