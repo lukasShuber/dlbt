@@ -48,7 +48,7 @@ N_EPOCHS_PHASE2 = 3000
 PATIENCE_PHASE2 = 100
 LR              = 1e-2
 LR_ATTNPOOL     = 1e-5
-N_MC            = 1000
+N_MC            = 200
 FREEZE_ENCODER  = False
 MAPPER_HIDDEN   = None
 
