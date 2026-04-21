@@ -395,7 +395,12 @@ for cond in dlbt_preds:
 # Save agent weights from the last seed
 agent_path = cfg.RESULTS_DIR / f"agent_{cfg.RUN_TAG}.pt"
 torch.save(agent.state_dict(), agent_path)
-print(f"\nSaved agent weights (last seed) → {agent_path}")
+print(f"\nSaved best agent weights (last seed) → {agent_path}")
+
+end_state      = result.end_state if (result is not None and result.end_state) else agent.state_dict()
+agent_end_path = cfg.RESULTS_DIR / f"agent_{cfg.RUN_TAG}_end.pt"
+torch.save(end_state, agent_end_path)
+print(f"Saved end agent weights  (last seed) → {agent_end_path}")
 
 # ---------------------------------------------------------------------------
 # Save results
