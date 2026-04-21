@@ -43,13 +43,13 @@ MAIN_PERF_QUANTILE = 0.95   # above the 95th pctile of Binom(100, 0.5)
 # Training (matches simulation 01)
 # ---------------------------------------------------------------------------
 N_EPOCHS_PHASE1 = 2000
-PATIENCE_PHASE1 = 2000
+PATIENCE_PHASE1 = 100
 N_EPOCHS_PHASE2 = 3000
 PATIENCE_PHASE2 = 100
 LR              = 1e-2
 LR_ATTNPOOL     = 1e-5
 N_MC            = 100
-FREEZE_ENCODER  = True
+FREEZE_ENCODER  = False
 MAPPER_HIDDEN   = None
 
 RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"
