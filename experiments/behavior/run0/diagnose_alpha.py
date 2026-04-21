@@ -18,6 +18,7 @@ Usage:
     python experiments/behavior/run0/diagnose_alpha.py
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -33,6 +34,7 @@ import config as cfg
 
 from dlbt.agents.dlbt import DlbtAgent
 from dlbt.data.image_ref import load_image_refs, image_refs_as_list
+from dlbt.constants import X_THRESHOLD, TRANSP_THRESH, GLOSS_THRESH, SCALE_THRESH
 
 # ---------------------------------------------------------------------------
 # Setup — shared across both agents
@@ -44,12 +46,33 @@ print(f"Device: {device}")
 refs_dict   = load_image_refs(cfg.METADATA)
 refs_list   = image_refs_as_list(refs_dict)
 
-THUMB = 64
-ZOOM  = 0.3
+# Continuous metadata → ground-truth latent state per image
+_cont_meta: dict = {}
+with open(cfg.METADATA) as _f:
+    for _line in _f:
+        _line = _line.strip()
+        if not _line:
+            continue
+        _rec = json.loads(_line)
+        _z   = _rec["z"]
+        _cont_meta[_rec["id"]] = _z
+
+def gt_state_label(uid: str) -> str:
+    z  = _cont_meta.get(uid, {})
+    lr = "R"  if z.get("pos_xy",    [0])[0]  > X_THRESHOLD   else "L"
+    tr = "Tr" if z.get("transparency", 0)     > TRANSP_THRESH else "Op"
+    gl = "Gl" if z.get("glossiness",   0)     > GLOSS_THRESH  else "Mt"
+    sl = "Lg" if z.get("scale",        0)     > SCALE_THRESH  else "Sm"
+    return f"{lr} {tr} {gl} {sl}"
+
+THUMB = 128   # source resolution; higher → sharper when downscaled by zoom
+ZOOM  = 0.05  # all-images heatmap
 
 def load_thumb(ref):
     try:
-        img = PILImage.open(ref.path).convert("RGB").resize((THUMB, THUMB))
+        img = PILImage.open(ref.path).convert("RGB").resize(
+            (THUMB, THUMB), PILImage.LANCZOS
+        )
         return np.array(img)
     except Exception:
         return np.zeros((THUMB, THUMB, 3), dtype=np.uint8)
@@ -176,13 +199,15 @@ def run_diagnostics(agent_path: Path, out_tag: str):
     idx      = np.argsort(-ratio)[:n_show]
     top_refs = [sample_refs[i] for i in idx]
 
+    gt_labels = [gt_state_label(r.uid) for r in top_refs]
+
     fig2  = plt.figure(figsize=(13, max(5, n_show * 0.35)))
-    gs2   = gridspec.GridSpec(1, 3, figure=fig2, width_ratios=[1.2, 10, 0.4], wspace=0.02)
+    gs2   = gridspec.GridSpec(1, 3, figure=fig2, width_ratios=[1.2, 10, 0.4], wspace=0.08)
     ax2_thumb = fig2.add_subplot(gs2[0])
     ax2_heat  = fig2.add_subplot(gs2[1])
     ax2_cbar  = fig2.add_subplot(gs2[2])
 
-    add_thumbs(ax2_thumb, top_refs, n_show, zoom=0.8)
+    add_thumbs(ax2_thumb, top_refs, n_show, zoom=0.15)
     ax2_thumb.set_title("image", fontsize=8)
     ax2_thumb.set_ylabel("image (top = most peaked)")
 
@@ -190,7 +215,8 @@ def run_diagnostics(agent_path: Path, out_tag: str):
                           extent=[-0.5, K - 0.5, n_show - 0.5, -0.5])
     ax2_heat.set_xticks(range(K))
     ax2_heat.set_xticklabels(STATE_LABELS, rotation=90, fontsize=7, va="top")
-    ax2_heat.set_yticks([])
+    ax2_heat.set_yticks(range(n_show))
+    ax2_heat.set_yticklabels(gt_labels, fontsize=7)
     ax2_heat.set_ylim(n_show - 0.5, -0.5)
     ax2_heat.set_title(f"α per image — top-{n_show} by peak-to-mean ratio  [{out_tag}]")
     ax2_heat.set_xlabel("latent state", labelpad=4)
@@ -200,6 +226,38 @@ def run_diagnostics(agent_path: Path, out_tag: str):
     fig2.savefig(out2, dpi=150, bbox_inches="tight")
     plt.close(fig2)
     print(f"Saved → {out2}")
+
+    # -- Top-N most uniform heatmap ------------------------------------------
+    n_uniform   = 10
+    idx_uni     = np.argsort(ratio)[:n_uniform]   # lowest peak-to-mean = most uniform
+    uni_refs    = [sample_refs[i] for i in idx_uni]
+    gt_labels_u = [gt_state_label(r.uid) for r in uni_refs]
+
+    fig2u  = plt.figure(figsize=(13, max(5, n_uniform * 0.35)))
+    gs2u   = gridspec.GridSpec(1, 3, figure=fig2u, width_ratios=[1.2, 10, 0.4], wspace=0.08)
+    ax2u_thumb = fig2u.add_subplot(gs2u[0])
+    ax2u_heat  = fig2u.add_subplot(gs2u[1])
+    ax2u_cbar  = fig2u.add_subplot(gs2u[2])
+
+    add_thumbs(ax2u_thumb, uni_refs, n_uniform, zoom=0.15)
+    ax2u_thumb.set_title("image", fontsize=8)
+    ax2u_thumb.set_ylabel("image (top = most uniform)")
+
+    im2u = ax2u_heat.imshow(alpha[idx_uni], aspect="auto", cmap="viridis",
+                            extent=[-0.5, K - 0.5, n_uniform - 0.5, -0.5])
+    ax2u_heat.set_xticks(range(K))
+    ax2u_heat.set_xticklabels(STATE_LABELS, rotation=90, fontsize=7, va="top")
+    ax2u_heat.set_yticks(range(n_uniform))
+    ax2u_heat.set_yticklabels(gt_labels_u, fontsize=7)
+    ax2u_heat.set_ylim(n_uniform - 0.5, -0.5)
+    ax2u_heat.set_title(f"α per image — top-{n_uniform} most uniform  [{out_tag}]")
+    ax2u_heat.set_xlabel("latent state", labelpad=4)
+    fig2u.colorbar(im2u, cax=ax2u_cbar, label="α_k")
+    fig2u.tight_layout()
+    out2u = cfg.RESULTS_DIR / f"diagnose_alpha_heatmap_uniform_{out_tag}.png"
+    fig2u.savefig(out2u, dpi=150, bbox_inches="tight")
+    plt.close(fig2u)
+    print(f"Saved → {out2u}")
 
     # -- Full-sample heatmap (all images, sorted by argmax state) ------------
     argmax_state     = alpha.argmax(axis=1)
@@ -216,21 +274,17 @@ def run_diagnostics(agent_path: Path, out_tag: str):
         bar = "#" * int(40 * counts_per_state[k] / max(counts_per_state.max(), 1))
         print(f"  state {k:2d}: {counts_per_state[k]:4d}  {bar}")
 
-    fig3 = plt.figure(figsize=(14, max(9, N * 0.12)))
-    gs3  = gridspec.GridSpec(1, 3, figure=fig3, width_ratios=[1.2, 10, 0.4], wspace=0.02)
-    ax_thumb = fig3.add_subplot(gs3[0])
-    ax_heat  = fig3.add_subplot(gs3[1])
-    ax_cbar  = fig3.add_subplot(gs3[2])
-
-    add_thumbs(ax_thumb, sorted_refs, N)
-    ax_thumb.set_title("image", fontsize=8)
-    ax_thumb.set_ylabel(f"image  (N={N}, sorted by argmax state → ratio)")
+    fig3 = plt.figure(figsize=(11, max(9, N * 0.12)))
+    gs3  = gridspec.GridSpec(1, 2, figure=fig3, width_ratios=[10, 0.4], wspace=0.02)
+    ax_heat  = fig3.add_subplot(gs3[0])
+    ax_cbar  = fig3.add_subplot(gs3[1])
 
     im3 = ax_heat.imshow(alpha[sort_idx], aspect="auto", cmap="viridis",
                          extent=[-0.5, K - 0.5, N - 0.5, -0.5])
     ax_heat.set_xticks(range(K))
     ax_heat.set_xticklabels(STATE_LABELS, rotation=90, fontsize=7, va="top")
     ax_heat.set_yticks([])
+    ax_heat.set_ylabel(f"images  (N={N}, sorted by argmax state → ratio)", fontsize=8)
     ax_heat.set_ylim(N - 0.5, -0.5)
     ax_heat.set_title(f"α per image — all {N} sampled images  [{out_tag}]")
     ax_heat.set_xlabel("latent state", labelpad=4)
