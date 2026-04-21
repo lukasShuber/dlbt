@@ -30,9 +30,9 @@ BASE_CONCENTRATION = 1.0
 #   lr=0.85  tr=0.73  gl=0.62  sl=0.76
 BETA_PER_DIM = dict(
     lr = 5.0,
-    tr = 3.0,
-    gl = 1.5,
-    sl = 3.5,
+    tr = 5.0,
+    gl = 5.0,
+    sl = 5.0,
 )
 
 # ---- Training (mirrors sim 01) ---------------------------------------------

@@ -18,9 +18,9 @@ RESULTS_DIR = Path(__file__).parent / "results"
 # Synthetic data
 # ---------------------------------------------------------------------------
 SEED               = 42
-N_SEEDS            = 1
-SEEDS              = [42]   # SEEDS[0] == SEED (data seed)
-N_TRIALS           = 100    # simulated decisions per (image, task)
+N_SEEDS        = 5
+SEEDS          = [42, 43, 44, 45, 46]
+N_TRIALS           = 3    # simulated decisions per (image, task)
 PEAK               = 15.0   # peak Dirichlet concentration for clear images
 BASE_CONCENTRATION = 1.0
 BETA               = 5.0    # sigmoid sharpness for lr / transp / gloss dims
@@ -32,7 +32,7 @@ IMG_TEST_FRAC      = 0.20   # fraction of images held out (stim / joint gen)
 # ---------------------------------------------------------------------------
 
 N_EPOCHS_PHASE1 = 2000
-PATIENCE_PHASE1 = 100
+PATIENCE_PHASE1 = 2000
 N_EPOCHS_PHASE2 = 3000
 PATIENCE_PHASE2 = 100
 LR              = 1e-2
