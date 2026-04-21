@@ -31,8 +31,8 @@ IMG_TEST_FRAC      = 0.20   # fraction of images held out (stim / joint gen)
 # Training
 # ---------------------------------------------------------------------------
 
-N_EPOCHS_PHASE1 = 1000
-PATIENCE_PHASE1 = 100
+N_EPOCHS_PHASE1 = 2000
+PATIENCE_PHASE1 = 2000
 N_EPOCHS_PHASE2 = 3000
 PATIENCE_PHASE2 = 100
 LR              = 1e-2

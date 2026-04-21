@@ -34,8 +34,9 @@ import config as cfg
 # ---------------------------------------------------------------------------
 C_TRAIN, C_STIM, C_TASK, C_JOINT = cfg.C_TRAIN, cfg.C_STIM, cfg.C_TASK, cfg.C_JOINT
 
-C_DLBT = "#C44F52"
-C_SLDA = "#7D6EAE"
+C_DLBT     = "#C44F52"
+C_DLBT_END = "#E8873A"   # end-of-training agent (orange)
+C_SLDA     = "#7D6EAE"
 MARKERS = {"train": "o", "stim": "s", "task": "^", "joint": "D"}
 
 plots_dir = cfg.RESULTS_DIR / "plots"
@@ -128,8 +129,9 @@ for results_path in available:
     best_epoch     = res["best_epoch"]
     noise_floor    = res["noise_floor"]
     curves         = res["curves"]
-    dlbt           = res["dlbt"]    # {cond: {task: {pred: [n_seeds, n_pts], true, uids}}}
-    slda           = res["slda"]    # {cond: {task: {pred: [n_pts], true, uids}}}
+    dlbt           = res["dlbt"]          # {cond: {task: {pred: [n_seeds, n_pts], true, uids}}}
+    dlbt_end       = res.get("dlbt_end", {})  # {cond: {task: {pred: [n_pts], true, uids}}}
+    slda           = res["slda"]          # {cond: {task: {pred: [n_pts], true, uids}}}
 
     # Backward compat: old pkls stored the simple lateral task as "left_right";
     # current code uses "right".
@@ -178,29 +180,36 @@ for results_path in available:
     plt.close()
 
     # -----------------------------------------------------------------------
-    # Plot 3 — 6-panel summary scatter
+    # Plot 3 — summary scatter  (2 rows × 4 cols)
+    #   col 0: SLDA  |  col 1: DLBT best  |  col 2: DLBT end  |  col 3: task/joint gen
     # -----------------------------------------------------------------------
-    # (pred_dict, task_names, color, marker, title, mc_n, row, col)
+    has_end = bool(dlbt_end)
+    lbl_end = f"{model_label} (end)"
+
     panels = [
-        (slda["train"], cfg.TRAIN_TASKS, C_SLDA, MARKERS["train"], "SLDA — Train",              None,     0, 0),
-        (slda["stim"],  cfg.TRAIN_TASKS, C_SLDA, MARKERS["stim"],  "SLDA — Stim gen",           None,     1, 0),
-        (dlbt["train"], cfg.TRAIN_TASKS, C_DLBT, MARKERS["train"], f"{model_label} — Train",    cfg.N_MC, 0, 1),
-        (dlbt["stim"],  cfg.TRAIN_TASKS, C_DLBT, MARKERS["stim"],  f"{model_label} — Stim gen", cfg.N_MC, 1, 1),
-        (dlbt["task"],  cfg.VAL_TASKS,   C_DLBT, MARKERS["task"],  f"{model_label} — Task gen", cfg.N_MC, 0, 2),
-        (dlbt["joint"], cfg.VAL_TASKS,   C_DLBT, MARKERS["joint"], f"{model_label} — Joint gen",cfg.N_MC, 1, 2),
+        # (pred_dict, task_names, color, marker, title, mc_n, row, col)
+        (slda["train"],     cfg.TRAIN_TASKS, C_SLDA,     MARKERS["train"], "SLDA — Train",              None,     0, 0),
+        (slda["stim"],      cfg.TRAIN_TASKS, C_SLDA,     MARKERS["stim"],  "SLDA — Stim gen",           None,     1, 0),
+        (dlbt["train"],     cfg.TRAIN_TASKS, C_DLBT,     MARKERS["train"], f"{model_label} — Train",    cfg.N_MC, 0, 1),
+        (dlbt["stim"],      cfg.TRAIN_TASKS, C_DLBT,     MARKERS["stim"],  f"{model_label} — Stim gen", cfg.N_MC, 1, 1),
+        (dlbt_end.get("train", {}), cfg.TRAIN_TASKS, C_DLBT_END, MARKERS["train"], f"{lbl_end} — Train",    None, 0, 2),
+        (dlbt_end.get("stim",  {}), cfg.TRAIN_TASKS, C_DLBT_END, MARKERS["stim"],  f"{lbl_end} — Stim gen", None, 1, 2),
+        (dlbt["task"],      cfg.VAL_TASKS,   C_DLBT,     MARKERS["task"],  f"{model_label} — Task gen", cfg.N_MC, 0, 3),
+        (dlbt["joint"],     cfg.VAL_TASKS,   C_DLBT,     MARKERS["joint"], f"{model_label} — Joint gen",cfg.N_MC, 1, 3),
     ]
 
-    fig, axes = plt.subplots(2, 3, figsize=(9, 6.5), sharex=True, sharey=True,
+    fig, axes = plt.subplots(2, 4, figsize=(13, 6.5), sharex=True, sharey=True,
                              gridspec_kw={"hspace": 0.52, "wspace": 0.10})
     for pt, task_names, color, marker, title, mc_n, row, col in panels:
+        if not pt:
+            axes[row, col].set_visible(False)
+            continue
         ax = axes[row, col]
         _summary_scatter(ax, pt, task_names, color, marker, title, mc_n,
                          n_seeds=n_seeds, n_trials=n_trials)
 
-    # Single shared axis labels
     fig.supxlabel("Predicted P(right)", fontsize=12, y=0.01)
     fig.supylabel("True P(right)", fontsize=12, x=0.01)
-
     sns.despine(fig=fig, trim=False)
     plt.tight_layout(rect=[0.04, 0.04, 1, 1])
     out = plots_dir / f"plot_03_summary_{run_tag}.png"
@@ -224,53 +233,42 @@ for results_path in available:
     for idx, (ax, task_name) in enumerate(zip(axes.flat, ALL_TASKS)):
         ax.plot([0, 1], [0, 1], ls=":", color="gray", lw=0.7, zorder=0)
         is_val = task_name in cfg.VAL_TASKS
+        def _plot_cond(src, cond, color, marker, n_s=n_seeds):
+            """Plot one condition from src dict; handles [n_seeds,n] and [n] pred."""
+            if task_name not in src.get(cond, {}):
+                return float("nan")
+            d  = src[cond][task_name]
+            p  = d["pred"]
+            pm = p.mean(axis=0) if p.ndim == 2 else p
+            ps = p.std(axis=0) / np.sqrt(n_s) if p.ndim == 2 else np.zeros_like(pm)
+            tv = d["true"]
+            ts = np.sqrt(tv * (1 - tv) / n_trials)
+            ax.errorbar(pm, tv, xerr=ps, yerr=ts,
+                        fmt=marker, ms=3, alpha=0.15, color=color,
+                        elinewidth=0.4, capsize=0, linewidth=0)
+            r, _ = spearmanr(pm, tv)
+            return r
+
         if not is_val:
-            for cond, color in [("train", C_TRAIN), ("stim", C_STIM)]:
-                if task_name in dlbt[cond]:
-                    d         = dlbt[cond][task_name]
-                    pred_mean = d["pred"].mean(axis=0)
-                    pred_sem  = d["pred"].std(axis=0) / np.sqrt(n_seeds)
-                    true_vals = d["true"]
-                    true_sem  = np.sqrt(true_vals * (1 - true_vals) / n_trials)
-                    ax.errorbar(pred_mean, true_vals,
-                                xerr=pred_sem, yerr=true_sem,
-                                fmt='o', ms=3, alpha=0.2, color=color,
-                                elinewidth=0.4, capsize=0, linewidth=0)
-            # rho on mean predictions
-            def _rho_mean(cond, tn):
-                if tn not in dlbt[cond]:
-                    return float("nan")
-                d = dlbt[cond][tn]
-                pm = d["pred"].mean(axis=0)
-                r, _ = spearmanr(pm, d["true"])
-                return r
-            ax.text(0.05, 0.93, f"ρ={_rho_mean('train', task_name):.2f}",
-                    transform=ax.transAxes, fontsize=6, color=C_TRAIN, va="top")
-            ax.text(0.05, 0.78, f"ρ={_rho_mean('stim', task_name):.2f}",
-                    transform=ax.transAxes, fontsize=6, color=C_STIM, va="top")
+            r_tr   = _plot_cond(dlbt,     "train", C_TRAIN, "o")
+            r_st   = _plot_cond(dlbt,     "stim",  C_STIM,  "s")
+            r_tr_e = _plot_cond(dlbt_end, "train", C_DLBT_END, "o", n_s=1)
+            r_st_e = _plot_cond(dlbt_end, "stim",  C_DLBT_END, "s", n_s=1)
+            ax.text(0.05, 0.93, f"ρ={r_tr:.2f}",   transform=ax.transAxes, fontsize=6, color=C_TRAIN,    va="top")
+            ax.text(0.05, 0.80, f"ρ={r_st:.2f}",   transform=ax.transAxes, fontsize=6, color=C_STIM,     va="top")
+            if has_end:
+                ax.text(0.55, 0.93, f"e:{r_tr_e:.2f}", transform=ax.transAxes, fontsize=6, color=C_DLBT_END, va="top")
+                ax.text(0.55, 0.80, f"e:{r_st_e:.2f}", transform=ax.transAxes, fontsize=6, color=C_DLBT_END, va="top")
         else:
-            for cond, color in [("task", C_TASK), ("joint", C_JOINT)]:
-                if task_name in dlbt[cond]:
-                    d         = dlbt[cond][task_name]
-                    pred_mean = d["pred"].mean(axis=0)
-                    pred_sem  = d["pred"].std(axis=0) / np.sqrt(n_seeds)
-                    true_vals = d["true"]
-                    true_sem  = np.sqrt(true_vals * (1 - true_vals) / n_trials)
-                    ax.errorbar(pred_mean, true_vals,
-                                xerr=pred_sem, yerr=true_sem,
-                                fmt='o', ms=3, alpha=0.2, color=color,
-                                elinewidth=0.4, capsize=0, linewidth=0)
-            def _rho_mean_val(cond, tn):
-                if tn not in dlbt[cond]:
-                    return float("nan")
-                d = dlbt[cond][tn]
-                pm = d["pred"].mean(axis=0)
-                r, _ = spearmanr(pm, d["true"])
-                return r
-            ax.text(0.05, 0.93, f"ρ={_rho_mean_val('task', task_name):.2f}",
-                    transform=ax.transAxes, fontsize=6, color=C_TASK, va="top")
-            ax.text(0.05, 0.78, f"ρ={_rho_mean_val('joint', task_name):.2f}",
-                    transform=ax.transAxes, fontsize=6, color=C_JOINT, va="top")
+            r_tk   = _plot_cond(dlbt,     "task",  C_TASK,  "^")
+            r_jt   = _plot_cond(dlbt,     "joint", C_JOINT, "D")
+            r_tk_e = _plot_cond(dlbt_end, "task",  C_DLBT_END, "^", n_s=1)
+            r_jt_e = _plot_cond(dlbt_end, "joint", C_DLBT_END, "D", n_s=1)
+            ax.text(0.05, 0.93, f"ρ={r_tk:.2f}",   transform=ax.transAxes, fontsize=6, color=C_TASK,     va="top")
+            ax.text(0.05, 0.80, f"ρ={r_jt:.2f}",   transform=ax.transAxes, fontsize=6, color=C_JOINT,    va="top")
+            if has_end:
+                ax.text(0.55, 0.93, f"e:{r_tk_e:.2f}", transform=ax.transAxes, fontsize=6, color=C_DLBT_END, va="top")
+                ax.text(0.55, 0.80, f"e:{r_jt_e:.2f}", transform=ax.transAxes, fontsize=6, color=C_DLBT_END, va="top")
 
         ax.set_title(task_name.replace("_and_", " & ").replace("_", "/"), fontsize=7, pad=2)
         row, col = divmod(idx, N_COLS)
@@ -281,10 +279,17 @@ for results_path in available:
         ax.set(xlim=(-0.05, 1.05), ylim=(-0.05, 1.05))
         ax.tick_params(labelsize=5)
 
-    fig.legend(handles=[
+    legend_items = [
         Line2D([0],[0], marker="o", color="w", markerfacecolor=c, markersize=5, label=l)
-        for c, l in [(C_TRAIN,"train"),(C_STIM,"stim gen"),(C_TASK,"task gen"),(C_JOINT,"joint gen")]
-    ], loc="lower right", bbox_to_anchor=(1.0, 0.0), fontsize=7, frameon=False, ncol=2)
+        for c, l in [(C_TRAIN,"train (best)"),(C_STIM,"stim gen (best)"),
+                     (C_TASK,"task gen (best)"),(C_JOINT,"joint gen (best)")]
+    ]
+    if has_end:
+        legend_items.append(
+            Line2D([0],[0], marker="o", color="w", markerfacecolor=C_DLBT_END, markersize=5, label="end agent")
+        )
+    fig.legend(handles=legend_items, loc="lower right", bbox_to_anchor=(1.0, 0.0),
+               fontsize=7, frameon=False, ncol=2)
     fig.text(0.5, -0.01, "Predicted P(right)", ha="center", fontsize=9)
     fig.text(-0.01, 0.5, "True P(right)", va="center", rotation="vertical", fontsize=9)
     sns.despine(fig=fig, trim=True)

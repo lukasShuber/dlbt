@@ -402,6 +402,25 @@ agent_end_path = cfg.RESULTS_DIR / f"agent_{cfg.RUN_TAG}_end.pt"
 torch.save(end_state, agent_end_path)
 print(f"Saved end agent weights  (last seed) → {agent_end_path}")
 
+# Collect end-agent predictions (last seed only, single set — no seed stacking)
+print("Collecting end-agent predictions...")
+dlbt_preds_end: dict = {cond: {} for cond in ["train", "stim", "task", "joint"]}
+agent.load_state_dict(end_state)
+agent.eval()
+for cond, ds in [("train", train_ds), ("stim", stim_gen_ds),
+                 ("task", task_gen_ds), ("joint", joint_gen_ds)]:
+    for task_name, group in ds.iter_tasks():
+        task       = TASKS[task_name]
+        batch_refs = [refs_dict[uid] for uid in group["uid"]]
+        true_p     = np.array([get_true_p(r.uid, task_name) for r in batch_refs])
+        with torch.no_grad():
+            pred = agent.choice_probs(batch_refs, task)[:, 1].cpu().numpy()
+        dlbt_preds_end[cond][task_name] = {
+            "pred": pred,
+            "true": true_p,
+            "uids": [r.uid for r in batch_refs],
+        }
+
 # ---------------------------------------------------------------------------
 # Save results
 # ---------------------------------------------------------------------------
@@ -416,6 +435,7 @@ results = dict(
     noise_floor    = train_ds.noise_floor(),
     curves         = curves,           # from last seed
     dlbt           = dlbt_preds,       # {cond: {task: {pred: [n_seeds, n_pts], true, uids}}}
+    dlbt_end       = dlbt_preds_end,   # {cond: {task: {pred: [n_pts], true, uids}}}  (last seed, end weights)
     slda           = slda_preds,       # {cond: {task: {pred: [n_pts], true, uids}}}
     train_uids     = train_uids,
     test_uids      = test_uids,
