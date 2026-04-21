@@ -234,7 +234,8 @@ for cond, ds in [("train", train_ds), ("stim", stim_gen_ds)]:
 # ---------------------------------------------------------------------------
 print(f"\nTraining DLBT with {cfg.N_SEEDS} seeds: {cfg.SEEDS}")
 
-dlbt_preds: dict = {cond: {} for cond in ["train", "stim", "task", "joint"]}
+dlbt_preds:     dict = {cond: {} for cond in ["train", "stim", "task", "joint"]}
+dlbt_preds_end: dict = {cond: {} for cond in ["train", "stim", "task", "joint"]}
 
 phase1 = phase2 = result = None
 curves = None
@@ -331,6 +332,30 @@ for seed_idx, seed in enumerate(cfg.SEEDS):
                 }
             dlbt_preds[cond][task_name]["pred"].append(pred)
 
+    # -- Collect end-of-training predictions (before best was restored) --
+    if result is not None and result.end_state:
+        best_state_backup = {k: v.clone() for k, v in agent.state_dict().items()}
+        agent.load_state_dict(result.end_state)
+        agent.eval()
+        for cond, ds in [("train", train_ds), ("stim", stim_gen_ds),
+                         ("task", task_gen_ds), ("joint", joint_gen_ds)]:
+            for task_name, group in ds.iter_tasks():
+                task       = TASKS[task_name]
+                batch_refs = [refs_dict[uid] for uid in group["uid"]]
+                true_p     = np.array([emp_p(r.uid, task_name) for r in batch_refs])
+                totals     = np.array([emp_n(r.uid, task_name) for r in batch_refs])
+                with torch.no_grad():
+                    pred = agent.choice_probs(batch_refs, task)[:, 1].cpu().numpy()
+                if task_name not in dlbt_preds_end[cond]:
+                    dlbt_preds_end[cond][task_name] = {
+                        "pred":   [],
+                        "true":   true_p,
+                        "totals": totals,
+                        "uids":   [r.uid for r in batch_refs],
+                    }
+                dlbt_preds_end[cond][task_name]["pred"].append(pred)
+        agent.load_state_dict(best_state_backup)  # restore best for next seed
+
     # -- Learning curves (overwritten each seed; last seed kept) --
     n_phase1       = len(phase1.train_nlls)
     phase_boundary = n_phase1 - 1
@@ -355,6 +380,12 @@ for cond in dlbt_preds:
     for task_name in dlbt_preds[cond]:
         dlbt_preds[cond][task_name]["pred"] = np.stack(
             dlbt_preds[cond][task_name]["pred"]
+        )
+
+for cond in dlbt_preds_end:
+    for task_name in dlbt_preds_end[cond]:
+        dlbt_preds_end[cond][task_name]["pred"] = np.stack(
+            dlbt_preds_end[cond][task_name]["pred"]
         )
 
 # Save agent weights — best (early-stop) and end-of-training
@@ -404,3 +435,10 @@ results_path = cfg.RESULTS_DIR / f"results_{cfg.RUN_TAG}.pkl"
 with open(results_path, "wb") as f:
     pickle.dump(results, f)
 print(f"\nSaved results -> {results_path}")
+
+# Save end-agent results (same structure, dlbt predictions swapped)
+results_end = {**results, "dlbt": dlbt_preds_end}
+results_end_path = cfg.RESULTS_DIR / f"results_{cfg.RUN_TAG}_end.pkl"
+with open(results_end_path, "wb") as f:
+    pickle.dump(results_end, f)
+print(f"Saved end results -> {results_end_path}")

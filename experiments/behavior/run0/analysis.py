@@ -122,7 +122,7 @@ def _summary_scatter(ax, pt: dict, task_names: list, color: str, marker: str,
 # CLI
 # ---------------------------------------------------------------------------
 parser = argparse.ArgumentParser()
-parser.add_argument("--tag", default=None, choices=["frozen", "attnpool"],
+parser.add_argument("--tag", default=None, choices=["frozen", "attnpool", "frozen_end", "attnpool_end"],
                     help="Process only this tag (default: all available)")
 args = parser.parse_args()
 
@@ -130,6 +130,8 @@ candidates = sorted([
     p for p in [
         cfg.RESULTS_DIR / "results_frozen.pkl",
         cfg.RESULTS_DIR / "results_attnpool.pkl",
+        cfg.RESULTS_DIR / "results_frozen_end.pkl",
+        cfg.RESULTS_DIR / "results_attnpool_end.pkl",
     ] if p.exists()
 ])
 if args.tag:
