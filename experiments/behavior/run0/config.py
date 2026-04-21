@@ -43,7 +43,7 @@ MAIN_PERF_QUANTILE = 0.95   # above the 95th pctile of Binom(100, 0.5)
 # Training (matches simulation 01)
 # ---------------------------------------------------------------------------
 N_EPOCHS_PHASE1 = 1000
-PATIENCE_PHASE1 = 200
+PATIENCE_PHASE1 = 1000
 N_EPOCHS_PHASE2 = 3000
 PATIENCE_PHASE2 = 100
 LR              = 1e-2
