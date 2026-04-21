@@ -20,7 +20,7 @@ RESULTS_DIR = Path(__file__).parent / "results"
 SEED               = 42
 N_SEEDS            = 1
 SEEDS              = [42]   # SEEDS[0] == SEED (data seed)
-N_TRIALS           = 3    # simulated decisions per (image, task)
+N_TRIALS           = 100    # simulated decisions per (image, task)
 PEAK               = 15.0   # peak Dirichlet concentration for clear images
 BASE_CONCENTRATION = 1.0
 BETA               = 5.0    # sigmoid sharpness for lr / transp / gloss dims
