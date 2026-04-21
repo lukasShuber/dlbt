@@ -259,8 +259,9 @@ for cond, ds in [("train", train_ds), ("stim", stim_gen_ds)]:
             continue
         uids   = group["uid"].tolist()
         true_p = np.array([get_true_p(uid, task_name) for uid in uids])
+        emp_p  = (group["count_1"] / (group["count_0"] + group["count_1"])).values
         pred   = slda_predict(task_name, uids)
-        slda_preds[cond][task_name] = {"pred": pred, "true": true_p, "uids": uids}
+        slda_preds[cond][task_name] = {"pred": pred, "true": true_p, "emp": emp_p, "uids": uids}
 
 # ---------------------------------------------------------------------------
 # Multi-seed DLBT training loop
@@ -357,10 +358,12 @@ for seed_idx, seed in enumerate(cfg.SEEDS):
             with torch.no_grad():
                 pred = agent.choice_probs(batch_refs, task)[:, 1].cpu().numpy()
 
+            emp_p = (group["count_1"] / (group["count_0"] + group["count_1"])).values
             if task_name not in dlbt_preds[cond]:
                 dlbt_preds[cond][task_name] = {
                     "pred": [],
                     "true": true_p,
+                    "emp":  emp_p,
                     "uids": [r.uid for r in batch_refs],
                 }
             dlbt_preds[cond][task_name]["pred"].append(pred)
@@ -413,11 +416,13 @@ for cond, ds in [("train", train_ds), ("stim", stim_gen_ds),
         task       = TASKS[task_name]
         batch_refs = [refs_dict[uid] for uid in group["uid"]]
         true_p     = np.array([get_true_p(r.uid, task_name) for r in batch_refs])
+        emp_p      = (group["count_1"] / (group["count_0"] + group["count_1"])).values
         with torch.no_grad():
             pred = agent.choice_probs(batch_refs, task)[:, 1].cpu().numpy()
         dlbt_preds_end[cond][task_name] = {
             "pred": pred,
             "true": true_p,
+            "emp":  emp_p,
             "uids": [r.uid for r in batch_refs],
         }
 
@@ -445,3 +450,24 @@ results_path = cfg.RESULTS_DIR / f"results_{cfg.RUN_TAG}.pkl"
 with open(results_path, "wb") as f:
     pickle.dump(results, f)
 print(f"\nSaved results → {results_path}")
+
+# Separate end-agent pkl (analysis.py treats it as an independent agent)
+results_end = dict(
+    model_label    = f"{model_label} (end)",
+    run_tag        = f"{cfg.RUN_TAG}_end",
+    n_seeds        = 1,
+    seeds          = cfg.SEEDS[-1:],
+    n_trials       = cfg.N_TRIALS,
+    phase_boundary = 0,
+    best_epoch     = 0,
+    noise_floor    = train_ds.noise_floor(),
+    curves         = curves,
+    dlbt           = dlbt_preds_end,
+    slda           = slda_preds,
+    train_uids     = train_uids,
+    test_uids      = test_uids,
+)
+results_end_path = cfg.RESULTS_DIR / f"results_{cfg.RUN_TAG}_end.pkl"
+with open(results_end_path, "wb") as f:
+    pickle.dump(results_end, f)
+print(f"Saved end-agent results → {results_end_path}")

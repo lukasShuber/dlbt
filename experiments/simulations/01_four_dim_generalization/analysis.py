@@ -1,13 +1,17 @@
 """
 Simulation 01 — analysis and plots.
 
-Loads results saved by run.py and generates five figures:
-  plot_02_curves.png        — DLBT learning curves (NLL + cMSE)
-  plot_03_summary.png       — 6-panel pred-vs-true scatter
-  plot_04_per_task_dlbt.png — per-task scatter grid (DLBT)
-  plot_05_per_task_slda.png — per-task scatter grid (SLDA)
-  plot_06_latent_pca.png    — PCA of mapper outputs coloured by each latent dim
-  plot_07_latent_tsne.png   — t-SNE of mapper outputs
+Loads results saved by run.py and generates figures per agent:
+  plot_02_curves_<tag>.png           — DLBT learning curves (NLL + cMSE)
+  plot_03_summary_<tag>_oracle.png   — 6-panel scatter vs oracle GT
+  plot_03_summary_<tag>_empirical.png— 6-panel scatter vs empirical p̂
+  plot_04_per_task_dlbt_<tag>_oracle.png    — per-task scatter grid (oracle)
+  plot_04_per_task_dlbt_<tag>_empirical.png — per-task scatter grid (empirical)
+  plot_05_per_task_slda_<tag>.png    — per-task scatter grid (SLDA)
+  plot_06_latent_pca_<tag>.png       — PCA of mapper outputs
+  plot_07_latent_tsne_<tag>.png      — t-SNE of mapper outputs
+
+Plots 06/07 require a corresponding agent_{tag}.pt in results/.
 
 Run from repo root:
     python experiments/simulations/01_four_dim_generalization/analysis.py
@@ -34,9 +38,8 @@ import config as cfg
 # ---------------------------------------------------------------------------
 C_TRAIN, C_STIM, C_TASK, C_JOINT = cfg.C_TRAIN, cfg.C_STIM, cfg.C_TASK, cfg.C_JOINT
 
-C_DLBT     = "#C44F52"
-C_DLBT_END = "#E8873A"   # end-of-training agent (orange)
-C_SLDA     = "#7D6EAE"
+C_DLBT = "#C44F52"
+C_SLDA = "#7D6EAE"
 MARKERS = {"train": "o", "stim": "s", "task": "^", "joint": "D"}
 
 plots_dir = cfg.RESULTS_DIR / "plots"
@@ -44,19 +47,15 @@ plots_dir.mkdir(exist_ok=True)
 
 
 def _summary_scatter(ax, pt: dict, task_names: list, color: str, marker: str,
-                     title: str, mc_n=None, n_seeds=1, n_trials=100):
-    """6-panel summary scatter with error bars.
-
-    pt values have shape [n_seeds, n_pts] (DLBT) or [n_pts] (SLDA).
-    """
+                     title: str, mc_n=None, n_seeds=1, n_trials=100, y_key="true"):
+    """Summary scatter panel.  y_key selects oracle ('true') or empirical ('emp')."""
     all_preds = np.concatenate(
         [pt[t]["pred"] for t in task_names if t in pt], axis=-1
-    )  # [n_seeds, n_pts] or [n_pts]
-    all_trues = np.concatenate(
-        [pt[t]["true"] for t in task_names if t in pt]
-    )  # [n_pts]
+    )
+    all_y = np.concatenate(
+        [pt[t].get(y_key, pt[t]["true"]) for t in task_names if t in pt]
+    )
 
-    # Handle both [n_seeds, n_pts] (DLBT) and [n_pts] (SLDA)
     if all_preds.ndim == 2:
         pred_mean = all_preds.mean(axis=0)
         pred_sem  = all_preds.std(axis=0) / np.sqrt(n_seeds)
@@ -64,16 +63,15 @@ def _summary_scatter(ax, pt: dict, task_names: list, color: str, marker: str,
         pred_mean = all_preds
         pred_sem  = np.zeros_like(pred_mean)
 
-    true_sem = np.sqrt(np.clip(all_trues * (1 - all_trues), 0, None) / n_trials)
+    y_sem = np.sqrt(np.clip(all_y * (1 - all_y), 0, None) / n_trials)
 
-    # cMSE / rho on mean predictions
-    raw  = float(np.mean((pred_mean - all_trues) ** 2))
+    raw  = float(np.mean((pred_mean - all_y) ** 2))
     cmse = raw - float(np.mean(pred_mean * (1 - pred_mean))) / (mc_n - 1) if mc_n else raw
-    rho, _ = spearmanr(pred_mean, all_trues)
+    rho, _ = spearmanr(pred_mean, all_y)
 
     ax.plot([0, 1], [0, 1], ls="--", color="gray", lw=1.2, zorder=0)
-    ax.errorbar(pred_mean, all_trues,
-                xerr=pred_sem, yerr=true_sem,
+    ax.errorbar(pred_mean, all_y,
+                xerr=pred_sem, yerr=y_sem,
                 fmt=marker, ms=4, alpha=0.1, color=color,
                 elinewidth=0.5, capsize=0, linewidth=0)
     ax.set_title(f"{title}\ncMSE={cmse:.4f}   ρ={rho:.3f}", fontsize=10, pad=4)
@@ -87,19 +85,14 @@ def _summary_scatter(ax, pt: dict, task_names: list, color: str, marker: str,
 # CLI: optional --tag to restrict which result file to process
 # ---------------------------------------------------------------------------
 parser = argparse.ArgumentParser()
-parser.add_argument("--tag", default=None, choices=["frozen", "attnpool"],
-                    help="Process only this tag (default: all available)")
+parser.add_argument("--tag", default=None,
+                    help="Process only pkl files whose stem contains this tag")
 args = parser.parse_args()
 
 # ---------------------------------------------------------------------------
-# Auto-detect available result files (new format only — must have "dlbt" key)
+# Auto-detect available result files via glob
 # ---------------------------------------------------------------------------
-candidates = sorted([
-    p for p in [
-        cfg.RESULTS_DIR / "results_frozen.pkl",
-        cfg.RESULTS_DIR / "results_attnpool.pkl",
-    ] if p.exists()
-])
+candidates = sorted(cfg.RESULTS_DIR.glob("results_*.pkl"))
 if args.tag:
     candidates = [p for p in candidates if args.tag in p.stem]
 
@@ -129,18 +122,24 @@ for results_path in available:
     best_epoch     = res["best_epoch"]
     noise_floor    = res["noise_floor"]
     curves         = res["curves"]
-    dlbt           = res["dlbt"]          # {cond: {task: {pred: [n_seeds, n_pts], true, uids}}}
-    dlbt_end       = res.get("dlbt_end", {})  # {cond: {task: {pred: [n_pts], true, uids}}}
-    slda           = res["slda"]          # {cond: {task: {pred: [n_pts], true, uids}}}
+    dlbt           = res["dlbt"]
+    slda           = res["slda"]
 
-    # Backward compat: old pkls stored the simple lateral task as "left_right";
-    # current code uses "right".
+    # Backward compat: old pkls stored the simple lateral task as "left_right"
     for _preds in (dlbt, slda):
         for _cond_dict in _preds.values():
             if "left_right" in _cond_dict and "right" not in _cond_dict:
                 _cond_dict["right"] = _cond_dict.pop("left_right")
-    n_seeds        = res.get("n_seeds", 1)
-    n_trials       = res.get("n_trials", cfg.N_TRIALS)
+
+    n_seeds  = res.get("n_seeds", 1)
+    n_trials = res.get("n_trials", cfg.N_TRIALS)
+
+    # Does this result file have empirical p̂?
+    has_emp = any(
+        "emp" in dlbt.get(c, {}).get(t, {})
+        for c in dlbt for t in dlbt.get(c, {})
+    )
+    y_versions = [("true", "_oracle"), ("emp", "_empirical")] if has_emp else [("true", "")]
 
     has_phase2 = phase_boundary < len(curves["train_nlls"]) - 1
 
@@ -180,123 +179,111 @@ for results_path in available:
     plt.close()
 
     # -----------------------------------------------------------------------
-    # Plot 3 — summary scatter  (2 rows × 4 cols)
-    #   col 0: SLDA  |  col 1: DLBT best  |  col 2: DLBT end  |  col 3: task/joint gen
+    # Plot 3 — 6-panel summary scatter  (oracle + empirical versions)
     # -----------------------------------------------------------------------
-    has_end = bool(dlbt_end)
-    lbl_end = f"{model_label} (end)"
+    for y_key, suffix in y_versions:
+        y_label = "True P(right) [oracle]" if y_key == "true" else "Empirical P̂(right)"
 
-    panels = [
-        # (pred_dict, task_names, color, marker, title, mc_n, row, col)
-        (slda["train"],     cfg.TRAIN_TASKS, C_SLDA,     MARKERS["train"], "SLDA — Train",              None,     0, 0),
-        (slda["stim"],      cfg.TRAIN_TASKS, C_SLDA,     MARKERS["stim"],  "SLDA — Stim gen",           None,     1, 0),
-        (dlbt["train"],     cfg.TRAIN_TASKS, C_DLBT,     MARKERS["train"], f"{model_label} — Train",    cfg.N_MC, 0, 1),
-        (dlbt["stim"],      cfg.TRAIN_TASKS, C_DLBT,     MARKERS["stim"],  f"{model_label} — Stim gen", cfg.N_MC, 1, 1),
-        (dlbt_end.get("train", {}), cfg.TRAIN_TASKS, C_DLBT_END, MARKERS["train"], f"{lbl_end} — Train",    None, 0, 2),
-        (dlbt_end.get("stim",  {}), cfg.TRAIN_TASKS, C_DLBT_END, MARKERS["stim"],  f"{lbl_end} — Stim gen", None, 1, 2),
-        (dlbt["task"],      cfg.VAL_TASKS,   C_DLBT,     MARKERS["task"],  f"{model_label} — Task gen", cfg.N_MC, 0, 3),
-        (dlbt["joint"],     cfg.VAL_TASKS,   C_DLBT,     MARKERS["joint"], f"{model_label} — Joint gen",cfg.N_MC, 1, 3),
-    ]
+        panels = [
+            (slda["train"], cfg.TRAIN_TASKS, C_SLDA, MARKERS["train"], "SLDA — Train",              None,     0, 0),
+            (slda["stim"],  cfg.TRAIN_TASKS, C_SLDA, MARKERS["stim"],  "SLDA — Stim gen",           None,     1, 0),
+            (dlbt["train"], cfg.TRAIN_TASKS, C_DLBT, MARKERS["train"], f"{model_label} — Train",    cfg.N_MC, 0, 1),
+            (dlbt["stim"],  cfg.TRAIN_TASKS, C_DLBT, MARKERS["stim"],  f"{model_label} — Stim gen", cfg.N_MC, 1, 1),
+            (dlbt["task"],  cfg.VAL_TASKS,   C_DLBT, MARKERS["task"],  f"{model_label} — Task gen", cfg.N_MC, 0, 2),
+            (dlbt["joint"], cfg.VAL_TASKS,   C_DLBT, MARKERS["joint"], f"{model_label} — Joint gen",cfg.N_MC, 1, 2),
+        ]
 
-    fig, axes = plt.subplots(2, 4, figsize=(13, 6.5), sharex=True, sharey=True,
-                             gridspec_kw={"hspace": 0.52, "wspace": 0.10})
-    for pt, task_names, color, marker, title, mc_n, row, col in panels:
-        if not pt:
-            axes[row, col].set_visible(False)
-            continue
-        ax = axes[row, col]
-        _summary_scatter(ax, pt, task_names, color, marker, title, mc_n,
-                         n_seeds=n_seeds, n_trials=n_trials)
+        fig, axes = plt.subplots(2, 3, figsize=(9, 6.5), sharex=True, sharey=True,
+                                 gridspec_kw={"hspace": 0.52, "wspace": 0.10})
+        for pt, task_names, color, marker, title, mc_n, row, col in panels:
+            ax = axes[row, col]
+            if not pt:
+                ax.set_visible(False)
+                continue
+            _summary_scatter(ax, pt, task_names, color, marker, title, mc_n,
+                             n_seeds=n_seeds, n_trials=n_trials, y_key=y_key)
 
-    fig.supxlabel("Predicted P(right)", fontsize=12, y=0.01)
-    fig.supylabel("True P(right)", fontsize=12, x=0.01)
-    sns.despine(fig=fig, trim=False)
-    plt.tight_layout(rect=[0.04, 0.04, 1, 1])
-    out = plots_dir / f"plot_03_summary_{run_tag}.png"
-    plt.savefig(out, dpi=200, bbox_inches="tight")
-    print(f"Saved: {out}")
-    plt.close()
+        fig.supxlabel("Predicted P(right)", fontsize=12, y=0.01)
+        fig.supylabel(y_label, fontsize=12, x=0.01)
+        sns.despine(fig=fig, trim=False)
+        plt.tight_layout(rect=[0.04, 0.04, 1, 1])
+        out = plots_dir / f"plot_03_summary_{run_tag}{suffix}.png"
+        plt.savefig(out, dpi=200, bbox_inches="tight")
+        print(f"Saved: {out}")
+        plt.close()
 
     # -----------------------------------------------------------------------
-    # Plot 4 — per-task DLBT grid
+    # Plot 4 — per-task DLBT grid  (oracle + empirical versions)
     # -----------------------------------------------------------------------
     ALL_TASKS = cfg.TRAIN_TASKS + cfg.VAL_TASKS
     N_COLS    = 8
     N_ROWS    = math.ceil(len(ALL_TASKS) / N_COLS)
 
-    fig, axes = plt.subplots(N_ROWS, N_COLS, figsize=(N_COLS * 2.0, N_ROWS * 2.2),
-                             sharex=True, sharey=True,
-                             gridspec_kw={"hspace": 0.55, "wspace": 0.08})
-    for ax in axes.flat[len(ALL_TASKS):]:
-        ax.set_visible(False)
+    for y_key, suffix in y_versions:
+        y_label = "True P(right) [oracle]" if y_key == "true" else "Empirical P̂(right)"
 
-    for idx, (ax, task_name) in enumerate(zip(axes.flat, ALL_TASKS)):
-        ax.plot([0, 1], [0, 1], ls=":", color="gray", lw=0.7, zorder=0)
-        is_val = task_name in cfg.VAL_TASKS
-        def _plot_cond(src, cond, color, marker, n_s=n_seeds):
-            """Plot one condition from src dict; handles [n_seeds,n] and [n] pred."""
-            if task_name not in src.get(cond, {}):
-                return float("nan")
-            d  = src[cond][task_name]
-            p  = d["pred"]
-            pm = p.mean(axis=0) if p.ndim == 2 else p
-            ps = p.std(axis=0) / np.sqrt(n_s) if p.ndim == 2 else np.zeros_like(pm)
-            tv = d["true"]
-            ts = np.sqrt(tv * (1 - tv) / n_trials)
-            ax.errorbar(pm, tv, xerr=ps, yerr=ts,
-                        fmt=marker, ms=3, alpha=0.15, color=color,
-                        elinewidth=0.4, capsize=0, linewidth=0)
-            r, _ = spearmanr(pm, tv)
-            return r
+        fig, axes = plt.subplots(N_ROWS, N_COLS, figsize=(N_COLS * 2.0, N_ROWS * 2.2),
+                                 sharex=True, sharey=True,
+                                 gridspec_kw={"hspace": 0.55, "wspace": 0.08})
+        for ax in axes.flat[len(ALL_TASKS):]:
+            ax.set_visible(False)
 
-        if not is_val:
-            r_tr   = _plot_cond(dlbt,     "train", C_TRAIN, "o")
-            r_st   = _plot_cond(dlbt,     "stim",  C_STIM,  "s")
-            r_tr_e = _plot_cond(dlbt_end, "train", C_DLBT_END, "o", n_s=1)
-            r_st_e = _plot_cond(dlbt_end, "stim",  C_DLBT_END, "s", n_s=1)
-            ax.text(0.05, 0.93, f"ρ={r_tr:.2f}",   transform=ax.transAxes, fontsize=6, color=C_TRAIN,    va="top")
-            ax.text(0.05, 0.80, f"ρ={r_st:.2f}",   transform=ax.transAxes, fontsize=6, color=C_STIM,     va="top")
-            if has_end:
-                ax.text(0.55, 0.93, f"e:{r_tr_e:.2f}", transform=ax.transAxes, fontsize=6, color=C_DLBT_END, va="top")
-                ax.text(0.55, 0.80, f"e:{r_st_e:.2f}", transform=ax.transAxes, fontsize=6, color=C_DLBT_END, va="top")
-        else:
-            r_tk   = _plot_cond(dlbt,     "task",  C_TASK,  "^")
-            r_jt   = _plot_cond(dlbt,     "joint", C_JOINT, "D")
-            r_tk_e = _plot_cond(dlbt_end, "task",  C_DLBT_END, "^", n_s=1)
-            r_jt_e = _plot_cond(dlbt_end, "joint", C_DLBT_END, "D", n_s=1)
-            ax.text(0.05, 0.93, f"ρ={r_tk:.2f}",   transform=ax.transAxes, fontsize=6, color=C_TASK,     va="top")
-            ax.text(0.05, 0.80, f"ρ={r_jt:.2f}",   transform=ax.transAxes, fontsize=6, color=C_JOINT,    va="top")
-            if has_end:
-                ax.text(0.55, 0.93, f"e:{r_tk_e:.2f}", transform=ax.transAxes, fontsize=6, color=C_DLBT_END, va="top")
-                ax.text(0.55, 0.80, f"e:{r_jt_e:.2f}", transform=ax.transAxes, fontsize=6, color=C_DLBT_END, va="top")
+        for idx, (ax, task_name) in enumerate(zip(axes.flat, ALL_TASKS)):
+            ax.plot([0, 1], [0, 1], ls=":", color="gray", lw=0.7, zorder=0)
+            is_val    = task_name in cfg.VAL_TASKS
+            cond_list = ([("train", C_TRAIN), ("stim", C_STIM)]
+                         if not is_val else
+                         [("task", C_TASK), ("joint", C_JOINT)])
 
-        ax.set_title(task_name.replace("_and_", " & ").replace("_", "/"), fontsize=7, pad=2)
-        row, col = divmod(idx, N_COLS)
-        if row == N_ROWS - 1:
-            ax.set_xlabel("Pred", fontsize=7)
-        if col == 0:
-            ax.set_ylabel("True", fontsize=7)
-        ax.set(xlim=(-0.05, 1.05), ylim=(-0.05, 1.05))
-        ax.tick_params(labelsize=5)
+            for cond, color in cond_list:
+                if task_name not in dlbt.get(cond, {}):
+                    continue
+                d         = dlbt[cond][task_name]
+                p         = d["pred"]
+                pm        = p.mean(axis=0) if p.ndim == 2 else p
+                ps        = p.std(axis=0) / np.sqrt(n_seeds) if p.ndim == 2 else np.zeros_like(pm)
+                y_vals    = d.get(y_key, d["true"])
+                y_sem     = np.sqrt(np.clip(y_vals * (1 - y_vals), 0, None) / n_trials)
+                ax.errorbar(pm, y_vals, xerr=ps, yerr=y_sem,
+                            fmt="o", ms=3, alpha=0.15, color=color,
+                            elinewidth=0.4, capsize=0, linewidth=0)
 
-    legend_items = [
-        Line2D([0],[0], marker="o", color="w", markerfacecolor=c, markersize=5, label=l)
-        for c, l in [(C_TRAIN,"train (best)"),(C_STIM,"stim gen (best)"),
-                     (C_TASK,"task gen (best)"),(C_JOINT,"joint gen (best)")]
-    ]
-    if has_end:
-        legend_items.append(
-            Line2D([0],[0], marker="o", color="w", markerfacecolor=C_DLBT_END, markersize=5, label="end agent")
-        )
-    fig.legend(handles=legend_items, loc="lower right", bbox_to_anchor=(1.0, 0.0),
-               fontsize=7, frameon=False, ncol=2)
-    fig.text(0.5, -0.01, "Predicted P(right)", ha="center", fontsize=9)
-    fig.text(-0.01, 0.5, "True P(right)", va="center", rotation="vertical", fontsize=9)
-    sns.despine(fig=fig, trim=True)
-    out = plots_dir / f"plot_04_per_task_dlbt_{run_tag}.png"
-    plt.savefig(out, dpi=150, bbox_inches="tight")
-    print(f"Saved: {out}")
-    plt.close()
+            def _rho(cond, tn):
+                if tn not in dlbt.get(cond, {}):
+                    return float("nan")
+                d = dlbt[cond][tn]
+                p = d["pred"]
+                pm = p.mean(axis=0) if p.ndim == 2 else p
+                yv = d.get(y_key, d["true"])
+                r, _ = spearmanr(pm, yv)
+                return r
+
+            y_top = 0.93
+            for cond, color in cond_list:
+                ax.text(0.05, y_top, f"ρ={_rho(cond, task_name):.2f}",
+                        transform=ax.transAxes, fontsize=6, color=color, va="top")
+                y_top -= 0.15
+
+            ax.set_title(task_name.replace("_and_", " & ").replace("_", "/"), fontsize=7, pad=2)
+            row, col = divmod(idx, N_COLS)
+            if row == N_ROWS - 1:
+                ax.set_xlabel("Pred", fontsize=7)
+            if col == 0:
+                ax.set_ylabel(y_label[:12], fontsize=7)
+            ax.set(xlim=(-0.05, 1.05), ylim=(-0.05, 1.05))
+            ax.tick_params(labelsize=5)
+
+        fig.legend(handles=[
+            Line2D([0],[0], marker="o", color="w", markerfacecolor=c, markersize=5, label=l)
+            for c, l in [(C_TRAIN,"train"),(C_STIM,"stim gen"),(C_TASK,"task gen"),(C_JOINT,"joint gen")]
+        ], loc="lower right", bbox_to_anchor=(1.0, 0.0), fontsize=7, frameon=False, ncol=2)
+        fig.text(0.5, -0.01, "Predicted P(right)", ha="center", fontsize=9)
+        fig.text(-0.01, 0.5, y_label, va="center", rotation="vertical", fontsize=9)
+        sns.despine(fig=fig, trim=True)
+        out = plots_dir / f"plot_04_per_task_dlbt_{run_tag}{suffix}.png"
+        plt.savefig(out, dpi=150, bbox_inches="tight")
+        print(f"Saved: {out}")
+        plt.close()
 
     # -----------------------------------------------------------------------
     # Plot 5 — per-task SLDA grid
@@ -313,16 +300,16 @@ for results_path in available:
     for idx, (ax, task_name) in enumerate(zip(axes.flat, cfg.TRAIN_TASKS)):
         ax.plot([0, 1], [0, 1], ls=":", color="gray", lw=0.7, zorder=0)
         for cond, color in [("train", C_TRAIN), ("stim", C_STIM)]:
-            if task_name in slda[cond]:
-                d = slda[cond][task_name]
-                # pred is [n_pts] (no seed dimension) — no pred_sem
-                true_sem = np.sqrt(d["true"] * (1 - d["true"]) / n_trials)
-                ax.errorbar(d["pred"], d["true"],
+            if task_name in slda.get(cond, {}):
+                d         = slda[cond][task_name]
+                true_vals = d["true"]
+                true_sem  = np.sqrt(true_vals * (1 - true_vals) / n_trials)
+                ax.errorbar(d["pred"], true_vals,
                             yerr=true_sem,
                             fmt="s", ms=3, alpha=0.2, color=color,
                             elinewidth=0.4, capsize=0, linewidth=0)
         def _rho_slda(cond, tn):
-            if tn not in slda[cond]:
+            if tn not in slda.get(cond, {}):
                 return float("nan")
             d = slda[cond][tn]
             r, _ = spearmanr(d["pred"], d["true"])
@@ -336,7 +323,7 @@ for results_path in available:
         if row == N_ROWS_S - 1:
             ax.set_xlabel("Pred", fontsize=7)
         if col == 0:
-            ax.set_ylabel("True", fontsize=7)
+            ax.set_ylabel("True [oracle]", fontsize=7)
         ax.set(xlim=(-0.05, 1.05), ylim=(-0.05, 1.05))
         ax.tick_params(labelsize=5)
 
@@ -345,7 +332,7 @@ for results_path in available:
         for c, l in [(C_TRAIN,"train"),(C_STIM,"stim gen")]
     ], loc="lower right", bbox_to_anchor=(1.0, 0.0), fontsize=7, frameon=False)
     fig.text(0.5, -0.01, "Predicted P(right)", ha="center", fontsize=9)
-    fig.text(-0.01, 0.5, "True P(right)", va="center", rotation="vertical", fontsize=9)
+    fig.text(-0.01, 0.5, "True P(right) [oracle]", va="center", rotation="vertical", fontsize=9)
     sns.despine(fig=fig, trim=True)
     out = plots_dir / f"plot_05_per_task_slda_{run_tag}.png"
     plt.savefig(out, dpi=150, bbox_inches="tight")
@@ -353,150 +340,138 @@ for results_path in available:
     plt.close()
 
     # -----------------------------------------------------------------------
-    # Plot 6 — latent space PCA
+    # Plot 6 — latent space PCA  (requires agent weights)
     # -----------------------------------------------------------------------
     agent_path = cfg.RESULTS_DIR / f"agent_{run_tag}.pt"
     if not agent_path.exists():
-        print(f"Agent weights not found at {agent_path} — skipping latent PCA plot.")
+        print(f"Agent weights not found at {agent_path} — skipping latent plots.")
+        continue
+
+    import torch
+    from dlbt.agents.dlbt import DlbtAgent
+    from dlbt.data.image_ref import load_image_refs, image_refs_as_list
+
+    _device = torch.device("cpu")
+    _agent  = DlbtAgent(freeze_encoder=True, n_mc_samples=cfg.N_MC,
+                        device=_device, mapper_hidden=cfg.MAPPER_HIDDEN)
+    _agent.load_state_dict(torch.load(agent_path, map_location="cpu"))
+
+    _cache_path = Path(cfg.CACHE_PATH)
+    if _cache_path.exists():
+        _agent.load_cache(str(_cache_path))
     else:
-        import torch
-        from dlbt.agents.dlbt import DlbtAgent
-        from dlbt.data.image_ref import load_image_refs, image_refs_as_list
+        _refs_all = image_refs_as_list(load_image_refs(cfg.METADATA))
+        _agent.precompute_features(_refs_all)
 
-        # Load agent
-        _device = torch.device("cpu")
-        _agent  = DlbtAgent(freeze_encoder=True, n_mc_samples=cfg.N_MC,
-                            device=_device, mapper_hidden=cfg.MAPPER_HIDDEN)
-        _agent.load_state_dict(torch.load(agent_path, map_location="cpu"))
+    _agent.eval()
 
-        _cache_path = Path(cfg.CACHE_PATH)
-        if _cache_path.exists():
-            _agent.load_cache(str(_cache_path))
-        else:
-            _refs_all = image_refs_as_list(load_image_refs(cfg.METADATA))
-            _agent.precompute_features(_refs_all)
+    _refs_dict = load_image_refs(cfg.METADATA)
+    _all_refs  = image_refs_as_list(_refs_dict)
 
-        _agent.eval()
+    _cont: dict = {}
+    with open(cfg.METADATA) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if not _line:
+                continue
+            _rec = json.loads(_line)
+            _z   = _rec["z"]
+            _cont[_rec["id"]] = dict(
+                x            = _z["pos_xy"][0],
+                transparency = _z["transparency"],
+                glossiness   = _z["glossiness"],
+                scale        = _z["scale"],
+            )
 
-        # All image refs + continuous metadata
-        _refs_dict = load_image_refs(cfg.METADATA)
-        _all_refs  = image_refs_as_list(_refs_dict)
+    with torch.no_grad():
+        _alpha = _agent.get_alpha(_all_refs).cpu().numpy()
+    _q = _alpha / _alpha.sum(axis=1, keepdims=True)
 
-        _cont: dict = {}
-        with open(cfg.METADATA) as _f:
-            for _line in _f:
-                _line = _line.strip()
-                if not _line:
-                    continue
-                _rec = json.loads(_line)
-                _z   = _rec["z"]
-                _cont[_rec["id"]] = dict(
-                    x            = _z["pos_xy"][0],
-                    transparency = _z["transparency"],
-                    glossiness   = _z["glossiness"],
-                    scale        = _z["scale"],
-                )
+    _pca4    = PCA(n_components=4)
+    _coords4 = _pca4.fit_transform(_q)
+    _var4    = _pca4.explained_variance_ratio_
 
-        # Mapper outputs → Dirichlet means
-        with torch.no_grad():
-            _alpha = _agent.get_alpha(_all_refs).cpu().numpy()   # [N, K]
-        _q = _alpha / _alpha.sum(axis=1, keepdims=True)          # Dirichlet mean
+    _pca_panels = [
+        (0, 1, "x",            "Left / Right\n(PC1 vs PC2)",  "coolwarm", None, None),
+        (0, 1, "scale",        "Large / Small\n(PC1 vs PC2)", "cividis",  0.0,  1.0),
+        (2, 3, "transparency", "Transparent\n(PC3 vs PC4)",   "viridis",  0.0,  1.0),
+        (2, 3, "glossiness",   "Glossy\n(PC3 vs PC4)",        "plasma",   0.0,  1.0),
+    ]
 
-        # PCA into 4D — PC1/PC2 capture easy dims (position, scale);
-        # PC3/PC4 may encode harder material dims (transparency, gloss).
-        _pca4    = PCA(n_components=4)
-        _coords4 = _pca4.fit_transform(_q)          # [N, 4]
-        _var4    = _pca4.explained_variance_ratio_
+    fig, axes = plt.subplots(2, 2, figsize=(8, 7),
+                             gridspec_kw={"wspace": 0.35, "hspace": 0.45})
+    for ax, (xi, yi, key, title, cmap, vmin, vmax) in zip(axes.flat, _pca_panels):
+        _vals = np.array([_cont[r.uid][key] for r in _all_refs])
+        sc = ax.scatter(_coords4[:, xi], _coords4[:, yi],
+                        c=_vals, cmap=cmap, vmin=vmin, vmax=vmax,
+                        s=10, alpha=0.7, linewidths=0)
+        plt.colorbar(sc, ax=ax, shrink=0.75, pad=0.02)
+        ax.set_title(title, fontsize=9)
+        ax.set_xlabel(f"PC{xi+1} ({_var4[xi]:.1%})", fontsize=8)
+        ax.set_ylabel(f"PC{yi+1} ({_var4[yi]:.1%})", fontsize=8)
+        ax.tick_params(labelsize=7)
 
-        # Layout: 2 rows × 2 cols
-        #   Row 0: PC1 vs PC2, coloured by x (left/right) and scale
-        #   Row 1: PC3 vs PC4, coloured by transparency and glossiness
-        _pca_panels = [
-            # (pc_x_idx, pc_y_idx, key,            title,            cmap,       vmin, vmax)
-            (0, 1, "x",            "Left / Right\n(PC1 vs PC2)",  "coolwarm", None, None),
-            (0, 1, "scale",        "Large / Small\n(PC1 vs PC2)", "cividis",  0.0,  1.0),
-            (2, 3, "transparency", "Transparent\n(PC3 vs PC4)",   "viridis",  0.0,  1.0),
-            (2, 3, "glossiness",   "Glossy\n(PC3 vs PC4)",        "plasma",   0.0,  1.0),
-        ]
+    fig.suptitle(f"Mapper latent space — PCA of Dirichlet means  ({model_label})",
+                 fontsize=11)
+    sns.despine(fig=fig, trim=True)
+    plt.tight_layout()
+    out = plots_dir / f"plot_06_latent_pca_{run_tag}.png"
+    plt.savefig(out, dpi=150, bbox_inches="tight")
+    print(f"Saved: {out}")
+    plt.close()
 
-        fig, axes = plt.subplots(2, 2, figsize=(8, 7),
-                                 gridspec_kw={"wspace": 0.35, "hspace": 0.45})
-        for ax, (xi, yi, key, title, cmap, vmin, vmax) in zip(axes.flat, _pca_panels):
-            _vals = np.array([_cont[r.uid][key] for r in _all_refs])
-            sc = ax.scatter(_coords4[:, xi], _coords4[:, yi],
-                            c=_vals, cmap=cmap, vmin=vmin, vmax=vmax,
-                            s=10, alpha=0.7, linewidths=0)
-            plt.colorbar(sc, ax=ax, shrink=0.75, pad=0.02)
-            ax.set_title(title, fontsize=9)
-            ax.set_xlabel(f"PC{xi+1} ({_var4[xi]:.1%})", fontsize=8)
-            ax.set_ylabel(f"PC{yi+1} ({_var4[yi]:.1%})", fontsize=8)
-            ax.tick_params(labelsize=7)
+    # -----------------------------------------------------------------------
+    # Plot 7 — t-SNE of first 8 PCA components
+    # -----------------------------------------------------------------------
+    _n_pca8   = min(8, _q.shape[1] - 1)
+    _pca8     = PCA(n_components=_n_pca8)
+    _q_pca8   = _pca8.fit_transform(_q)
+    _cum_var8 = _pca8.explained_variance_ratio_.cumsum()
 
-        fig.suptitle(f"Mapper latent space — PCA of Dirichlet means  ({model_label})",
-                     fontsize=11)
-        sns.despine(fig=fig, trim=True)
-        plt.tight_layout()
-        out = plots_dir / f"plot_06_latent_pca_{run_tag}.png"
-        plt.savefig(out, dpi=150, bbox_inches="tight")
-        print(f"Saved: {out}")
-        plt.close()
+    import sklearn
+    _tsne_kwargs = dict(
+        n_components=2, perplexity=40, learning_rate="auto",
+        init="pca", random_state=42,
+    )
+    if tuple(int(x) for x in sklearn.__version__.split(".")[:2]) >= (1, 5):
+        _tsne_kwargs["max_iter"] = 1000
+    else:
+        _tsne_kwargs["n_iter"] = 1000
+    _tsne        = TSNE(**_tsne_kwargs)
+    _tsne_coords = _tsne.fit_transform(_q_pca8)
 
-        # -------------------------------------------------------------------
-        # Plot 7 — t-SNE of first 8 PCA components
-        # PCA first to denoise (captures most variance in fewer dims),
-        # then t-SNE reveals nonlinear cluster structure.
-        # -------------------------------------------------------------------
-        _n_pca8   = min(8, _q.shape[1] - 1)
-        _pca8     = PCA(n_components=_n_pca8)
-        _q_pca8   = _pca8.fit_transform(_q)                     # [N, n_pca8]
-        _cum_var8 = _pca8.explained_variance_ratio_.cumsum()
+    _tsne_panels = [
+        ("x",            "Left / Right",  "coolwarm", None, None),
+        ("scale",        "Large / Small", "cividis",  0.0,  1.0),
+        ("transparency", "Transparent",   "viridis",  0.0,  1.0),
+        ("glossiness",   "Glossy",        "plasma",   0.0,  1.0),
+    ]
 
-        # n_iter was renamed max_iter in sklearn >= 1.5
-        import sklearn
-        _tsne_kwargs = dict(
-            n_components=2, perplexity=40, learning_rate="auto",
-            init="pca", random_state=42,
-        )
-        if tuple(int(x) for x in sklearn.__version__.split(".")[:2]) >= (1, 5):
-            _tsne_kwargs["max_iter"] = 1000
-        else:
-            _tsne_kwargs["n_iter"] = 1000
-        _tsne        = TSNE(**_tsne_kwargs)
-        _tsne_coords = _tsne.fit_transform(_q_pca8)             # [N, 2]
+    fig, axes = plt.subplots(1, 4, figsize=(14, 3.6),
+                             gridspec_kw={"wspace": 0.35})
+    for ax, (key, title, cmap, vmin, vmax) in zip(axes, _tsne_panels):
+        _vals = np.array([_cont[r.uid][key] for r in _all_refs])
+        sc = ax.scatter(_tsne_coords[:, 0], _tsne_coords[:, 1],
+                        c=_vals, cmap=cmap, vmin=vmin, vmax=vmax,
+                        s=10, alpha=0.7, linewidths=0)
+        plt.colorbar(sc, ax=ax, shrink=0.75, pad=0.02)
+        ax.set_title(title, fontsize=10)
+        ax.set_xlabel("t-SNE 1", fontsize=8)
+        ax.set_ylabel("t-SNE 2", fontsize=8)
+        ax.tick_params(labelsize=7)
+        ax.set_xticks([])
+        ax.set_yticks([])
 
-        # Same 4-panel layout as PCA, same colormaps
-        _tsne_panels = [
-            ("x",            "Left / Right",  "coolwarm", None, None),
-            ("scale",        "Large / Small", "cividis",  0.0,  1.0),
-            ("transparency", "Transparent",   "viridis",  0.0,  1.0),
-            ("glossiness",   "Glossy",        "plasma",   0.0,  1.0),
-        ]
-
-        fig, axes = plt.subplots(1, 4, figsize=(14, 3.6),
-                                 gridspec_kw={"wspace": 0.35})
-        for ax, (key, title, cmap, vmin, vmax) in zip(axes, _tsne_panels):
-            _vals = np.array([_cont[r.uid][key] for r in _all_refs])
-            sc = ax.scatter(_tsne_coords[:, 0], _tsne_coords[:, 1],
-                            c=_vals, cmap=cmap, vmin=vmin, vmax=vmax,
-                            s=10, alpha=0.7, linewidths=0)
-            plt.colorbar(sc, ax=ax, shrink=0.75, pad=0.02)
-            ax.set_title(title, fontsize=10)
-            ax.set_xlabel("t-SNE 1", fontsize=8)
-            ax.set_ylabel("t-SNE 2", fontsize=8)
-            ax.tick_params(labelsize=7)
-            ax.set_xticks([])
-            ax.set_yticks([])
-
-        fig.suptitle(
-            f"Mapper latent space — t-SNE  "
-            f"(PCA {_n_pca8}D -> 2D, {_cum_var8[-1]:.0%} var.)  ({model_label})",
-            fontsize=11, y=1.02,
-        )
-        sns.despine(fig=fig, left=True, bottom=True)
-        plt.tight_layout()
-        out = plots_dir / f"plot_07_latent_tsne_{run_tag}.png"
-        plt.savefig(out, dpi=150, bbox_inches="tight")
-        print(f"Saved: {out}")
-        plt.close()
+    fig.suptitle(
+        f"Mapper latent space — t-SNE  "
+        f"(PCA {_n_pca8}D -> 2D, {_cum_var8[-1]:.0%} var.)  ({model_label})",
+        fontsize=11, y=1.02,
+    )
+    sns.despine(fig=fig, left=True, bottom=True)
+    plt.tight_layout()
+    out = plots_dir / f"plot_07_latent_tsne_{run_tag}.png"
+    plt.savefig(out, dpi=150, bbox_inches="tight")
+    print(f"Saved: {out}")
+    plt.close()
 
 print("\nAll plots saved to", plots_dir)

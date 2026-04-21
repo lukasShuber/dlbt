@@ -111,19 +111,14 @@ def _summary_scatter(ax, pt: dict, task_names: list, color: str, marker: str,
 # CLI: optional --tag to restrict which result file to process
 # ---------------------------------------------------------------------------
 parser = argparse.ArgumentParser()
-parser.add_argument("--tag", default=None, choices=["frozen", "attnpool"],
-                    help="Process only this tag (default: all available)")
+parser.add_argument("--tag", default=None,
+                    help="Process only pkl files whose stem contains this tag")
 args = parser.parse_args()
 
 # ---------------------------------------------------------------------------
-# Auto-detect available result files (new format only — must have "dlbt" key)
+# Auto-detect available result files via glob
 # ---------------------------------------------------------------------------
-candidates = sorted([
-    p for p in [
-        cfg.RESULTS_DIR / "results_frozen.pkl",
-        cfg.RESULTS_DIR / "results_attnpool.pkl",
-    ] if p.exists()
-])
+candidates = sorted(cfg.RESULTS_DIR.glob("results_*.pkl"))
 if args.tag:
     candidates = [p for p in candidates if args.tag in p.stem]
 
@@ -271,8 +266,9 @@ for results_path in available:
             for cond, color in [("train", C_TRAIN), ("stim", C_STIM)]:
                 if task_name in dlbt[cond]:
                     d         = dlbt[cond][task_name]
-                    pred_mean = d["pred"].mean(axis=0)
-                    pred_sem  = d["pred"].std(axis=0) / np.sqrt(n_seeds)
+                    p         = d["pred"]
+                    pred_mean = p.mean(axis=0) if p.ndim == 2 else p
+                    pred_sem  = p.std(axis=0) / np.sqrt(n_seeds) if p.ndim == 2 else np.zeros_like(pred_mean)
                     y_vals, y_sem = _y_and_sem(d)
                     ax.errorbar(pred_mean, y_vals,
                                 xerr=pred_sem, yerr=y_sem,
@@ -282,7 +278,9 @@ for results_path in available:
                 if tn not in dlbt[cond]:
                     return float("nan")
                 d = dlbt[cond][tn]
-                r, _ = spearmanr(d["pred"].mean(axis=0), _y_key(d))
+                p = d["pred"]
+                pm = p.mean(axis=0) if p.ndim == 2 else p
+                r, _ = spearmanr(pm, _y_key(d))
                 return r
             ax.text(0.05, 0.93, f"ρ={_rho_mean('train', task_name):.2f}",
                     transform=ax.transAxes, fontsize=6, color=C_TRAIN, va="top")
@@ -292,8 +290,9 @@ for results_path in available:
             for cond, color in [("task", C_TASK), ("joint", C_JOINT)]:
                 if task_name in dlbt[cond]:
                     d         = dlbt[cond][task_name]
-                    pred_mean = d["pred"].mean(axis=0)
-                    pred_sem  = d["pred"].std(axis=0) / np.sqrt(n_seeds)
+                    p         = d["pred"]
+                    pred_mean = p.mean(axis=0) if p.ndim == 2 else p
+                    pred_sem  = p.std(axis=0) / np.sqrt(n_seeds) if p.ndim == 2 else np.zeros_like(pred_mean)
                     y_vals, y_sem = _y_and_sem(d)
                     ax.errorbar(pred_mean, y_vals,
                                 xerr=pred_sem, yerr=y_sem,
@@ -303,7 +302,9 @@ for results_path in available:
                 if tn not in dlbt[cond]:
                     return float("nan")
                 d = dlbt[cond][tn]
-                r, _ = spearmanr(d["pred"].mean(axis=0), _y_key(d))
+                p = d["pred"]
+                pm = p.mean(axis=0) if p.ndim == 2 else p
+                r, _ = spearmanr(pm, _y_key(d))
                 return r
             ax.text(0.05, 0.93, f"ρ={_rho_mean_val('task', task_name):.2f}",
                     transform=ax.transAxes, fontsize=6, color=C_TASK, va="top")

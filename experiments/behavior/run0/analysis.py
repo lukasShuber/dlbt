@@ -122,18 +122,11 @@ def _summary_scatter(ax, pt: dict, task_names: list, color: str, marker: str,
 # CLI
 # ---------------------------------------------------------------------------
 parser = argparse.ArgumentParser()
-parser.add_argument("--tag", default=None, choices=["frozen", "attnpool", "frozen_end", "attnpool_end"],
-                    help="Process only this tag (default: all available)")
+parser.add_argument("--tag", default=None,
+                    help="Process only pkl files whose stem contains this tag")
 args = parser.parse_args()
 
-candidates = sorted([
-    p for p in [
-        cfg.RESULTS_DIR / "results_frozen.pkl",
-        cfg.RESULTS_DIR / "results_attnpool.pkl",
-        cfg.RESULTS_DIR / "results_frozen_end.pkl",
-        cfg.RESULTS_DIR / "results_attnpool_end.pkl",
-    ] if p.exists()
-])
+candidates = sorted(cfg.RESULTS_DIR.glob("results_*.pkl"))
 if args.tag:
     candidates = [p for p in candidates if args.tag in p.stem]
 
@@ -256,10 +249,12 @@ for results_path in candidates:
         for cond, color in cond_list:
             if task_name not in dlbt[cond]:
                 continue
-            d         = dlbt[cond][task_name]
-            valid     = d["totals"] > 0
-            pred_mean = d["pred"][:, valid].mean(axis=0)
-            pred_sem  = d["pred"][:, valid].std(axis=0) / np.sqrt(n_seeds)
+            d     = dlbt[cond][task_name]
+            p     = d["pred"]
+            valid = d["totals"] > 0
+            pv    = p[valid] if p.ndim == 1 else p[:, valid]
+            pred_mean = pv.mean(axis=0) if pv.ndim == 2 else pv
+            pred_sem  = pv.std(axis=0) / np.sqrt(n_seeds) if pv.ndim == 2 else np.zeros_like(pred_mean)
             true_vals = d["true"][valid]
             totals    = d["totals"][valid]
             true_sem  = _true_sem(true_vals, totals)
@@ -272,8 +267,10 @@ for results_path in candidates:
             if tn not in dlbt[cond]:
                 return float("nan")
             d = dlbt[cond][tn]
+            p = d["pred"]
             valid = d["totals"] > 0
-            pm = d["pred"][:, valid].mean(axis=0)
+            pv = p[valid] if p.ndim == 1 else p[:, valid]
+            pm = pv.mean(axis=0) if pv.ndim == 2 else pv
             if valid.sum() < 2:
                 return float("nan")
             r, _ = spearmanr(pm, d["true"][valid])
