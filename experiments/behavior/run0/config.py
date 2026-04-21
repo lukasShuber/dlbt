@@ -90,7 +90,7 @@ TRAIN_TASKS = [
     "transparent", "opaque",
     "transparent_and_glossy",
     "glossy", "matte",
-    "large_and_glossy"
+    "large_and_glossy",
     "large", "small",
 ]
 VAL_TASKS = [
