@@ -110,7 +110,7 @@ def _summary_scatter(ax, pt: dict, task_names: list, color: str, marker: str,
                 elinewidth=0.5, capsize=0, linewidth=0)
     ax.set_title(
         f"{title}\nMSE={raw_mse:.4f}  (−NF)={net_mse:+.4f}   ρ={rho:.3f}",
-        fontsize=9, pad=4,
+        fontsize=7, pad=4,
     )
     ax.set(xlim=(-0.02, 1.02), ylim=(-0.02, 1.02))
     ax.set_xticks([0, 0.5, 1])

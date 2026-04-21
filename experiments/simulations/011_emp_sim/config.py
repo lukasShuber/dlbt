@@ -36,8 +36,8 @@ BETA_PER_DIM = dict(
 )
 
 # ---- Training (mirrors sim 01) ---------------------------------------------
-N_EPOCHS_PHASE1 = 1000
-PATIENCE_PHASE1 = 100
+N_EPOCHS_PHASE1 = 2000
+PATIENCE_PHASE1 = 2000
 N_EPOCHS_PHASE2 = 3000
 PATIENCE_PHASE2 = 100
 LR              = 1e-2

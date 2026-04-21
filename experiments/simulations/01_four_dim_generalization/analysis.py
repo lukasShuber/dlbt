@@ -74,7 +74,7 @@ def _summary_scatter(ax, pt: dict, task_names: list, color: str, marker: str,
                 xerr=pred_sem, yerr=y_sem,
                 fmt=marker, ms=4, alpha=0.1, color=color,
                 elinewidth=0.5, capsize=0, linewidth=0)
-    ax.set_title(f"{title}\ncMSE={cmse:.4f}   ρ={rho:.3f}", fontsize=10, pad=4)
+    ax.set_title(f"{title}\ncMSE={cmse:.4f}   ρ={rho:.3f}", fontsize=7, pad=4)
     ax.set(xlim=(-0.02, 1.02), ylim=(-0.02, 1.02))
     ax.set_xticks([0, 0.5, 1])
     ax.set_yticks([0, 0.5, 1])
