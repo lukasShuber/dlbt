@@ -49,23 +49,21 @@ RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"
 
 # ---- Tasks ------------------------
 TRAIN_TASKS = [
-    # simple
-    "right", "transparent", "glossy", "large",
-    "left", "opaque", "matte", "small",
-    # 2-way: lr × material
+    # 1-way only — perfectly balanced polarity per dim
+    "right", "left",
+    "transparent", "opaque",
+    "glossy", "matte",
+    "large", "small",
+]
+VAL_TASKS = [
+    # held-out conjunctions — pure task generalisation test
     "right_and_transparent", "left_and_transparent",
     "right_and_glossy",      "left_and_glossy",
-    # 2-way: material × material
     "transparent_and_glossy",
-    # 2-way: sl × material  (no lr × sl)
     "large_and_transparent", "large_and_glossy",
-    # 3-way
     "right_and_transparent_and_glossy",
     "left_and_transparent_and_glossy",
     "large_and_transparent_and_glossy",
-]
-VAL_TASKS = [
-    # lr × sl conjunctions — never seen during training
     "right_and_large",
     "left_and_large",
     "right_and_large_and_glossy",
