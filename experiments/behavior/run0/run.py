@@ -266,6 +266,7 @@ for seed_idx, seed in enumerate(cfg.SEEDS):
         agent, train_ds, stim_gen_ds, refs_dict,
         n_epochs=cfg.N_EPOCHS_PHASE1, lr=cfg.LR, patience=cfg.PATIENCE_PHASE1,
         extra_val_datasets={"task_gen": task_gen_ds, "joint_gen": joint_gen_ds},
+        kl_weight=cfg.KL_WEIGHT, prior_alpha=cfg.PRIOR_ALPHA,
     )
     print(f"    best epoch: {phase1.best_epoch}  stim_gen_mse: {phase1.best_val_mse:.4f}")
 
@@ -291,6 +292,7 @@ for seed_idx, seed in enumerate(cfg.SEEDS):
             n_epochs=cfg.N_EPOCHS_PHASE2, patience=cfg.PATIENCE_PHASE2,
             optimizer=optimizer2,
             extra_val_datasets={"task_gen": task_gen_ds, "joint_gen": joint_gen_ds},
+            kl_weight=cfg.KL_WEIGHT, prior_alpha=cfg.PRIOR_ALPHA,
         )
         print(f"    best epoch: {phase2.best_epoch}  stim_gen_mse: {phase2.best_val_mse:.4f}")
 

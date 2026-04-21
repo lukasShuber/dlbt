@@ -52,6 +52,13 @@ N_MC            = 100
 FREEZE_ENCODER  = True
 MAPPER_HIDDEN   = None
 
+# Dirichlet KL regularisation — added to NLL loss during training.
+# KL_WEIGHT = 0.0 → pure NLL, fully backward-compatible.
+# Tune KL_WEIGHT on a log scale (e.g. 0.01, 0.1, 1.0).
+# PRIOR_ALPHA = 1.0 → uniform Dirichlet prior (penalises any peaking).
+KL_WEIGHT   = 0.1
+PRIOR_ALPHA = 1.0
+
 RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"
 
 # ---------------------------------------------------------------------------
@@ -83,26 +90,32 @@ RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"
 # ]
 
 TRAIN_TASKS = [
-    # 1-way only — perfectly balanced polarity per dim
-    "left_and_transparent",
-    "right_and_glossy",
+    # 1-way — all 8, fully polarity-balanced
     "right", "left",
     "transparent", "opaque",
-    "transparent_and_glossy",
     "glossy", "matte",
-    "large_and_glossy",
     "large", "small",
+    # 2-way cross-polarity — directly penalise 0↔15 collapse:
+    #   left_and_transparent forces L and Tr to be disentangled
+    #   right_and_glossy     forces R and Gl to be disentangled
+    "left_and_transparent",
+    "right_and_glossy",
+    # 2-way same-polarity — composition signal
+    "transparent_and_glossy",
+    "large_and_glossy",
 ]
 VAL_TASKS = [
-    # held-out conjunctions — pure task generalisation test
+    # diagonal swaps (lr×tr and lr×gl other diagonals)
     "right_and_transparent",
     "left_and_glossy",
+    # sl conjunctions — size never seen in combination during train
     "large_and_transparent",
+    "right_and_large",
+    "left_and_large",
+    # 3-way task generalisation
     "right_and_transparent_and_glossy",
     "left_and_transparent_and_glossy",
     "large_and_transparent_and_glossy",
-    "right_and_large",
-    "left_and_large",
     "right_and_large_and_glossy",
     "right_and_large_and_transparent",
 ]
