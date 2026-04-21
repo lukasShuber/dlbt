@@ -22,8 +22,8 @@ RESULTS_DIR = Path(__file__).parent / "results"
 # Data handling
 # ---------------------------------------------------------------------------
 SEED          = 42
-N_SEEDS       = 1
-SEEDS         = [42]
+N_SEEDS       = 5
+SEEDS         = [42, 43, 44, 45, 46]
 
 # Image split: the behavioural experiment collects ~20 trials per (uid, task)
 # on 16 probe images and ~3 trials per (uid, task) on ~980 main images.
@@ -42,8 +42,8 @@ MAIN_PERF_QUANTILE = 0.95   # above the 95th pctile of Binom(100, 0.5)
 # ---------------------------------------------------------------------------
 # Training (matches simulation 01)
 # ---------------------------------------------------------------------------
-N_EPOCHS_PHASE1 = 2000
-PATIENCE_PHASE1 = 100
+N_EPOCHS_PHASE1 = 1000
+PATIENCE_PHASE1 = 200
 N_EPOCHS_PHASE2 = 3000
 PATIENCE_PHASE2 = 100
 LR              = 1e-2
@@ -58,29 +58,29 @@ RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"
 # Task split (identical to simulation 01)
 # ---------------------------------------------------------------------------
 
-TRAIN_TASKS = [
-    # simple
-    "right", "transparent", "glossy", "large",
-    "left", "opaque", "matte", "small",
-    # 2-way: lr × material
-    "right_and_transparent", "left_and_transparent",
-    "right_and_glossy",      "left_and_glossy",
-    # 2-way: material × material
-    "transparent_and_glossy",
-    # 2-way: sl × material  (no lr × sl)
-    "large_and_transparent", "large_and_glossy",
-    # 3-way
-    "right_and_transparent_and_glossy",
-    "left_and_transparent_and_glossy",
-    "large_and_transparent_and_glossy",
-]
-VAL_TASKS = [
-    # lr × sl conjunctions — never seen during training
-    "right_and_large",
-    "left_and_large",
-    "right_and_large_and_glossy",
-    "right_and_large_and_transparent",
-]
+# TRAIN_TASKS = [
+#     # simple
+#     "right", "transparent", "glossy", "large",
+#     "left", "opaque", "matte", "small",
+#     # 2-way: lr × material
+#     "right_and_transparent", "left_and_transparent",
+#     "right_and_glossy",      "left_and_glossy",
+#     # 2-way: material × material
+#     "transparent_and_glossy",
+#     # 2-way: sl × material  (no lr × sl)
+#     "large_and_transparent", "large_and_glossy",
+#     # 3-way
+#     "right_and_transparent_and_glossy",
+#     "left_and_transparent_and_glossy",
+#     "large_and_transparent_and_glossy",
+# ]
+# VAL_TASKS = [
+#     # lr × sl conjunctions — never seen during training
+#     "right_and_large",
+#     "left_and_large",
+#     "right_and_large_and_glossy",
+#     "right_and_large_and_transparent",
+# ]
 
 # TRAIN_TASKS = [
 #     # 1-way only — perfectly balanced polarity per dim
@@ -103,6 +103,29 @@ VAL_TASKS = [
 #     "right_and_large_and_glossy",
 #     "right_and_large_and_transparent",
 # ]
+
+TRAIN_TASKS = [
+    # 1-way only — perfectly balanced polarity per dim
+    "right",
+    "transparent",
+    "glossy",
+    "large",
+
+    "right_and_large",
+    "right_and_glossy",
+    "transparent_and_glossy",
+    "large_and_transparent",
+
+    "right_and_transparent_and_glossy",
+    "large_and_transparent_and_glossy",
+    "right_and_large_and_glossy",
+    "right_and_large_and_transparent",
+]
+VAL_TASKS = [
+    # held-out conjunctions
+    "right_and_transparent",
+    "large_and_glossy",
+]
 
 # ---------------------------------------------------------------------------
 # Behavioural task_id  ->  DLBT task name
