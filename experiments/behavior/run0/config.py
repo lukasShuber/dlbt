@@ -22,8 +22,8 @@ RESULTS_DIR = Path(__file__).parent / "results"
 # Data handling
 # ---------------------------------------------------------------------------
 SEED          = 42
-N_SEEDS       = 5
-SEEDS         = [42, 43, 44, 45, 46]
+N_SEEDS       = 1
+SEEDS         = [42]
 
 # Image split: the behavioural experiment collects ~20 trials per (uid, task)
 # on 16 probe images and ~3 trials per (uid, task) on ~980 main images.
@@ -106,19 +106,18 @@ RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"
 
 TRAIN_TASKS = [
     # 1-way only — perfectly balanced polarity per dim
-    "right",
-    "transparent",
-    "glossy",
-    "large",
 
     "right_and_large",
-    "right_and_glossy",
-    "transparent_and_glossy",
-    "large_and_transparent",
-
-    "right_and_transparent_and_glossy",
+    "right",
     "large_and_transparent_and_glossy",
+    "transparent",
+    "right_and_glossy",
+    "right_and_transparent_and_glossy",
+    "glossy",
+    "large",
+    "transparent_and_glossy",
     "right_and_large_and_glossy",
+    "large_and_transparent",
     "right_and_large_and_transparent",
 ]
 VAL_TASKS = [
