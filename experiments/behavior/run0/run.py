@@ -357,10 +357,15 @@ for cond in dlbt_preds:
             dlbt_preds[cond][task_name]["pred"]
         )
 
-# Save agent weights
+# Save agent weights — best (early-stop) and end-of-training
 agent_path = cfg.RESULTS_DIR / f"agent_{cfg.RUN_TAG}.pt"
 torch.save(agent.state_dict(), agent_path)
-print(f"\nSaved agent weights (last seed) -> {agent_path}")
+print(f"\nSaved best agent weights (last seed) -> {agent_path}")
+
+end_state      = result.end_state if (result is not None and result.end_state) else agent.state_dict()
+agent_end_path = cfg.RESULTS_DIR / f"agent_{cfg.RUN_TAG}_end.pt"
+torch.save(end_state, agent_end_path)
+print(f"Saved end  agent weights (last seed) -> {agent_end_path}")
 
 # ---------------------------------------------------------------------------
 # Noise floors per evaluation region (for plotting reference lines)
