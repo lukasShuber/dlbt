@@ -26,6 +26,9 @@ from pathlib import Path
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+from matplotlib.offsetbox import OffsetImage, AnnotationBbox
+from PIL import Image as PILImage
 
 sys.path.insert(0, str(Path(__file__).parent))
 import config as cfg
@@ -71,7 +74,7 @@ refs_list = image_refs_as_list(refs_dict)
 # Use only images that are in the CLIP cache
 refs_cached = [r for r in refs_list if r.uid in agent._cache]
 rng         = np.random.default_rng(cfg.SEED)
-sample      = rng.choice(len(refs_cached), size=min(256, len(refs_cached)), replace=False)
+sample      = rng.choice(len(refs_cached), size=min(100, len(refs_cached)), replace=False)
 sample_refs = [refs_cached[i] for i in sample]
 
 print(f"Sampled {len(sample_refs)} images for α inspection")
@@ -145,18 +148,80 @@ fig.savefig(out_path, dpi=150, bbox_inches="tight")
 print(f"\nSaved → {out_path}")
 
 # ---------------------------------------------------------------------------
-# Per-image α heatmap for a small subset (sanity check)
+# Shared helpers
 # ---------------------------------------------------------------------------
-n_show = 16
-idx    = np.argsort(-ratio)[:n_show]      # most peaked images first
-fig2, ax2 = plt.subplots(figsize=(10, 5))
-im = ax2.imshow(alpha[idx], aspect="auto", cmap="viridis")
-ax2.set_xlabel("latent state k (0..15)")
-ax2.set_ylabel("image (top = most peaked)")
-ax2.set_title(f"α per image — top-{n_show} by peak-to-mean ratio")
-fig2.colorbar(im, ax=ax2, label="α_k")
-fig2.tight_layout()
+THUMB = 64   # thumbnail edge length in pixels
+ZOOM  = 0.3  # OffsetImage zoom — maintains 1:1 ratio regardless of axes size
 
+
+def load_thumb(ref):
+    try:
+        img = PILImage.open(ref.path).convert("RGB").resize((THUMB, THUMB))
+        return np.array(img)
+    except Exception:
+        return np.zeros((THUMB, THUMB, 3), dtype=np.uint8)
+
+
+def add_thumbs(ax, refs, n_rows, zoom=ZOOM):
+    """Place square thumbnails down the y-axis of ax (data coords 0..n_rows-1)."""
+    ax.set_xlim(0, 1)
+    ax.set_ylim(n_rows - 0.5, -0.5)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.axis("off")
+    for i, ref in enumerate(refs):
+        thumb = load_thumb(ref)
+        oi = OffsetImage(thumb, zoom=zoom)
+        oi.image.axes = ax
+        ab = AnnotationBbox(oi, (0.5, i), xycoords="data",
+                            frameon=False, pad=0,
+                            box_alignment=(0.5, 0.5))
+        ax.add_artist(ab)
+
+
+# Verbal labels for each K=16 state.
+# Bit encoding: bit3=lr (R=1), bit2=tr (Tr=1), bit1=gl (Gl=1), bit0=sl (Lg=1)
+def _state_label(k):
+    return (
+        ("R"  if (k >> 3) & 1 else "L")  + "\n" +
+        ("Tr" if (k >> 2) & 1 else "Op") + "\n" +
+        ("Gl" if (k >> 1) & 1 else "Mt") + "\n" +
+        ("Lg" if  k & 1       else "Sm")
+    )
+
+STATE_LABELS = [_state_label(k) for k in range(K)]
+
+
+# ---------------------------------------------------------------------------
+# Per-image α heatmap — top-N most peaked images
+# ---------------------------------------------------------------------------
+n_show   = 16
+idx      = np.argsort(-ratio)[:n_show]   # most peaked images first
+top_refs = [sample_refs[i] for i in idx]
+
+fig_h2 = max(5, n_show * 0.35)
+fig2   = plt.figure(figsize=(13, fig_h2))
+gs2    = gridspec.GridSpec(1, 3, figure=fig2,
+                           width_ratios=[1.2, 10, 0.4], wspace=0.02)
+ax2_thumb = fig2.add_subplot(gs2[0])
+ax2_heat  = fig2.add_subplot(gs2[1])
+ax2_cbar  = fig2.add_subplot(gs2[2])
+
+add_thumbs(ax2_thumb, top_refs, n_show, zoom=0.8)
+ax2_thumb.set_title("image", fontsize=8)
+ax2_thumb.set_ylabel("image (top = most peaked)")
+
+im2 = ax2_heat.imshow(alpha[idx], aspect="auto", cmap="viridis",
+                      extent=[-0.5, K - 0.5, n_show - 0.5, -0.5])
+ax2_heat.set_xticks(range(K))
+ax2_heat.set_xticklabels(STATE_LABELS, rotation=90, fontsize=7, va="top")
+ax2_heat.set_yticks([])
+ax2_heat.set_ylim(n_show - 0.5, -0.5)
+ax2_heat.set_title(f"α per image — top-{n_show} by peak-to-mean ratio  [{cfg.RUN_TAG}]")
+ax2_heat.set_xlabel("latent state", labelpad=4)
+fig2.colorbar(im2, cax=ax2_cbar, label="α_k")
+
+fig2.tight_layout()
 out_path2 = cfg.RESULTS_DIR / f"diagnose_alpha_heatmap_{cfg.RUN_TAG}.png"
 fig2.savefig(out_path2, dpi=150, bbox_inches="tight")
 print(f"Saved → {out_path2}")
@@ -164,25 +229,13 @@ print(f"Saved → {out_path2}")
 # ---------------------------------------------------------------------------
 # Full-sample heatmap: every image, sorted by peak state then by ratio
 # ---------------------------------------------------------------------------
-# Sort images first by their argmax latent state, then by peak-to-mean ratio
-# within each group.  This groups images by which state they "route to" and
-# makes any mode collapse visually obvious.
 argmax_state = alpha.argmax(axis=1)                              # [N]
 sort_key     = argmax_state * 1e6 - ratio                        # secondary: high ratio first
 sort_idx     = np.argsort(sort_key)
+N            = len(sort_idx)
 
-fig3, ax3 = plt.subplots(figsize=(10, 9))
-im3 = ax3.imshow(alpha[sort_idx], aspect="auto", cmap="viridis")
-ax3.set_xlabel("latent state k (0..15)")
-ax3.set_ylabel(f"image (sorted by argmax state, N={len(sort_idx)})")
-ax3.set_title(f"α per image — all {len(sort_idx)} sampled images")
-fig3.colorbar(im3, ax=ax3, label="α_k")
-
-# Mark the group boundaries (where argmax changes) with horizontal lines
 sorted_argmax = argmax_state[sort_idx]
 boundaries    = np.where(np.diff(sorted_argmax) != 0)[0] + 1
-for b in boundaries:
-    ax3.axhline(b - 0.5, color="white", lw=0.5, alpha=0.6)
 
 # Count images per argmax state for a quick textual summary
 counts_per_state = np.bincount(argmax_state, minlength=K)
@@ -191,6 +244,35 @@ for k in range(K):
     bar = "#" * int(40 * counts_per_state[k] / max(counts_per_state.max(), 1))
     print(f"  state {k:2d}: {counts_per_state[k]:4d}  {bar}")
 
+sorted_refs = [sample_refs[i] for i in sort_idx]
+
+fig_h = max(9, N * 0.12)
+fig3  = plt.figure(figsize=(14, fig_h))
+gs    = gridspec.GridSpec(1, 3, figure=fig3,
+                          width_ratios=[1.2, 10, 0.4], wspace=0.02)
+ax_thumb = fig3.add_subplot(gs[0])
+ax_heat  = fig3.add_subplot(gs[1])
+ax_cbar  = fig3.add_subplot(gs[2])
+
+add_thumbs(ax_thumb, sorted_refs, N)
+ax_thumb.set_title("image", fontsize=8)
+ax_thumb.set_ylabel(f"image  (N={N}, sorted by argmax state → ratio)")
+
+im3 = ax_heat.imshow(
+    alpha[sort_idx], aspect="auto", cmap="viridis",
+    extent=[-0.5, K - 0.5, N - 0.5, -0.5],
+)
+ax_heat.set_xticks(range(K))
+ax_heat.set_xticklabels(STATE_LABELS, rotation=90, fontsize=7, va="top")
+ax_heat.set_yticks([])
+ax_heat.set_ylim(N - 0.5, -0.5)
+ax_heat.set_title(f"α per image — all {N} sampled images  [{cfg.RUN_TAG}]")
+ax_heat.set_xlabel("latent state", labelpad=4)
+
+for b in boundaries:
+    ax_heat.axhline(b - 0.5, color="white", lw=0.6, alpha=0.7)
+
+fig3.colorbar(im3, cax=ax_cbar, label="α_k")
 fig3.tight_layout()
 out_path3 = cfg.RESULTS_DIR / f"diagnose_alpha_heatmap_all_{cfg.RUN_TAG}.png"
 fig3.savefig(out_path3, dpi=150, bbox_inches="tight")
