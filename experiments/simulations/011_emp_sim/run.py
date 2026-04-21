@@ -251,8 +251,12 @@ for cond, ds in [("train", train_ds), ("stim", stim_gen_ds)]:
             continue
         uids   = group["uid"].tolist()
         true_p = np.array([get_true_p(uid, task_name) for uid in uids])
+        totals = (group["count_0"] + group["count_1"]).values.astype(float)
+        emp_p  = (group["count_1"] / totals.clip(min=1)).values
         pred   = slda_predict(task_name, uids)
-        slda_preds[cond][task_name] = {"pred": pred, "true": true_p, "uids": uids}
+        slda_preds[cond][task_name] = {
+            "pred": pred, "true": true_p, "emp": emp_p, "totals": totals, "uids": uids,
+        }
 
 # ---------------------------------------------------------------------------
 # DLBT multi-seed training loop
@@ -353,11 +357,16 @@ for seed_idx, seed in enumerate(cfg.SEEDS):
             with torch.no_grad():
                 pred = agent.choice_probs(batch_refs, task)[:, 1].cpu().numpy()
 
+            totals = (group["count_0"] + group["count_1"]).values.astype(float)
+            emp_p  = (group["count_1"] / totals.clip(min=1)).values
+
             if task_name not in dlbt_preds[cond]:
                 dlbt_preds[cond][task_name] = {
-                    "pred": [],
-                    "true": true_p,
-                    "uids": [r.uid for r in batch_refs],
+                    "pred":   [],
+                    "true":   true_p,   # GT probability (continuous)
+                    "emp":    emp_p,    # empirical p̂ from simulated trials
+                    "totals": totals,
+                    "uids":   [r.uid for r in batch_refs],
                 }
             dlbt_preds[cond][task_name]["pred"].append(pred)
 
@@ -388,7 +397,13 @@ for cond in dlbt_preds:
 
 agent_path = cfg.RESULTS_DIR / f"agent_{cfg.RUN_TAG}.pt"
 torch.save(agent.state_dict(), agent_path)
-print(f"\nSaved agent weights (last seed) → {agent_path}")
+print(f"\nSaved best agent weights (last seed) → {agent_path}")
+
+# Also save end-of-training weights
+end_state  = result.end_state if (result is not None and result.end_state) else agent.state_dict()
+agent_end_path = cfg.RESULTS_DIR / f"agent_{cfg.RUN_TAG}_end.pt"
+torch.save(end_state, agent_end_path)
+print(f"Saved end agent weights  (last seed) → {agent_end_path}")
 
 # ---------------------------------------------------------------------------
 # Noise floors per region

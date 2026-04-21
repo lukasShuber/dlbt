@@ -46,14 +46,25 @@ def _summary_scatter(ax, pt: dict, task_names: list, color: str, marker: str,
                      title: str, mc_n=None, n_seeds=1, n_trials=100):
     """6-panel summary scatter with error bars.
 
+    Y-axis: empirical p̂ from simulated trials (d["emp"]), with GT (d["true"])
+    as fallback for backward compatibility with old result files.
+
     pt values have shape [n_seeds, n_pts] (DLBT) or [n_pts] (SLDA).
     """
     all_preds = np.concatenate(
         [pt[t]["pred"] for t in task_names if t in pt], axis=-1
     )  # [n_seeds, n_pts] or [n_pts]
-    all_trues = np.concatenate(
-        [pt[t]["true"] for t in task_names if t in pt]
+
+    # Use empirical p̂ if available, else fall back to GT
+    y_key = "emp" if any("emp" in pt[t] for t in task_names if t in pt) else "true"
+    all_y = np.concatenate(
+        [pt[t][y_key] for t in task_names if t in pt]
     )  # [n_pts]
+
+    # Compute GT-based cMSE separately when both keys exist (for subtitle annotation)
+    has_gt = y_key == "emp" and any("true" in pt[t] for t in task_names if t in pt)
+    if has_gt:
+        all_gt = np.concatenate([pt[t]["true"] for t in task_names if t in pt])
 
     # Handle both [n_seeds, n_pts] (DLBT) and [n_pts] (SLDA)
     if all_preds.ndim == 2:
@@ -63,19 +74,33 @@ def _summary_scatter(ax, pt: dict, task_names: list, color: str, marker: str,
         pred_mean = all_preds
         pred_sem  = np.zeros_like(pred_mean)
 
-    true_sem = np.sqrt(np.clip(all_trues * (1 - all_trues), 0, None) / n_trials)
+    # Error bars: use stored totals if available, else fall back to n_trials
+    all_totals = None
+    if any("totals" in pt[t] for t in task_names if t in pt):
+        all_totals = np.concatenate(
+            [pt[t]["totals"] for t in task_names if t in pt]
+        )
+    n_eff    = all_totals if all_totals is not None else np.full(len(all_y), n_trials)
+    y_sem    = np.sqrt(np.clip(all_y * (1 - all_y), 0, None) / np.clip(n_eff, 1, None))
 
-    # cMSE / rho on mean predictions
-    raw  = float(np.mean((pred_mean - all_trues) ** 2))
+    # cMSE vs empirical / rho
+    raw  = float(np.mean((pred_mean - all_y) ** 2))
     cmse = raw - float(np.mean(pred_mean * (1 - pred_mean))) / (mc_n - 1) if mc_n else raw
-    rho, _ = spearmanr(pred_mean, all_trues)
+    rho, _ = spearmanr(pred_mean, all_y)
+
+    # Optional GT cMSE annotation
+    gt_str = ""
+    if has_gt:
+        raw_gt  = float(np.mean((pred_mean - all_gt) ** 2))
+        cmse_gt = raw_gt - float(np.mean(pred_mean * (1 - pred_mean))) / (mc_n - 1) if mc_n else raw_gt
+        gt_str  = f"  (GT: {cmse_gt:.4f})"
 
     ax.plot([0, 1], [0, 1], ls="--", color="gray", lw=1.2, zorder=0)
-    ax.errorbar(pred_mean, all_trues,
-                xerr=pred_sem, yerr=true_sem,
+    ax.errorbar(pred_mean, all_y,
+                xerr=pred_sem, yerr=y_sem,
                 fmt=marker, ms=4, alpha=0.1, color=color,
                 elinewidth=0.5, capsize=0, linewidth=0)
-    ax.set_title(f"{title}\ncMSE={cmse:.4f}   ρ={rho:.3f}", fontsize=10, pad=4)
+    ax.set_title(f"{title}\ncMSE={cmse:.4f}{gt_str}   ρ={rho:.3f}", fontsize=10, pad=4)
     ax.set(xlim=(-0.02, 1.02), ylim=(-0.02, 1.02))
     ax.set_xticks([0, 0.5, 1])
     ax.set_yticks([0, 0.5, 1])
@@ -138,7 +163,11 @@ for results_path in available:
             if "left_right" in _cond_dict and "right" not in _cond_dict:
                 _cond_dict["right"] = _cond_dict.pop("left_right")
     n_seeds        = res.get("n_seeds", 1)
-    n_trials       = res.get("n_trials", cfg.N_TRIALS)
+    # Support both old single n_trials and new main/probe split
+    n_trials       = res.get("n_trials",
+                             res.get("n_trials_main",
+                                     getattr(cfg, "N_TRIALS_MAIN",
+                                             getattr(cfg, "N_TRIALS", 100))))
 
     has_phase2 = phase_boundary < len(curves["train_nlls"]) - 1
 
@@ -199,7 +228,7 @@ for results_path in available:
 
     # Single shared axis labels
     fig.supxlabel("Predicted P(right)", fontsize=12, y=0.01)
-    fig.supylabel("True P(right)", fontsize=12, x=0.01)
+    fig.supylabel("Empirical P(yes)", fontsize=12, x=0.01)
 
     sns.despine(fig=fig, trim=False)
     plt.tight_layout(rect=[0.04, 0.04, 1, 1])
@@ -221,6 +250,20 @@ for results_path in available:
     for ax in axes.flat[len(ALL_TASKS):]:
         ax.set_visible(False)
 
+    def _y_and_sem(d):
+        """Return (y_vals, y_sem) — empirical p̂ if stored, else GT."""
+        if "emp" in d:
+            y  = d["emp"]
+            n  = d["totals"] if "totals" in d else np.full(len(y), n_trials)
+        else:
+            y  = d["true"]
+            n  = np.full(len(y), n_trials)
+        sem = np.sqrt(np.clip(y * (1 - y), 0, None) / np.clip(n, 1, None))
+        return y, sem
+
+    def _y_key(d):
+        return d["emp"] if "emp" in d else d["true"]
+
     for idx, (ax, task_name) in enumerate(zip(axes.flat, ALL_TASKS)):
         ax.plot([0, 1], [0, 1], ls=":", color="gray", lw=0.7, zorder=0)
         is_val = task_name in cfg.VAL_TASKS
@@ -230,19 +273,16 @@ for results_path in available:
                     d         = dlbt[cond][task_name]
                     pred_mean = d["pred"].mean(axis=0)
                     pred_sem  = d["pred"].std(axis=0) / np.sqrt(n_seeds)
-                    true_vals = d["true"]
-                    true_sem  = np.sqrt(true_vals * (1 - true_vals) / n_trials)
-                    ax.errorbar(pred_mean, true_vals,
-                                xerr=pred_sem, yerr=true_sem,
+                    y_vals, y_sem = _y_and_sem(d)
+                    ax.errorbar(pred_mean, y_vals,
+                                xerr=pred_sem, yerr=y_sem,
                                 fmt='o', ms=3, alpha=0.2, color=color,
                                 elinewidth=0.4, capsize=0, linewidth=0)
-            # rho on mean predictions
             def _rho_mean(cond, tn):
                 if tn not in dlbt[cond]:
                     return float("nan")
                 d = dlbt[cond][tn]
-                pm = d["pred"].mean(axis=0)
-                r, _ = spearmanr(pm, d["true"])
+                r, _ = spearmanr(d["pred"].mean(axis=0), _y_key(d))
                 return r
             ax.text(0.05, 0.93, f"ρ={_rho_mean('train', task_name):.2f}",
                     transform=ax.transAxes, fontsize=6, color=C_TRAIN, va="top")
@@ -254,18 +294,16 @@ for results_path in available:
                     d         = dlbt[cond][task_name]
                     pred_mean = d["pred"].mean(axis=0)
                     pred_sem  = d["pred"].std(axis=0) / np.sqrt(n_seeds)
-                    true_vals = d["true"]
-                    true_sem  = np.sqrt(true_vals * (1 - true_vals) / n_trials)
-                    ax.errorbar(pred_mean, true_vals,
-                                xerr=pred_sem, yerr=true_sem,
+                    y_vals, y_sem = _y_and_sem(d)
+                    ax.errorbar(pred_mean, y_vals,
+                                xerr=pred_sem, yerr=y_sem,
                                 fmt='o', ms=3, alpha=0.2, color=color,
                                 elinewidth=0.4, capsize=0, linewidth=0)
             def _rho_mean_val(cond, tn):
                 if tn not in dlbt[cond]:
                     return float("nan")
                 d = dlbt[cond][tn]
-                pm = d["pred"].mean(axis=0)
-                r, _ = spearmanr(pm, d["true"])
+                r, _ = spearmanr(d["pred"].mean(axis=0), _y_key(d))
                 return r
             ax.text(0.05, 0.93, f"ρ={_rho_mean_val('task', task_name):.2f}",
                     transform=ax.transAxes, fontsize=6, color=C_TASK, va="top")
@@ -277,7 +315,7 @@ for results_path in available:
         if row == N_ROWS - 1:
             ax.set_xlabel("Pred", fontsize=7)
         if col == 0:
-            ax.set_ylabel("True", fontsize=7)
+            ax.set_ylabel("Empirical P", fontsize=7)
         ax.set(xlim=(-0.05, 1.05), ylim=(-0.05, 1.05))
         ax.tick_params(labelsize=5)
 
@@ -286,7 +324,7 @@ for results_path in available:
         for c, l in [(C_TRAIN,"train"),(C_STIM,"stim gen"),(C_TASK,"task gen"),(C_JOINT,"joint gen")]
     ], loc="lower right", bbox_to_anchor=(1.0, 0.0), fontsize=7, frameon=False, ncol=2)
     fig.text(0.5, -0.01, "Predicted P(right)", ha="center", fontsize=9)
-    fig.text(-0.01, 0.5, "True P(right)", va="center", rotation="vertical", fontsize=9)
+    fig.text(-0.01, 0.5, "Empirical P(yes)", va="center", rotation="vertical", fontsize=9)
     sns.despine(fig=fig, trim=True)
     out = plots_dir / f"plot_04_per_task_dlbt_{run_tag}.png"
     plt.savefig(out, dpi=150, bbox_inches="tight")
@@ -310,17 +348,16 @@ for results_path in available:
         for cond, color in [("train", C_TRAIN), ("stim", C_STIM)]:
             if task_name in slda[cond]:
                 d = slda[cond][task_name]
-                # pred is [n_pts] (no seed dimension) — no pred_sem
-                true_sem = np.sqrt(d["true"] * (1 - d["true"]) / n_trials)
-                ax.errorbar(d["pred"], d["true"],
-                            yerr=true_sem,
+                y_vals, y_sem = _y_and_sem(d)
+                ax.errorbar(d["pred"], y_vals,
+                            yerr=y_sem,
                             fmt="s", ms=3, alpha=0.2, color=color,
                             elinewidth=0.4, capsize=0, linewidth=0)
         def _rho_slda(cond, tn):
             if tn not in slda[cond]:
                 return float("nan")
             d = slda[cond][tn]
-            r, _ = spearmanr(d["pred"], d["true"])
+            r, _ = spearmanr(d["pred"], _y_key(d))
             return r
         ax.text(0.05, 0.93, f"ρ={_rho_slda('train', task_name):.2f}",
                 transform=ax.transAxes, fontsize=6, color=C_TRAIN, va="top")
@@ -340,7 +377,7 @@ for results_path in available:
         for c, l in [(C_TRAIN,"train"),(C_STIM,"stim gen")]
     ], loc="lower right", bbox_to_anchor=(1.0, 0.0), fontsize=7, frameon=False)
     fig.text(0.5, -0.01, "Predicted P(right)", ha="center", fontsize=9)
-    fig.text(-0.01, 0.5, "True P(right)", va="center", rotation="vertical", fontsize=9)
+    fig.text(-0.01, 0.5, "Empirical P(yes)", va="center", rotation="vertical", fontsize=9)
     sns.despine(fig=fig, trim=True)
     out = plots_dir / f"plot_05_per_task_slda_{run_tag}.png"
     plt.savefig(out, dpi=150, bbox_inches="tight")

@@ -43,6 +43,7 @@ class TrainResult:
     best_val_mse: float = float("inf")
     extra_val_nlls: Dict[str, List[float]] = field(default_factory=dict)
     extra_val_mses: Dict[str, List[float]] = field(default_factory=dict)
+    end_state:    dict = field(default_factory=dict)  # weights at end of training
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +231,8 @@ def train_dlbt(
                 print(f"Early stop at epoch {epoch}. Best epoch: {result.best_epoch}.")
                 break
 
+    # Save end-of-training weights before restoring best
+    result.end_state = copy.deepcopy(agent.state_dict())
     # Restore best weights
     agent.load_state_dict(best_state)
     return result
