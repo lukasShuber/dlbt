@@ -82,49 +82,52 @@ RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"
 #     "right_and_large_and_transparent",
 # ]
 
-# TRAIN_TASKS = [
-#     # 1-way only — perfectly balanced polarity per dim
-#     "right", "left",
-#     "transparent", "opaque",
-#     "glossy", "matte",
-#     "large", "small",
-# ]
-# VAL_TASKS = [
-#     # held-out conjunctions — pure task generalisation test
-#     "right_and_transparent", "left_and_transparent",
-#     "right_and_glossy",      "left_and_glossy",
-#     "transparent_and_glossy",
-#     "large_and_transparent", "large_and_glossy",
-#     "right_and_transparent_and_glossy",
-#     "left_and_transparent_and_glossy",
-#     "large_and_transparent_and_glossy",
-#     "right_and_large",
-#     "left_and_large",
-#     "right_and_large_and_glossy",
-#     "right_and_large_and_transparent",
-# ]
-
 TRAIN_TASKS = [
     # 1-way only — perfectly balanced polarity per dim
-
-    "right_and_large",
-    "right",
-    "large_and_transparent_and_glossy",
-    "transparent",
+    "left_and_transparent",
     "right_and_glossy",
-    "right_and_transparent_and_glossy",
-    "glossy",
-    "large",
+    "right", "left",
+    "transparent", "opaque",
     "transparent_and_glossy",
-    "right_and_large_and_glossy",
-    "large_and_transparent",
-    "right_and_large_and_transparent",
+    "glossy", "matte",
+    "large_and_glossy"
+    "large", "small",
 ]
 VAL_TASKS = [
-    # held-out conjunctions
+    # held-out conjunctions — pure task generalisation test
     "right_and_transparent",
-    "large_and_glossy",
+    "left_and_glossy",
+    "large_and_transparent",
+    "right_and_transparent_and_glossy",
+    "left_and_transparent_and_glossy",
+    "large_and_transparent_and_glossy",
+    "right_and_large",
+    "left_and_large",
+    "right_and_large_and_glossy",
+    "right_and_large_and_transparent",
 ]
+
+# TRAIN_TASKS = [
+#     # 1-way only — perfectly balanced polarity per dim
+
+#     "right_and_large",
+#     "right",
+#     "large_and_transparent_and_glossy",
+#     "transparent",
+#     "right_and_glossy",
+#     "right_and_transparent_and_glossy",
+#     "glossy",
+#     "large",
+#     "transparent_and_glossy",
+#     "right_and_large_and_glossy",
+#     "large_and_transparent",
+#     "right_and_large_and_transparent",
+# ]
+# VAL_TASKS = [
+#     # held-out conjunctions
+#     "right_and_transparent",
+#     "large_and_glossy",
+# ]
 
 # ---------------------------------------------------------------------------
 # Behavioural task_id  ->  DLBT task name
