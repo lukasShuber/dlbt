@@ -57,18 +57,10 @@ labels_present = [l for l in budget_labels if l in results]
 # ---------------------------------------------------------------------------
 # Plot 01 — cMSE−NF vs trial budget
 # ---------------------------------------------------------------------------
-regions = [
-    ("stim_gen_cmse_net",  cfg.C_STIM,  "stim gen"),
-    ("task_gen_cmse_net",  cfg.C_TASK,  "task gen"),
-    ("joint_gen_cmse_net", cfg.C_JOINT, "joint gen"),
-    ("train_cmse_net",     cfg.C_TRAIN, "train (in-sample)"),
-]
-
 fig, ax = plt.subplots(figsize=(7, 4.5))
 
-for metric_key, color, label in regions:
-    ys = [results[l][metric_key] for l in labels_present]
-    ax.plot(x_vals, ys, "o-", color=color, label=label, lw=1.8, ms=6)
+ys = [results[l]["joint_gen_cmse_net"] for l in labels_present]
+ax.plot(x_vals, ys, "o-", color=cfg.C_JOINT, label="joint gen", lw=1.8, ms=6)
 
 # Random guesser line on joint_gen only
 ax.axhline(rg_joint, ls="--", color=cfg.C_JOINT, alpha=0.5, lw=1.2,
