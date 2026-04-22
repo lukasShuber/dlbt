@@ -41,7 +41,7 @@ EVAL_CELL_FRAC = 0.10
 N_EPOCHS_PHASE1 = 1000
 PATIENCE_PHASE1 = 100
 N_EPOCHS_PHASE2 = 3000
-PATIENCE_PHASE2 = 200
+PATIENCE_PHASE2 = 50
 LR              = 1e-2
 LR_ATTNPOOL     = 1e-5
 N_MC            = 100
@@ -80,11 +80,11 @@ RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"
 
 TRAIN_TASKS = [
     # simple
-    "right", "small"
+    "right", "small", "transparent", "matte"
 ]
 VAL_TASKS = [
     # lr × sl conjunctions — never seen during training
-    "left", "large"
+    "left", "large", "opaque", "glossy",
 ]
 
 # ---------------------------------------------------------------------------
