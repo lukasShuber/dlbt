@@ -389,8 +389,12 @@ for results_path in candidates:
     )
 
     # -----------------------------------------------------------------------
-    # Plot 06 — SLDA per-task grid (train + stim_gen)
+    # Plot 06 — SLDA per-task grid (train + stim_gen) — skipped for Flex runs
     # -----------------------------------------------------------------------
+    if not slda or not any(slda.get(c) for c in ("train", "stim")):
+        print("Skipping SLDA plot (no SLDA predictions in this results file).")
+        continue
+
     N_COLS_S = 6
     N_ROWS_S = math.ceil(len(cfg.TRAIN_TASKS) / N_COLS_S)
     fig, axes = plt.subplots(N_ROWS_S, N_COLS_S,
