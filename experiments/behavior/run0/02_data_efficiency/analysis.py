@@ -66,9 +66,6 @@ fig, ax = plt.subplots(figsize=(7, 4.5))
 
 ax.plot(x_solid, y_solid, "o-",  color=cfg.C_JOINT, lw=1.8, ms=6,
         label="joint gen")
-if len(x_dashed) > 1:
-    ax.plot(x_dashed, y_dashed, "o--", color=cfg.C_JOINT, lw=1.8, ms=6,
-            alpha=0.55, label="joint gen (replacement sampling)")
 
 # Random guesser line on joint_gen only
 ax.axhline(rg_joint, ls="--", color=cfg.C_JOINT, alpha=0.5, lw=1.2,
@@ -81,9 +78,9 @@ ax.set_xlabel("Trial budget", fontsize=11)
 ax.set_ylabel("cMSE − noise floor", fontsize=11)
 ax.set_title("Data efficiency: DLBT generalisation vs trial budget", fontsize=11)
 
-# Tick at every point; use the label string for each
-ax.set_xticks(x_all)
-ax.set_xticklabels(lab_all, fontsize=9)
+# Tick at every solid point; use the label string for each
+ax.set_xticks(x_solid)
+ax.set_xticklabels(lab_all[:full_idx + 1], fontsize=9)
 
 ax.legend(fontsize=9, frameon=False)
 sns.despine(trim=True)
