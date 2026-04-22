@@ -80,24 +80,22 @@ RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"
 
 TRAIN_TASKS = [
     # simple
-    "right", "small", "transparent", "matte",
+    "right", "small", "transparent", "matte", "right_and_large",
+     "left_and_glossy", "transparent_and_glossy"
 ]
 VAL_TASKS = [
     # lr × sl conjunctions — never seen during training
     "left", "large", "opaque", "glossy",
-    "right_and_large",
     "left_and_large",
     "large_and_transparent", "large_and_glossy",
-    "transparent_and_glossy",
     "right_and_transparent", "left_and_transparent",
-    "right_and_glossy",      "left_and_glossy",
+    "right_and_glossy",
     "right_and_transparent_and_glossy",
     "left_and_transparent_and_glossy",
     "large_and_transparent_and_glossy",
     "right_and_large_and_glossy",
     "right_and_large_and_transparent",
 ]
-
 # ---------------------------------------------------------------------------
 # Behavioural task_id → DLBT task name
 # ---------------------------------------------------------------------------

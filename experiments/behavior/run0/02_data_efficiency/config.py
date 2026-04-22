@@ -36,7 +36,7 @@ EVAL_CELL_FRAC = 0.10
 # Each integer budget B means: uniformly sample B trials (without replacement
 # from the pool of all individual training trials; with replacement if B
 # exceeds the pool size).
-TRIAL_BUDGETS = [10, 100, 1_000, 10_000, 100_000, "full"]
+TRIAL_BUDGETS = [10, 100, 1_000, "full"]
 
 # ---------------------------------------------------------------------------
 # Training
@@ -76,13 +76,35 @@ RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"
 # ]
 
 
+# TRAIN_TASKS = [
+#     # simple
+#     "right", "small", "transparent", "matte"
+# ]
+# VAL_TASKS = [
+#     # lr × sl conjunctions — never seen during training
+#     "left", "large", "opaque", "glossy"
+# ]
+
+
+
 TRAIN_TASKS = [
     # simple
-    "right", "small", "transparent", "matte"
+    "right", "small", "transparent", "matte",
 ]
 VAL_TASKS = [
     # lr × sl conjunctions — never seen during training
-    "left", "large", "opaque", "glossy"
+    "left", "large", "opaque", "glossy",
+    "right_and_large",
+    "left_and_large",
+    "large_and_transparent", "large_and_glossy",
+    "transparent_and_glossy",
+    "right_and_transparent", "left_and_transparent",
+    "right_and_glossy",      "left_and_glossy",
+    "right_and_transparent_and_glossy",
+    "left_and_transparent_and_glossy",
+    "large_and_transparent_and_glossy",
+    "right_and_large_and_glossy",
+    "right_and_large_and_transparent",
 ]
 
 BEH_ID_TO_TASK = {
