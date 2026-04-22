@@ -48,8 +48,6 @@ N_MC      = 100
 FREEZE_ENCODER = True
 MAPPER_HIDDEN  = None
 
-KL_WEIGHT   = 0.0
-PRIOR_ALPHA = 1.0
 
 RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"
 

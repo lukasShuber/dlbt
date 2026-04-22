@@ -258,8 +258,6 @@ for budget in cfg.TRIAL_BUDGETS:
             "task_gen":  task_gen_ds,
             "joint_gen": joint_gen_ds,
         },
-        kl_weight   = cfg.KL_WEIGHT,
-        prior_alpha = cfg.PRIOR_ALPHA,
     )
     print(f"  best epoch: {result.best_epoch}  eval_mse: {result.best_val_mse:.4f}")
 

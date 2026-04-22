@@ -39,54 +39,11 @@ class TrainResult:
     val_nlls:     List[float] = field(default_factory=list)
     train_mses:   List[float] = field(default_factory=list)
     val_mses:     List[float] = field(default_factory=list)
-    train_kls:    List[float] = field(default_factory=list)  # mean KL per epoch (0 if kl_weight==0)
     best_epoch:   int = 0
     best_val_mse: float = float("inf")
     extra_val_nlls: Dict[str, List[float]] = field(default_factory=dict)
     extra_val_mses: Dict[str, List[float]] = field(default_factory=dict)
     end_state:    dict = field(default_factory=dict)  # weights at end of training
-
-
-# ---------------------------------------------------------------------------
-# KL regularisation
-# ---------------------------------------------------------------------------
-
-def dirichlet_kl_uniform(alpha: torch.Tensor, alpha0: float = 1.0) -> torch.Tensor:
-    """
-    Mean KL( Dir(α_i) || Dir(α0 · 1) ) over a batch of Dirichlet parameters.
-
-    KL between two Dirichlet distributions Dir(α) and Dir(β) is:
-        log Γ(Σα_k) - Σ log Γ(α_k) - log Γ(Σβ_k) + Σ log Γ(β_k)
-        + Σ (α_k - β_k)(ψ(α_k) - ψ(Σα_k))
-
-    For the uniform symmetric prior β = α0 · 1 this simplifies to a single
-    scalar reference per batch row.
-
-    Args:
-        alpha:  [B, K] concentration parameters, all strictly positive.
-        alpha0: scalar prior concentration (default 1.0 → flat Dirichlet).
-                • alpha0 = 1.0  uniform prior, penalises any peaking.
-                • alpha0 < 1.0  sparse prior (promotes peaked distributions).
-                • alpha0 > 1.0  smooth prior (allows moderate spreading).
-    Returns:
-        Scalar mean KL (differentiable w.r.t. alpha).
-    """
-    K         = alpha.shape[1]
-    alpha_sum = alpha.sum(dim=1)                           # [B]
-    a0        = alpha.new_tensor(alpha0)
-
-    kl = (
-        torch.lgamma(alpha_sum)                            # log Γ(Σα_k)
-        - alpha.lgamma().sum(dim=1)                        # −Σ log Γ(α_k)
-        - torch.lgamma(a0 * K)                             # −log Γ(K·α0)
-        + K * torch.lgamma(a0)                             # +K log Γ(α0)
-        + (                                                # Σ (α_k − α0)(ψ(α_k) − ψ(Σα_k))
-            (alpha - alpha0)
-            * (torch.digamma(alpha)
-               - torch.digamma(alpha_sum.unsqueeze(1)))
-          ).sum(dim=1)
-    )
-    return kl.mean()
 
 
 # ---------------------------------------------------------------------------
@@ -142,11 +99,9 @@ def train_dlbt(
     optimizer:     Optional[torch.optim.Optimizer] = None,
     grad_clip:     float = 1.0,
     extra_val_datasets: Optional[Dict[str, BehavioralDataset]] = None,
-    kl_weight:     float = 0.0,
-    prior_alpha:   float = 1.0,
 ) -> TrainResult:
     """
-    Train a DlbtAgent on behavioural choice data.
+    Train a DlbtAgent on behavioural choice data (pure NLL).
 
     Args:
         agent:          the DlbtAgent to train (modified in-place).
@@ -158,19 +113,9 @@ def train_dlbt(
         patience:       early-stopping patience (epochs without val improvement).
         callbacks:      list of callables called each epoch as
                         callback(epoch, val_nll, val_mse).
-                        Use for logging, TensorBoard, etc.
-        optimizer:      optional pre-built optimizer. Use this to set per-
-                        parameter-group learning rates (e.g. different LRs for
-                        the mapper and attnpool). If None, a default Adam with
-                        lr is constructed from agent.trainable_parameters().
+        optimizer:      optional pre-built optimizer.
         grad_clip:      max gradient norm (torch.nn.utils.clip_grad_norm_).
-                        Prevents early-epoch NLL spikes when using high LR.
-        kl_weight:      weight λ for the Dirichlet KL regulariser.
-                        loss = NLL + λ · mean_i KL(Dir(α_i) || Dir(α0·1)).
-                        Set to 0.0 (default) for pure NLL — fully backward-
-                        compatible with the unregularised training loop.
-        prior_alpha:    concentration α0 of the symmetric Dirichlet prior.
-                        1.0 (default) = uniform prior, penalises peaking.
+        extra_val_datasets: additional datasets evaluated each epoch.
 
     Returns:
         TrainResult with metrics and best-weight agent.
@@ -182,17 +127,11 @@ def train_dlbt(
     if optimizer is None:
         optimizer = torch.optim.Adam(agent.trainable_parameters(), lr=lr)
 
-    # Pre-build the list of unique training image refs (used by KL term).
-    # Done once here so the inner loop doesn't rebuild it every epoch.
-    train_uids     = list(train_dataset.df["uid"].unique())
-    train_refs_all = [image_refs[uid] for uid in train_uids]
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=n_epochs, eta_min=1e-6,
     )
 
     # Pre-cache features before the training loop.
-    # frozen:  cache full CLIP features [1024] — forward passes become lookups.
-    # attnpool: cache pre-attnpool spatial maps — each epoch only runs attnpool + mapper.
     all_refs = list(image_refs.values())
     if agent.freeze_encoder:
         agent.precompute_features(all_refs)
@@ -200,13 +139,13 @@ def train_dlbt(
         agent.precompute_backbone_features(all_refs)
 
     # Baseline evaluation (epoch 0)
+    agent.eval()
     train_nll0, train_mse0 = evaluate(agent, train_dataset, image_refs)
     val_nll0,   val_mse0   = evaluate(agent, val_dataset,   image_refs)
     result.train_nlls.append(train_nll0)
     result.train_mses.append(train_mse0)
     result.val_nlls.append(val_nll0)
     result.val_mses.append(val_mse0)
-    result.train_kls.append(0.0)
     result.best_val_mse = val_mse0
 
     for name, ds in extra_val_datasets.items():
@@ -214,7 +153,6 @@ def train_dlbt(
         result.extra_val_nlls[name].append(nll)
         result.extra_val_mses[name].append(mse_)
 
-    # Save initial weights
     best_state = copy.deepcopy(agent.state_dict())
     no_improve = 0
 
@@ -223,8 +161,7 @@ def train_dlbt(
 
         # ---- Forward + backward pass over all tasks -----------------------
         # Gradient accumulation: backward() after each task so only one
-        # computation graph lives in memory at a time (critical for phase 2
-        # where attnpool is trainable and graphs are much larger).
+        # computation graph lives in memory at a time.
         agent.train()
         optimizer.zero_grad()
         total_loss = 0.0
@@ -240,20 +177,8 @@ def train_dlbt(
             )
             probs     = agent.choice_probs(refs, task)                    # [B, 2]
             task_loss = multinomial_nll(probs, counts) * len(refs) / n_total
-            task_loss.backward()           # free graph immediately
+            task_loss.backward()
             total_loss += task_loss.item()
-
-        # ---- KL regularisation (optional) ---------------------------------
-        # Computed over all unique training images (not per-task, to avoid
-        # double-counting images that appear in multiple tasks).
-        # kl_weight=0.0 skips this entirely → pure NLL, backward-compatible.
-        epoch_kl = 0.0
-        if kl_weight > 0.0:
-            alpha     = agent.get_alpha(train_refs_all)                    # [N, K]
-            kl_loss   = kl_weight * dirichlet_kl_uniform(alpha, prior_alpha)
-            kl_loss.backward()
-            epoch_kl  = kl_loss.item()
-            total_loss += epoch_kl
 
         if grad_clip > 0:
             torch.nn.utils.clip_grad_norm_(agent.trainable_parameters(), grad_clip)
@@ -268,7 +193,6 @@ def train_dlbt(
         result.train_mses.append(train_mse_val)
         result.val_nlls.append(val_nll)
         result.val_mses.append(val_mse_val)
-        result.train_kls.append(epoch_kl)
 
         for name, ds in extra_val_datasets.items():
             nll, mse_ = evaluate(agent, ds, image_refs)
@@ -279,15 +203,12 @@ def train_dlbt(
         scheduler.step()
 
         # ---- Progress bar -------------------------------------------------
-        postfix = dict(
+        pbar.set_postfix(
             train_nll=f"{train_nll:.3f}",
-            val_nll=f"{val_nll:.3f}",
-            val_mse=f"{val_mse_val:.4f}",
-            lr=f"{optimizer.param_groups[0]['lr']:.2e}",
+            val_nll  =f"{val_nll:.3f}",
+            val_mse  =f"{val_mse_val:.4f}",
+            lr       =f"{optimizer.param_groups[0]['lr']:.2e}",
         )
-        if kl_weight > 0.0:
-            postfix["kl"] = f"{epoch_kl:.4f}"
-        pbar.set_postfix(**postfix)
 
         # ---- Callbacks ----------------------------------------------------
         for cb in callbacks:
@@ -305,8 +226,6 @@ def train_dlbt(
                 print(f"Early stop at epoch {epoch}. Best epoch: {result.best_epoch}.")
                 break
 
-    # Save end-of-training weights before restoring best
     result.end_state = copy.deepcopy(agent.state_dict())
-    # Restore best weights
     agent.load_state_dict(best_state)
     return result
