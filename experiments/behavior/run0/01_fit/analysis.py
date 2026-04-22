@@ -96,7 +96,7 @@ def _draw_pooled(ax, pred_mean, pred_sem, all_trues, all_totals, rho, raw_mse, n
     ax.plot([0, 1], [0, 1], ls="--", color="gray", lw=1.2, zorder=0)
     ax.errorbar(pred_mean, all_trues,
                 xerr=pred_sem, yerr=true_sem,
-                fmt=marker, ms=4, alpha=0.15, color=color,
+                fmt=marker, ms=4, alpha=0.5, color=color,
                 elinewidth=0.5, capsize=0, linewidth=0)
     ax.set_title(
         f"{title}\nMSE={raw_mse:.4f}  (−NF)={net_mse:+.4f}   ρ={rho:.3f}",
@@ -125,13 +125,21 @@ def _draw_task_panel(ax, pt: dict, task_name: str, cond_colors: list, n_seeds=1,
         pred_sem  = pv.std(axis=0) / np.sqrt(max(n_seeds, 1)) if pv.ndim == 2 else np.zeros_like(pred_mean)
         ax.errorbar(pred_mean, true_vals,
                     xerr=pred_sem, yerr=true_sem,
-                    fmt='o', ms=3, alpha=0.2, color=color,
+                    fmt='o', ms=3, alpha=0.6, color=color,
                     elinewidth=0.4, capsize=0, linewidth=0)
         if valid.sum() >= 2:
             rho, _ = spearmanr(pred_mean, true_vals)
+            raw_mse = float(np.mean((pred_mean - true_vals) ** 2))
+            if mc_n and mc_n > 1:
+                raw_mse -= float(np.mean(pred_mean * (1 - pred_mean))) / (mc_n - 1)
+            nf      = _noise_floor_local(true_vals, totals)
+            net_mse = raw_mse - nf
             ax.text(0.05, y_top, f"ρ={rho:.2f}",
                     transform=ax.transAxes, fontsize=6, color=color, va="top")
-            y_top -= 0.15
+            y_top -= 0.13
+            ax.text(0.05, y_top, f"mse={net_mse:.3f}",
+                    transform=ax.transAxes, fontsize=6, color=color, va="top")
+            y_top -= 0.13
     label = task_name.replace("_and_", " & ").replace("_", "/")
     ax.set_title(label, fontsize=7, pad=2)
     ax.set(xlim=(-0.05, 1.05), ylim=(-0.05, 1.05))
@@ -415,7 +423,7 @@ for results_path in candidates:
             true_sem = _true_sem(d["true"][valid], d["totals"][valid])
             ax.errorbar(d["pred"][valid], d["true"][valid],
                         yerr=true_sem,
-                        fmt="s", ms=3, alpha=0.2, color=color,
+                        fmt="s", ms=3, alpha=0.5, color=color,
                         elinewidth=0.4, capsize=0, linewidth=0)
             if valid.sum() >= 2:
                 r, _ = spearmanr(d["pred"][valid], d["true"][valid])

@@ -41,12 +41,15 @@ TRIAL_BUDGETS = [10, 100, 1_000, 10_000, "full"]
 # ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
-N_EPOCHS  = 1000
-PATIENCE  = 100          # early stopping on eval_ds
-LR        = 1e-2
-N_MC      = 100
-FREEZE_ENCODER = True
-MAPPER_HIDDEN  = None
+N_EPOCHS         = 1000    # phase 1: mapper warmup
+PATIENCE         = 100     # phase 1 early stopping
+N_EPOCHS_PHASE2  = 3000   # phase 2: attnpool fine-tuning
+PATIENCE_PHASE2  = 50
+LR               = 1e-2
+LR_ATTNPOOL      = 1e-5
+N_MC             = 100
+FREEZE_ENCODER   = True
+MAPPER_HIDDEN    = None
 
 
 RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"
@@ -54,22 +57,32 @@ RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"
 # ---------------------------------------------------------------------------
 # Task split (identical to 01_fit)
 # ---------------------------------------------------------------------------
+# TRAIN_TASKS = [
+#     "right", "transparent", "glossy", "large",
+#     "left", "opaque", "matte", "small",
+#     "right_and_transparent", "left_and_transparent",
+#     "right_and_glossy",      "left_and_glossy",
+#     "transparent_and_glossy",
+#     "large_and_transparent", "large_and_glossy",
+#     "right_and_transparent_and_glossy",
+#     "left_and_transparent_and_glossy",
+#     "large_and_transparent_and_glossy",
+# ]
+# VAL_TASKS = [
+#     "right_and_large",
+#     "left_and_large",
+#     "right_and_large_and_glossy",
+#     "right_and_large_and_transparent",
+# ]
+
+
 TRAIN_TASKS = [
-    "right", "transparent", "glossy", "large",
-    "left", "opaque", "matte", "small",
-    "right_and_transparent", "left_and_transparent",
-    "right_and_glossy",      "left_and_glossy",
-    "transparent_and_glossy",
-    "large_and_transparent", "large_and_glossy",
-    "right_and_transparent_and_glossy",
-    "left_and_transparent_and_glossy",
-    "large_and_transparent_and_glossy",
+    # simple
+    "right", "small", "transparent", "matte"
 ]
 VAL_TASKS = [
-    "right_and_large",
-    "left_and_large",
-    "right_and_large_and_glossy",
-    "right_and_large_and_transparent",
+    # lr × sl conjunctions — never seen during training
+    "left", "large", "opaque", "glossy"
 ]
 
 BEH_ID_TO_TASK = {

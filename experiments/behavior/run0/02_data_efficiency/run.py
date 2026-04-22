@@ -20,6 +20,7 @@ Run from repo root:
     python experiments/behavior/run0/02_data_efficiency/run.py
 """
 
+import gc
 import pickle
 import random
 import sys
@@ -28,6 +29,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch
+from tqdm import tqdm
 
 from dlbt.data.image_ref import load_image_refs, image_refs_as_list
 from dlbt.data.task import TASKS
@@ -216,6 +218,15 @@ def _build_subsampled_ds(B: int, rng: np.random.Generator) -> BehavioralDataset:
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def _concat(p1_list, p2_list):
+    if p2_list is None:
+        return list(p1_list)
+    return list(p1_list) + list(p2_list)[1:]
+
+
+# ---------------------------------------------------------------------------
 # Data-efficiency sweep
 # ---------------------------------------------------------------------------
 results_per_budget = {}
@@ -241,14 +252,15 @@ for budget in cfg.TRIAL_BUDGETS:
         print("  → Empty dataset, skipping.")
         continue
 
-    # Fresh agent
+    # Fresh agent — always start phase 1 with frozen encoder
     torch.manual_seed(cfg.SEEDS[0])
     agent = DlbtAgent(freeze_encoder=True, n_mc_samples=cfg.N_MC,
                       device=device, mapper_hidden=cfg.MAPPER_HIDDEN)
     agent._cache = {uid: feat.clone() for uid, feat in frozen_clip.items()}
 
-    # Train — early stopping on eval_ds
-    result = train_dlbt(
+    # Phase 1: mapper warmup (frozen encoder)
+    print("  Phase 1 — mapper warmup...")
+    phase1 = train_dlbt(
         agent, train_ds_b, eval_ds, refs_dict,
         n_epochs = cfg.N_EPOCHS,
         lr       = cfg.LR,
@@ -259,6 +271,52 @@ for budget in cfg.TRIAL_BUDGETS:
             "joint_gen": joint_gen_ds,
         },
     )
+    print(f"  Phase 1 best epoch: {phase1.best_epoch}  eval_mse: {phase1.best_val_mse:.4f}")
+
+    # Phase 2: attnpool fine-tuning (optional)
+    phase2 = None
+    if not cfg.FREEZE_ENCODER:
+        print("  Phase 2 — attnpool fine-tuning...")
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        for p in agent.mapper.parameters():
+            p.requires_grad_(False)
+        for p in agent.encoder.attnpool.parameters():
+            p.requires_grad_(True)
+        agent.freeze_encoder = False
+        agent._cache.clear()
+
+        optimizer2 = torch.optim.Adam(
+            agent.encoder.attnpool.parameters(), lr=cfg.LR_ATTNPOOL
+        )
+        phase2 = train_dlbt(
+            agent, train_ds_b, eval_ds, refs_dict,
+            n_epochs  = cfg.N_EPOCHS_PHASE2,
+            patience  = cfg.PATIENCE_PHASE2,
+            optimizer = optimizer2,
+            extra_val_datasets = {
+                "stim_gen":  stim_gen_ds,
+                "task_gen":  task_gen_ds,
+                "joint_gen": joint_gen_ds,
+            },
+        )
+        print(f"  Phase 2 best epoch: {phase2.best_epoch}  eval_mse: {phase2.best_val_mse:.4f}")
+
+        print("  Repopulating feature cache...")
+        agent.eval()
+        all_refs_list = list(refs_dict.values())
+        with torch.no_grad():
+            for i in tqdm(range(0, len(all_refs_list), 16), desc="  caching", unit="batch"):
+                batch   = all_refs_list[i : i + 16]
+                spatial = torch.stack(
+                    [agent._backbone_cache[r.uid] for r in batch]
+                ).to(agent.device)
+                feats = agent.encoder.attnpool(spatial).float()
+                for ref, feat in zip(batch, feats):
+                    agent._cache[ref.uid] = feat.cpu()
+
+    result = phase2 if phase2 is not None else phase1
     print(f"  best epoch: {result.best_epoch}  eval_mse: {result.best_val_mse:.4f}")
 
     # Collect predictions on all regions
@@ -300,11 +358,16 @@ for budget in cfg.TRIAL_BUDGETS:
         "joint_gen_cmse_net": _region_cmse_net("joint_gen", cfg.VAL_TASKS,   "joint_gen"),
         "preds":              preds,
         "curves":             dict(
-            train_mses  = result.train_mses,
-            eval_mses   = result.val_mses,
-            stim_mses   = result.extra_val_mses.get("stim_gen", []),
-            task_mses   = result.extra_val_mses.get("task_gen", []),
-            joint_mses  = result.extra_val_mses.get("joint_gen", []),
+            train_mses  = _concat(phase1.train_mses,
+                                  phase2.train_mses  if phase2 else None),
+            eval_mses   = _concat(phase1.val_mses,
+                                  phase2.val_mses    if phase2 else None),
+            stim_mses   = _concat(phase1.extra_val_mses.get("stim_gen",  []),
+                                  phase2.extra_val_mses.get("stim_gen",  []) if phase2 else None),
+            task_mses   = _concat(phase1.extra_val_mses.get("task_gen",  []),
+                                  phase2.extra_val_mses.get("task_gen",  []) if phase2 else None),
+            joint_mses  = _concat(phase1.extra_val_mses.get("joint_gen", []),
+                                  phase2.extra_val_mses.get("joint_gen", []) if phase2 else None),
         ),
     }
     for k in ["train_cmse_net", "stim_gen_cmse_net", "task_gen_cmse_net", "joint_gen_cmse_net"]:
