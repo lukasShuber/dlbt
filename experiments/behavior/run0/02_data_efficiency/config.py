@@ -36,7 +36,7 @@ EVAL_CELL_FRAC = 0.10
 # Each integer budget B means: uniformly sample B trials (without replacement
 # from the pool of all individual training trials; with replacement if B
 # exceeds the pool size).
-TRIAL_BUDGETS = [10, 100, 1_000, 10_000, "full"]
+TRIAL_BUDGETS = [10, 100, 1_000, 10_000, 100_000, "full"]
 
 # ---------------------------------------------------------------------------
 # Training
