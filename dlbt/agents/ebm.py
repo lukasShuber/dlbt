@@ -119,10 +119,10 @@ class EBMAgent(nn.Module, Agent):
         # ---- Fixed uniform simplex samples ---------------------------------
         # Draw N points uniformly from Δ^{K-1} using the Dirichlet(1,…,1) trick:
         #   x_k ~ Exp(1)  →  p̃ = x / Σx  is uniform on the simplex.
-        gen = torch.Generator()
+        gen = torch.Generator()          # CPU generator — works regardless of device
         gen.manual_seed(mc_seed)
-        x   = torch.zeros(n_mc_samples, K, device=device).exponential_(generator=gen)
-        mc  = x / x.sum(dim=1, keepdim=True)          # [N, K]
+        x   = torch.zeros(n_mc_samples, K).exponential_(generator=gen)  # CPU
+        mc  = (x / x.sum(dim=1, keepdim=True)).to(device)               # [N, K]
         self.register_buffer("mc_samples", mc)         # non-trainable, moves with .to()
 
         # ---- Task indicator cache (lazy, keyed by task.name) ---------------
