@@ -40,27 +40,35 @@ rg_joint  = summary["random_guesser_joint_gen_cmse_net"]
 n_pool    = summary["n_pool"]
 
 # Ordered budget labels (full comes last)
-budget_labels = [str(b) for b in cfg.TRIAL_BUDGETS if str(b) in results or b == "full"]
-# Ensure "full" is included
-if "full" in results and "full" not in budget_labels:
-    budget_labels.append("full")
+# Build (x, label, y) for every available budget, sorted by x (actual trial count).
+# "full" is placed at n_pool — wherever that lands on the axis.
+all_points = []
+for label, res in results.items():
+    x = n_pool if label == "full" else int(label)
+    all_points.append((x, label, res["joint_gen_cmse_net"]))
+all_points.sort(key=lambda p: p[0])
 
-# Map each label to a numeric x-value for plotting
-def _budget_x(label):
-    if label == "full":
-        return n_pool
-    return int(label)
+x_all     = [p[0] for p in all_points]
+lab_all   = [p[1] for p in all_points]
+y_all     = [p[2] for p in all_points]
 
-x_vals = [_budget_x(l) for l in budget_labels if l in results]
-labels_present = [l for l in budget_labels if l in results]
+# Split at "full": solid up to (and including) "full", dashed beyond.
+full_idx  = next((i for i, p in enumerate(all_points) if p[1] == "full"), len(all_points) - 1)
+x_solid   = x_all[:full_idx + 1]
+y_solid   = y_all[:full_idx + 1]
+x_dashed  = x_all[full_idx:]       # overlaps at "full" so the lines connect
+y_dashed  = y_all[full_idx:]
 
 # ---------------------------------------------------------------------------
 # Plot 01 — cMSE−NF vs trial budget
 # ---------------------------------------------------------------------------
 fig, ax = plt.subplots(figsize=(7, 4.5))
 
-ys = [results[l]["joint_gen_cmse_net"] for l in labels_present]
-ax.plot(x_vals, ys, "o-", color=cfg.C_JOINT, label="joint gen", lw=1.8, ms=6)
+ax.plot(x_solid, y_solid, "o-",  color=cfg.C_JOINT, lw=1.8, ms=6,
+        label="joint gen")
+if len(x_dashed) > 1:
+    ax.plot(x_dashed, y_dashed, "o--", color=cfg.C_JOINT, lw=1.8, ms=6,
+            alpha=0.55, label="joint gen (replacement sampling)")
 
 # Random guesser line on joint_gen only
 ax.axhline(rg_joint, ls="--", color=cfg.C_JOINT, alpha=0.5, lw=1.2,
@@ -73,9 +81,9 @@ ax.set_xlabel("Trial budget", fontsize=11)
 ax.set_ylabel("cMSE − noise floor", fontsize=11)
 ax.set_title("Data efficiency: DLBT generalisation vs trial budget", fontsize=11)
 
-# Annotate x-axis with "full" budget
-ax.set_xticks(x_vals)
-ax.set_xticklabels(labels_present, fontsize=9)
+# Tick at every point; use the label string for each
+ax.set_xticks(x_all)
+ax.set_xticklabels(lab_all, fontsize=9)
 
 ax.legend(fontsize=9, frameon=False)
 sns.despine(trim=True)
@@ -88,7 +96,7 @@ plt.close()
 # ---------------------------------------------------------------------------
 # Plot 02 — learning curves per budget
 # ---------------------------------------------------------------------------
-for label in labels_present:
+for label in lab_all:
     res_b  = results[label]
     curves = res_b["curves"]
     epochs = range(len(curves["train_mses"]))

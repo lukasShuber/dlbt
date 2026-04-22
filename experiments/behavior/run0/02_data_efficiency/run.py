@@ -233,7 +233,15 @@ results_per_budget = {}
 
 rng_run = np.random.default_rng(cfg.SEED + 1)  # separate rng for subsampling
 
-for budget in cfg.TRIAL_BUDGETS:
+# Process budgets in order of actual trial count:
+#   without-replacement first (B ≤ N_POOL), then "full", then with-replacement (B > N_POOL).
+# This keeps the sweep semantically ordered even when n_pool < max(integer budgets).
+_int_budgets_in  = sorted([b for b in cfg.TRIAL_BUDGETS if b != "full" and b <= N_POOL])
+_int_budgets_out = sorted([b for b in cfg.TRIAL_BUDGETS if b != "full" and b >  N_POOL])
+_has_full        = "full" in cfg.TRIAL_BUDGETS
+_budgets_ordered = _int_budgets_in + (["full"] if _has_full else []) + _int_budgets_out
+
+for budget in _budgets_ordered:
     budget_label = "full" if budget == "full" else str(budget)
     print(f"\n{'='*60}")
     print(f"Budget: {budget_label}")
@@ -319,7 +327,9 @@ for budget in cfg.TRIAL_BUDGETS:
     result = phase2 if phase2 is not None else phase1
     print(f"  best epoch: {result.best_epoch}  eval_mse: {result.best_val_mse:.4f}")
 
-    # Collect predictions on all regions
+    # Collect predictions — agent is at best-checkpoint weights here.
+    # train_dlbt restores best_state via agent.load_state_dict(best_state)
+    # before returning, so these preds reflect the early-stopped model.
     agent.eval()
     preds = _collect_preds(agent, [
         ("train",     train_ds_b),
