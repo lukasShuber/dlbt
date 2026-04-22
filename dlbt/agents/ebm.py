@@ -232,7 +232,32 @@ class EBMAgent(nn.Module, Agent):
         return torch.stack([1.0 - p_yes, p_yes], dim=-1)          # [B, 2]
 
     # -----------------------------------------------------------------------
-    # Diagnostic: effective sample size
+    # Entropy regularisation helper  (differentiable)
+    # -----------------------------------------------------------------------
+
+    def mean_entropy(self, refs: List[ImageRef]) -> torch.Tensor:
+        """
+        Mean Shannon entropy of the importance-weight distribution.
+
+            H_i = −Σ_n w_{in} log w_{in}   ∈ [0, log N]
+
+        Returns a scalar (mean over images in batch).
+        Fully differentiable — use as a regularisation term:
+
+            loss += −ent_weight * agent.mean_entropy(refs)   # maximise H
+
+        This prevents the softmax weights from collapsing onto a tiny
+        fraction of MC samples (ESS collapse), keeping the Monte Carlo
+        estimate of the choice probability well-supported across the simplex.
+        """
+        feats   = self._encode(refs)
+        scores  = self._scores(feats)                   # [B, N]
+        weights = F.softmax(scores, dim=1)              # [B, N]
+        H = -(weights * (weights + 1e-10).log()).sum(dim=1)   # [B]
+        return H.mean()                                 # scalar
+
+    # -----------------------------------------------------------------------
+    # Diagnostic: effective sample size  (no-grad)
     # -----------------------------------------------------------------------
 
     @torch.no_grad()

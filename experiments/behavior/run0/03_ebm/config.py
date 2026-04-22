@@ -30,7 +30,7 @@ EVAL_CELL_FRAC     = 0.10          # must match 01_fit to get the same split
 # ---------------------------------------------------------------------------
 # EBM model
 # ---------------------------------------------------------------------------
-N_MC_SAMPLES  = 1000       # fixed uniform simplex samples
+N_MC_SAMPLES  = 2000       # fixed uniform simplex samples (more → smoother estimate)
 COMPRESS_DIM  = 128        # CLIP 1024 → compress_dim
 HIDDEN_DIM    = 256        # compress_dim + K → hidden_dim → 1
 MC_SEED       = 0          # seed for the fixed MC sample set
@@ -38,11 +38,12 @@ MC_SEED       = 0          # seed for the fixed MC sample set
 # ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
-N_EPOCHS         = 500
-PATIENCE         = 50
+N_EPOCHS         = 1000
+PATIENCE         = 100
 LR               = 1e-3
 INNER_BATCH_SIZE = 32      # images per inner mini-batch (memory knob)
 GRAD_CLIP        = 1.0
+ENT_WEIGHT       = 0.1     # entropy-reg strength; keeps ESS/N ≥ ~0.2
 
 RUN_TAG = "ebm"
 

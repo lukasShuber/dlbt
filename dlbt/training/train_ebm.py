@@ -39,17 +39,18 @@ from dlbt.training.metrics import multinomial_nll, corrected_mse
 
 @dataclass
 class EBMTrainResult:
-    agent:        EBMAgent
-    train_nlls:   List[float] = field(default_factory=list)
-    val_nlls:     List[float] = field(default_factory=list)
-    train_mses:   List[float] = field(default_factory=list)
-    val_mses:     List[float] = field(default_factory=list)
-    train_ess:    List[float] = field(default_factory=list)   # mean ESS/N per epoch
-    best_epoch:   int   = 0
-    best_val_mse: float = float("inf")
-    extra_val_nlls: Dict[str, List[float]] = field(default_factory=dict)
-    extra_val_mses: Dict[str, List[float]] = field(default_factory=dict)
-    end_state:    dict  = field(default_factory=dict)
+    agent:            EBMAgent
+    train_nlls:       List[float] = field(default_factory=list)
+    val_nlls:         List[float] = field(default_factory=list)
+    train_mses:       List[float] = field(default_factory=list)
+    val_mses:         List[float] = field(default_factory=list)
+    train_ess:        List[float] = field(default_factory=list)   # mean ESS/N per epoch
+    train_entropies:  List[float] = field(default_factory=list)   # mean H(weights) per epoch
+    best_epoch:       int   = 0
+    best_val_mse:     float = float("inf")
+    extra_val_nlls:   Dict[str, List[float]] = field(default_factory=dict)
+    extra_val_mses:   Dict[str, List[float]] = field(default_factory=dict)
+    end_state:        dict  = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +106,7 @@ def train_ebm(
     callbacks:     List[Callable] = (),
     optimizer:     Optional[torch.optim.Optimizer] = None,
     grad_clip:     float = 1.0,
+    ent_weight:    float = 0.0,
     extra_val_datasets: Optional[Dict[str, BehavioralDataset]] = None,
 ) -> EBMTrainResult:
     """
@@ -123,10 +125,15 @@ def train_ebm(
         callbacks:        list of (epoch, val_nll, val_mse) → None callables.
         optimizer:        optional pre-built optimiser.
         grad_clip:        max gradient norm (0 = disabled).
+        ent_weight:       entropy-regularisation strength (≥ 0).  Adds
+                          −ent_weight * H(weights) to the loss to prevent
+                          ESS collapse.  0.0 disables regularisation.
+                          Computed once per epoch over all unique training
+                          images (not per task) to avoid over-counting.
         extra_val_datasets: additional datasets evaluated each epoch.
 
     Returns:
-        EBMTrainResult with metrics, best-weight agent, and ESS trace.
+        EBMTrainResult with metrics, best-weight agent, ESS and entropy traces.
     """
     result = EBMTrainResult(agent=agent)
     extra_val_datasets = extra_val_datasets or {}
@@ -157,6 +164,9 @@ def train_ebm(
     result.val_nlls.append(val_nll0)
     result.val_mses.append(val_mse0)
     result.train_ess.append(agent.ess(train_refs_all[:64]))   # quick ESS estimate
+    with torch.no_grad():
+        H0 = agent.mean_entropy(train_refs_all[:64])
+    result.train_entropies.append(H0.item())
     result.best_val_mse = val_mse0
 
     for name, ds in extra_val_datasets.items():
@@ -200,6 +210,21 @@ def train_ebm(
                 loss_b.backward()
                 total_loss += loss_b.item()
 
+        # ---- Entropy regularisation (maximize H to prevent ESS collapse) ----
+        # Computed once over unique training images — not per task — to avoid
+        # counting each image 18× (once per training task).
+        epoch_ent = 0.0
+        if ent_weight > 0.0:
+            n_imgs = len(train_refs_all)
+            for b0 in range(0, n_imgs, inner_batch_size):
+                batch = train_refs_all[b0 : b0 + inner_batch_size]
+                Bb    = len(batch)
+                H_b   = agent.mean_entropy(batch)              # differentiable scalar
+                # Negative sign: minimising loss = maximising entropy
+                (-ent_weight * H_b * Bb / n_imgs).backward()
+                epoch_ent += H_b.item() * Bb
+            epoch_ent /= max(n_imgs, 1)
+
         if grad_clip > 0:
             torch.nn.utils.clip_grad_norm_(agent.trainable_parameters(), grad_clip)
         optimizer.step()
@@ -209,14 +234,17 @@ def train_ebm(
         train_nll, train_mse_val = evaluate(agent, train_dataset, image_refs, inner_batch_size)
         val_nll,   val_mse_val   = evaluate(agent, val_dataset,   image_refs, inner_batch_size)
 
-        # ESS: sample 64 training images for speed
+        # ESS and entropy: sample 64 training images for speed
         ess_val = agent.ess(train_refs_all[:64])
+        with torch.no_grad():
+            ent_val = agent.mean_entropy(train_refs_all[:64]).item()
 
         result.train_nlls.append(train_nll)
         result.train_mses.append(train_mse_val)
         result.val_nlls.append(val_nll)
         result.val_mses.append(val_mse_val)
         result.train_ess.append(ess_val)
+        result.train_entropies.append(epoch_ent if ent_weight > 0.0 else ent_val)
 
         for name, ds in extra_val_datasets.items():
             nll, mse_ = evaluate(agent, ds, image_refs, inner_batch_size)
@@ -231,6 +259,7 @@ def train_ebm(
             val_nll  =f"{val_nll:.3f}",
             val_mse  =f"{val_mse_val:.4f}",
             ess      =f"{ess_val:.3f}",
+            H        =f"{ent_val:.2f}",
             lr       =f"{optimizer.param_groups[0]['lr']:.2e}",
         )
 

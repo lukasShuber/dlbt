@@ -154,7 +154,7 @@ print(f"Noise floors: {noise_floors}")
 print(f"\nTraining EBM  (N_MC={cfg.N_MC_SAMPLES}, "
       f"compress={cfg.COMPRESS_DIM}, hidden={cfg.HIDDEN_DIM})")
 print(f"  inner_batch_size={cfg.INNER_BATCH_SIZE}, lr={cfg.LR}, "
-      f"patience={cfg.PATIENCE}")
+      f"patience={cfg.PATIENCE}, ent_weight={cfg.ENT_WEIGHT}")
 
 result = train_ebm(
     agent, train_ds, eval_ds, refs_dict,
@@ -163,6 +163,7 @@ result = train_ebm(
     patience         = cfg.PATIENCE,
     inner_batch_size = cfg.INNER_BATCH_SIZE,
     grad_clip        = cfg.GRAD_CLIP,
+    ent_weight       = cfg.ENT_WEIGHT,
     extra_val_datasets = {
         "stim_gen":  stim_gen_ds,
         "task_gen":  task_gen_ds,
@@ -170,8 +171,9 @@ result = train_ebm(
     },
 )
 print(f"\nBest epoch: {result.best_epoch}  eval_mse: {result.best_val_mse:.4f}")
-print(f"Final ESS/N: {result.train_ess[-1]:.3f}  "
-      f"(1.0 = uniform, 1/N = collapsed)")
+print(f"Final ESS/N:  {result.train_ess[-1]:.3f}  (1.0 = uniform, 1/N = collapsed)")
+print(f"Final H(w):   {result.train_entropies[-1]:.3f}  "
+      f"(max = {float(__import__('math').log(cfg.N_MC_SAMPLES)):.2f})")
 
 # ---------------------------------------------------------------------------
 # Collect predictions
@@ -218,17 +220,18 @@ print(f"\nSaved agent -> {agent_path}")
 # Save results
 # ---------------------------------------------------------------------------
 curves = dict(
-    train_nlls  = result.train_nlls,
-    eval_nlls   = result.val_nlls,
-    train_mses  = result.train_mses,
-    eval_mses   = result.val_mses,
-    train_ess   = result.train_ess,
-    stim_nlls   = result.extra_val_nlls.get("stim_gen",  []),
-    task_nlls   = result.extra_val_nlls.get("task_gen",  []),
-    joint_nlls  = result.extra_val_nlls.get("joint_gen", []),
-    stim_mses   = result.extra_val_mses.get("stim_gen",  []),
-    task_mses   = result.extra_val_mses.get("task_gen",  []),
-    joint_mses  = result.extra_val_mses.get("joint_gen", []),
+    train_nlls       = result.train_nlls,
+    eval_nlls        = result.val_nlls,
+    train_mses       = result.train_mses,
+    eval_mses        = result.val_mses,
+    train_ess        = result.train_ess,
+    train_entropies  = result.train_entropies,
+    stim_nlls        = result.extra_val_nlls.get("stim_gen",  []),
+    task_nlls        = result.extra_val_nlls.get("task_gen",  []),
+    joint_nlls       = result.extra_val_nlls.get("joint_gen", []),
+    stim_mses        = result.extra_val_mses.get("stim_gen",  []),
+    task_mses        = result.extra_val_mses.get("task_gen",  []),
+    joint_mses       = result.extra_val_mses.get("joint_gen", []),
 )
 
 results = dict(
@@ -250,6 +253,7 @@ results = dict(
         compress_dim = cfg.COMPRESS_DIM,
         hidden_dim   = cfg.HIDDEN_DIM,
         mc_seed      = cfg.MC_SEED,
+        ent_weight   = cfg.ENT_WEIGHT,
     ),
 )
 
