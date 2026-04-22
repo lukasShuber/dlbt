@@ -80,11 +80,11 @@ RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"
 
 TRAIN_TASKS = [
     # simple
-    "right", "small", "transparent", "matte"
+    "right", "small", "transparent", "matte", "left_and_large"
 ]
 VAL_TASKS = [
     # lr × sl conjunctions — never seen during training
-    "left", "large", "opaque", "glossy",
+    "left", "large", "opaque", "glossy", "left_and_large"
 ]
 
 # ---------------------------------------------------------------------------
