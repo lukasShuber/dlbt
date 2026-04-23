@@ -29,6 +29,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch
+from scipy.stats import beta as scipy_beta
+from torch.distributions import Dirichlet
 from tqdm import tqdm
 
 from dlbt.data.image_ref import load_image_refs, image_refs_as_list
@@ -218,6 +220,48 @@ def _build_subsampled_ds(B: int, rng: np.random.Generator) -> BehavioralDataset:
 
 
 # ---------------------------------------------------------------------------
+# Arity-adjusted threshold helpers
+# ---------------------------------------------------------------------------
+
+def _arity(task_name: str) -> int:
+    return task_name.count("_and_") + 1
+
+
+def _tau(task_name: str) -> float:
+    """τₙ = 2·median(Beta(K₊, K₋)) − 1 — threshold in b·Δu space s.t.
+    P(yes) = 0.5 under the uninformative Dirichlet prior."""
+    from dlbt.constants import K as _K
+    n       = _arity(task_name)
+    k_plus  = _K // (2 ** n)
+    k_minus = _K - k_plus
+    return 2.0 * scipy_beta.median(k_plus, k_minus) - 1.0
+
+
+def _collect_tau_preds(agent, ds, refs_dict_inner, emp_p_fn, emp_n_fn):
+    """MC inference with per-task arity-adjusted threshold τₙ."""
+    out = {}
+    agent.eval()
+    for task_name, group in ds.iter_tasks():
+        tau     = _tau(task_name)
+        task    = TASKS[task_name]
+        delta_u = torch.tensor(task.delta_u, dtype=torch.float32, device=agent.device)
+        uids    = group["uid"].tolist()
+        batch_refs = [refs_dict_inner[uid] for uid in uids]
+        true_p  = np.array([emp_p_fn(uid, task_name) for uid in uids])
+        totals  = np.array([emp_n_fn(uid, task_name) for uid in uids])
+        with torch.no_grad():
+            alpha   = agent.get_alpha(batch_refs).clamp(min=0.1)
+            b       = Dirichlet(alpha).sample((cfg.N_MC,))
+            logit   = torch.einsum("nbk,k->nb", b, delta_u)
+            p_right = (logit > tau).float().mean(dim=0).cpu().numpy()
+        out[task_name] = {
+            "pred": p_right, "true": true_p, "totals": totals,
+            "uids": uids, "tau": tau, "n_way": _arity(task_name),
+        }
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 def _concat(p1_list, p2_list):
@@ -339,6 +383,13 @@ for budget in _budgets_ordered:
         ("joint_gen", joint_gen_ds),
     ])
 
+    # Threshold-corrected joint-gen predictions (arity-adjusted τₙ)
+    if cfg.THRESHOLD_CORRECTION:
+        print("  Running threshold-corrected joint-gen inference (τₙ per arity)...")
+        preds["joint_gen_tau"] = _collect_tau_preds(
+            agent, joint_gen_ds, refs_dict, emp_p, emp_n
+        )
+
     # Compute aggregate corrected-MSE minus noise-floor per region
     def _region_cmse_net(label, task_list, nf_key):
         pt = preds[label]
@@ -382,6 +433,14 @@ for budget in _budgets_ordered:
     }
     for k in ["train_cmse_net", "stim_gen_cmse_net", "task_gen_cmse_net", "joint_gen_cmse_net"]:
         print(f"  {k}: {metrics[k]:.4f}")
+
+    # Save lightweight checkpoint (mapper + attnpool only — backbone is unchanged)
+    ckpt = {"mapper": agent.mapper.state_dict()}
+    if not cfg.FREEZE_ENCODER:
+        ckpt["attnpool"] = agent.encoder.attnpool.state_dict()
+    ckpt_path = cfg.RESULTS_DIR / f"agent_{cfg.RUN_TAG}_budget_{budget_label}.pt"
+    torch.save(ckpt, ckpt_path)
+    print(f"  Saved checkpoint -> {ckpt_path}")
 
     results_per_budget[budget_label] = metrics
 

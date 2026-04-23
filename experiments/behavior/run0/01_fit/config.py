@@ -45,8 +45,9 @@ PATIENCE_PHASE2 = 50
 LR              = 1e-2
 LR_ATTNPOOL     = 1e-5
 N_MC            = 100
-FREEZE_ENCODER  = False
-MAPPER_HIDDEN   = None
+FREEZE_ENCODER       = False
+MAPPER_HIDDEN        = None
+THRESHOLD_CORRECTION = True   # run arity-adjusted τₙ MC inference after training
 
 
 RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"
@@ -54,37 +55,16 @@ RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"
 # ---------------------------------------------------------------------------
 # Task split (identical to run0)
 # ---------------------------------------------------------------------------
-# TRAIN_TASKS = [
-#     # simple
-#     "right", "transparent", "glossy", "large",
-#     "left", "opaque", "matte", "small",
-#     # 2-way: lr × material
-#     "right_and_transparent", "left_and_transparent",
-#     "right_and_glossy",      "left_and_glossy",
-#     # 2-way: material × material
-#     "transparent_and_glossy",
-#     # 2-way: sl × material  (no lr × sl)
-#     "large_and_transparent", "large_and_glossy",
-#     # 3-way
-#     "right_and_transparent_and_glossy",
-#     "left_and_transparent_and_glossy",
-#     "large_and_transparent_and_glossy",
-# ]
-# VAL_TASKS = [
-#     # lr × sl conjunctions — never seen during training
-#     "right_and_large",
-#     "left_and_large",
-#     "right_and_large_and_glossy",
-#     "right_and_large_and_transparent",
-# ]
 
 TRAIN_TASKS = [
     # simple
-    "right", "small", "transparent", "matte", "right_and_large",
-     "left_and_glossy", "transparent_and_glossy"
+    "right", "small", "transparent", "matte"
 ]
 VAL_TASKS = [
     # lr × sl conjunctions — never seen during training
+
+    "right_and_large",
+    "left_and_glossy", "transparent_and_glossy",
     "left", "large", "opaque", "glossy",
     "left_and_large",
     "large_and_transparent", "large_and_glossy",
@@ -96,6 +76,7 @@ VAL_TASKS = [
     "right_and_large_and_glossy",
     "right_and_large_and_transparent",
 ]
+
 # ---------------------------------------------------------------------------
 # Behavioural task_id → DLBT task name
 # ---------------------------------------------------------------------------

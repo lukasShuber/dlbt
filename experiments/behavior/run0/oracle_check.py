@@ -381,6 +381,84 @@ if best_fitted_train is not None:
                   val_tasks=val_task_set)
 
 
+def _plot_summary_scatter(result: dict,
+                          train_tasks: set,
+                          val_tasks: set,
+                          out_path: Path) -> None:
+    """Two-panel summary scatter: all train tasks (left) vs all val tasks (right)."""
+    fig, axes = plt.subplots(1, 2, figsize=(8, 4), sharex=True, sharey=True)
+
+    splits = [
+        ("train tasks",    train_tasks, axes[0], "#457B9D"),
+        ("held-out tasks", val_tasks,   axes[1], "#CC2222"),
+    ]
+
+    for split_label, task_set, ax, base_col in splits:
+        mask = (
+            np.array([t in task_set for t in result["task_names"]])
+            & result["valid"]
+        )
+        x = result["preds"][mask]
+        y = result["emp_p"][mask]
+        tasks_here = result["task_names"][mask]
+
+        unique_tasks = sorted(set(tasks_here))
+        cmap = plt.cm.get_cmap("tab20", max(len(unique_tasks), 1))
+        for ti, tname in enumerate(unique_tasks):
+            tm = tasks_here == tname
+            ax.scatter(x[tm], y[tm], s=12, alpha=0.7,
+                       color=cmap(ti), linewidths=0,
+                       label=tname.replace("_and_", " & ").replace("_", "/"),
+                       zorder=3)
+
+        ax.plot([0, 1], [0, 1], ls="--", color="gray", lw=0.8, zorder=0)
+
+        if len(x) > 2:
+            rho_s, _ = spearmanr(x, y)
+            mse_s    = float(np.mean((x - y) ** 2))
+        else:
+            rho_s = mse_s = float("nan")
+
+        ax.text(0.05, 0.95, f"ρ={rho_s:.3f}", transform=ax.transAxes,
+                fontsize=9, va="top", fontweight="bold", color=base_col)
+        ax.text(0.05, 0.86, f"mse={mse_s:.4f}", transform=ax.transAxes,
+                fontsize=9, va="top", color=base_col)
+        ax.text(0.05, 0.77, f"n={mask.sum()}", transform=ax.transAxes,
+                fontsize=8, va="top", color="gray")
+
+        ax.set_title(split_label, fontsize=10,
+                     color=base_col, fontweight="bold")
+        ax.set(xlim=(-0.05, 1.05), ylim=(-0.05, 1.05))
+        ax.tick_params(labelsize=8)
+
+        legend = ax.legend(fontsize=6, loc="lower right",
+                           framealpha=0.7, ncol=2)
+        for lh in legend.legend_handles:
+            lh.set_alpha(1.0)
+
+    fig.text(0.5,  0.01, "Oracle P(yes)", ha="center", fontsize=10)
+    fig.text(0.01, 0.5,  "Human P(yes)", va="center",
+             rotation="vertical", fontsize=10)
+    fig.suptitle(
+        f"Oracle summary — Stage 4 (fit on train tasks only)\n"
+        f"{result['label']}",
+        fontsize=9, y=1.02)
+    sns.despine(fig=fig, trim=True)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"Saved: {out_path}")
+
+
+if best_fitted_train is not None:
+    _plot_summary_scatter(
+        best_fitted_train,
+        train_tasks=train_task_set,
+        val_tasks=val_task_set,
+        out_path=PLOTS_DIR / "oracle_summary_scatter.png",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Bar plots: rho and MSE per task, stages 3 & 4
 # ---------------------------------------------------------------------------

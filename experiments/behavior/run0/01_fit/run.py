@@ -29,8 +29,10 @@ import numpy as np
 import pandas as pd
 import torch
 from scipy.optimize import minimize_scalar
+from scipy.stats import beta as scipy_beta
 from sklearn.linear_model import RidgeCV
 from sklearn.preprocessing import StandardScaler
+from torch.distributions import Dirichlet
 from tqdm import tqdm
 
 from dlbt.data.image_ref import load_image_refs, image_refs_as_list
@@ -247,6 +249,48 @@ for cond, ds in [("train", train_ds), ("stim", stim_gen_ds)]:
         }
 
 # ---------------------------------------------------------------------------
+# Arity-adjusted threshold helpers
+# ---------------------------------------------------------------------------
+
+def _arity(task_name: str) -> int:
+    return task_name.count("_and_") + 1
+
+
+def _tau(task_name: str) -> float:
+    """τₙ = 2·median(Beta(K₊, K₋)) − 1 — threshold in b·Δu space s.t.
+    P(yes) = 0.5 under the uninformative Dirichlet prior."""
+    from dlbt.constants import K as _K
+    n       = _arity(task_name)
+    k_plus  = _K // (2 ** n)
+    k_minus = _K - k_plus
+    return 2.0 * scipy_beta.median(k_plus, k_minus) - 1.0
+
+
+def _collect_tau_preds(agent, ds, refs_dict_inner, emp_p_fn, emp_n_fn):
+    """MC inference with per-task arity-adjusted threshold τₙ."""
+    out = {}
+    agent.eval()
+    for task_name, group in ds.iter_tasks():
+        tau     = _tau(task_name)
+        task    = TASKS[task_name]
+        delta_u = torch.tensor(task.delta_u, dtype=torch.float32, device=agent.device)
+        uids    = group["uid"].tolist()
+        batch_refs = [refs_dict_inner[uid] for uid in uids]
+        true_p  = np.array([emp_p_fn(uid, task_name) for uid in uids])
+        totals  = np.array([emp_n_fn(uid, task_name) for uid in uids])
+        with torch.no_grad():
+            alpha   = agent.get_alpha(batch_refs).clamp(min=0.1)
+            b       = Dirichlet(alpha).sample((cfg.N_MC,))
+            logit   = torch.einsum("nbk,k->nb", b, delta_u)
+            p_right = (logit > tau).float().mean(dim=0).cpu().numpy()
+        out[task_name] = {
+            "pred": p_right, "true": true_p, "totals": totals,
+            "uids": uids, "tau": tau, "n_way": _arity(task_name),
+        }
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Multi-seed DLBT training loop
 # ---------------------------------------------------------------------------
 print(f"\nTraining DLBT with {cfg.N_SEEDS} seeds: {cfg.SEEDS}")
@@ -412,6 +456,17 @@ for preds_dict in [dlbt_preds, dlbt_preds_end]:
                 preds_dict[cond][task_name]["pred"]
             )
 
+# ---------------------------------------------------------------------------
+# Threshold-corrected joint-gen predictions (optional)
+# ---------------------------------------------------------------------------
+dlbt_tau_preds: dict = {}
+if cfg.THRESHOLD_CORRECTION and agent is not None:
+    print("\nRunning threshold-corrected joint-gen inference (τₙ per arity)...")
+    dlbt_tau_preds = _collect_tau_preds(
+        agent, joint_gen_ds, refs_dict, emp_p, emp_n
+    )
+    print(f"  Done — {len(dlbt_tau_preds)} tasks corrected.")
+
 # Save agent weights
 agent_path = cfg.RESULTS_DIR / f"agent_{cfg.RUN_TAG}.pt"
 torch.save(agent.state_dict(), agent_path)
@@ -438,23 +493,24 @@ print(f"\nNoise floors: {noise_floors}")
 # Save results
 # ---------------------------------------------------------------------------
 results = dict(
-    model_label    = model_label,
-    run_tag        = cfg.RUN_TAG,
-    n_seeds        = cfg.N_SEEDS,
-    seeds          = cfg.SEEDS,
-    phase_boundary = phase_boundary,
-    best_epoch     = best_epoch_offset,
-    noise_floors   = noise_floors,
-    curves         = curves,
-    dlbt           = dlbt_preds,
-    slda           = slda_preds,
-    train_uids     = train_uids,
-    test_uids      = test_uids,
-    main_uids      = main_uids,
-    probe_uids     = probe_uids,
-    eval_uids      = set(eval_df["uid"].unique()),
-    diag           = diag,
-    eval_cell_frac = cfg.EVAL_CELL_FRAC,
+    model_label      = model_label,
+    run_tag          = cfg.RUN_TAG,
+    n_seeds          = cfg.N_SEEDS,
+    seeds            = cfg.SEEDS,
+    phase_boundary   = phase_boundary,
+    best_epoch       = best_epoch_offset,
+    noise_floors     = noise_floors,
+    curves           = curves,
+    dlbt             = dlbt_preds,
+    dlbt_tau         = dlbt_tau_preds,   # arity-adjusted τₙ preds (empty if disabled)
+    slda             = slda_preds,
+    train_uids       = train_uids,
+    test_uids        = test_uids,
+    main_uids        = main_uids,
+    probe_uids       = probe_uids,
+    eval_uids        = set(eval_df["uid"].unique()),
+    diag             = diag,
+    eval_cell_frac   = cfg.EVAL_CELL_FRAC,
 )
 
 results_path = cfg.RESULTS_DIR / f"results_{cfg.RUN_TAG}.pkl"
