@@ -392,7 +392,11 @@ for results_path in candidates:
     # Plot 3 & 4 — per-task scatters (corrected), one figure per region
     # -----------------------------------------------------------------------
     for region, region_label in [("joint", "Joint gen"), ("task", "Task gen")]:
-        present = [t for t in val_tasks if t in corr_preds[region]]
+        # Sort by arity then alphabetically within each arity
+        present = sorted(
+            [t for t in val_tasks if t in corr_preds[region]],
+            key=lambda t: (_arity(t), t),
+        )
         if not present:
             continue
 
@@ -405,7 +409,7 @@ for results_path in candidates:
         else:
             mse_r = rho_r = float("nan")
 
-        N_COLS  = 8
+        N_COLS  = 12
         n_tasks = len(present)
         n_rows  = math.ceil(n_tasks / N_COLS)
         color_suffix = "pertask" if region == "joint" else "pertask_task"

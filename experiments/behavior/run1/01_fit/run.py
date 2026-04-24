@@ -337,11 +337,6 @@ for seed_idx, seed in enumerate(cfg.SEEDS):
         n_epochs  = cfg.N_EPOCHS_PHASE1,
         lr        = cfg.LR,
         patience  = cfg.PATIENCE_PHASE1,
-        extra_val_datasets = {
-            "stim_gen":  stim_gen_ds,
-            "task_gen":  task_gen_ds,
-            "joint_gen": joint_gen_ds,
-        },
     )
     print(f"    best epoch: {phase1.best_epoch}  eval_mse: {phase1.best_val_mse:.4f}")
 
@@ -367,11 +362,6 @@ for seed_idx, seed in enumerate(cfg.SEEDS):
             n_epochs  = cfg.N_EPOCHS_PHASE2,
             patience  = cfg.PATIENCE_PHASE2,
             optimizer = optimizer2,
-            extra_val_datasets = {
-                "stim_gen":  stim_gen_ds,
-                "task_gen":  task_gen_ds,
-                "joint_gen": joint_gen_ds,
-            },
         )
         print(f"    best epoch: {phase2.best_epoch}  eval_mse: {phase2.best_val_mse:.4f}")
 
@@ -408,14 +398,8 @@ for seed_idx, seed in enumerate(cfg.SEEDS):
     curves = dict(
         train_nlls  = _concat(phase1.train_nlls,  phase2.train_nlls  if phase2 else None),
         eval_nlls   = _concat(phase1.val_nlls,    phase2.val_nlls    if phase2 else None),
-        train_mses  = _concat(phase1.train_mses,  phase2.train_mses  if phase2 else None),
-        eval_mses   = _concat(phase1.val_mses,    phase2.val_mses    if phase2 else None),
-        stim_mses   = _concat(phase1.extra_val_mses.get("stim_gen",  []),
-                               phase2.extra_val_mses.get("stim_gen",  []) if phase2 else None),
-        task_mses   = _concat(phase1.extra_val_mses.get("task_gen",  []),
-                               phase2.extra_val_mses.get("task_gen",  []) if phase2 else None),
-        joint_mses  = _concat(phase1.extra_val_mses.get("joint_gen", []),
-                               phase2.extra_val_mses.get("joint_gen", []) if phase2 else None),
+        train_mses  = _concat(phase1.train_mses, phase2.train_mses if phase2 else None),
+        eval_mses   = _concat(phase1.val_mses,   phase2.val_mses   if phase2 else None),
     )
     best_epoch_offset = result.best_epoch + (phase_boundary if phase2 else 0)
 
