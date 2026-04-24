@@ -1,14 +1,18 @@
 """
-Configuration for behavior run1 / 01_fit.
+Configuration for behavior run1 / 02_data_efficiency.
 
-Task split controlled by SPLIT_MODE:
+Identical task split and model settings as 01_fit.  Training budgets are
+varied from 10 to the full training set.
+
+SPLIT_MODE controls the task split (mirrors run1/01_fit/config.py):
   "arity"  — TRAIN: all eligible 1-way tasks; VAL: all 2/3/4-way tasks.
-             Tests generalisation from atomic dimensions to conjunctions.
   "random" — seeded 80/20 random split over all eligible tasks.
-             Standard held-out evaluation across all arities.
   "manual" — explicit MANUAL_TRAIN_TASKS / MANUAL_VAL_TASKS lists below.
              Both lists are intersected with eligible_tasks() so that
              MIN_TASK_ASSIGNMENTS is still respected.
+
+THRESHOLD_CORRECTION = True runs arity-adjusted h_n MC inference after
+each budget (in addition to the standard h=0 predictions).
 """
 
 from pathlib import Path
@@ -17,13 +21,13 @@ import sys
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-METADATA         = "stimuli/imgs/metadata.jsonl"
-CACHE_PATH       = "stimuli/imgs/clip_rn50_features_v2.pt"
-RESULTS_DIR      = Path(__file__).parent / "results"
+METADATA    = "stimuli/imgs/metadata.jsonl"
+CACHE_PATH  = "stimuli/imgs/clip_rn50_features_v2.pt"
+RESULTS_DIR = Path(__file__).parent / "results"
 
 _RUN1_DIR = Path(__file__).parent.parent
 import importlib.util as _ilu
-_spec = _ilu.spec_from_file_location("_run1_cfg", _RUN1_DIR / "config.py")
+_spec     = _ilu.spec_from_file_location("_run1_cfg", _RUN1_DIR / "config.py")
 _run1_cfg = _ilu.module_from_spec(_spec)
 _spec.loader.exec_module(_run1_cfg)
 
@@ -38,71 +42,56 @@ SEED               = _run1_cfg.SEED
 N_SEEDS            = 1
 SEEDS              = [42]
 
-USE_TRIAL_KINDS    = _run1_cfg.USE_TRIAL_KINDS
-MIN_CATCH_PERF     = _run1_cfg.MIN_CATCH_PERF
-MAIN_PERF_QUANTILE = _run1_cfg.MAIN_PERF_QUANTILE
+USE_TRIAL_KINDS      = _run1_cfg.USE_TRIAL_KINDS
+MIN_CATCH_PERF       = _run1_cfg.MIN_CATCH_PERF
+MAIN_PERF_QUANTILE   = _run1_cfg.MAIN_PERF_QUANTILE
 MIN_TASK_ASSIGNMENTS = _run1_cfg.MIN_TASK_ASSIGNMENTS
 
+# 10% of (main × TRAIN_TASKS) cells held out as in-distribution eval set.
+# Must match the split fraction used in 01_fit to keep the eval set identical.
 EVAL_CELL_FRAC = 0.10
+
+# Trial budgets to sweep.  "full" = all trials in the 90% training cells.
+# Each integer B means: uniformly sample B trials (without replacement from
+# the pool of all individual training trials; with replacement if B > pool).
+TRIAL_BUDGETS = [10, 100, 1_000, "full"]
 
 # ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
-N_EPOCHS_PHASE1  = 1000
-PATIENCE_PHASE1  = 200
-N_EPOCHS_PHASE2  = 3000
-PATIENCE_PHASE2  = 50
-LR               = 1e-2
-LR_ATTNPOOL      = 1e-5
-N_MC             = 100
-FREEZE_ENCODER   = False
-MAPPER_HIDDEN    = None
+N_EPOCHS        = 1000
+PATIENCE        = 100
+N_EPOCHS_PHASE2 = 3000
+PATIENCE_PHASE2 = 50
+LR              = 1e-2
+LR_ATTNPOOL     = 1e-5
+N_MC            = 100
+FREEZE_ENCODER  = False
+MAPPER_HIDDEN   = None
 
-SPLIT_MODE = "manual"   # "arity" | "random" | "manual"
+# Run arity-adjusted h_n MC inference after each budget (in addition to h=0).
+THRESHOLD_CORRECTION = True
+
+# ---------------------------------------------------------------------------
+# Task split
+# ---------------------------------------------------------------------------
+SPLIT_MODE = "arity"   # "arity" | "random" | "manual"
 SPLIT_SEED = 0         # used only when SPLIT_MODE == "random"
 TRAIN_FRAC = 0.80      # used only when SPLIT_MODE == "random"
 
 # Used only when SPLIT_MODE == "manual".
 # Both lists are intersected with eligible_tasks() at import time.
 MANUAL_TRAIN_TASKS: list = [
-    "right", "small", "transparent", "matte"
+    # example — replace with your desired training tasks:
+    # "right", "small", "transparent", "matte",
 ]
 MANUAL_VAL_TASKS: list = [
-    "glossy", "large", "left", "opaque",
-    "large_and_glossy", "large_and_matte", "large_and_opaque", "large_and_transparent",
-"left_and_glossy", "left_and_large", "left_and_matte", "left_and_opaque", "left_and_small",
-"left_and_transparent", "opaque_and_glossy", "opaque_and_matte", "right_and_glossy",
-"right_and_large", "right_and_matte", "right_and_opaque", "right_and_small",
-"right_and_transparent", "small_and_glossy", "small_and_matte", "small_and_opaque",
-"small_and_transparent", "transparent_and_glossy", "transparent_and_matte",
-"large_and_opaque_and_glossy", "large_and_opaque_and_matte",
-"large_and_transparent_and_glossy", "large_and_transparent_and_matte",
-"left_and_large_and_glossy", "left_and_large_and_matte", "left_and_large_and_opaque",
-"left_and_large_and_transparent", "left_and_opaque_and_glossy", "left_and_opaque_and_matte",
-"left_and_small_and_glossy", "left_and_small_and_matte", "left_and_small_and_opaque",
-"left_and_small_and_transparent", "left_and_transparent_and_glossy",
-"left_and_transparent_and_matte", "right_and_large_and_glossy", "right_and_large_and_matte",
-"right_and_large_and_opaque", "right_and_large_and_transparent",
-"right_and_opaque_and_glossy", "right_and_opaque_and_matte", "right_and_small_and_glossy",
-"right_and_small_and_matte", "right_and_small_and_opaque", "right_and_small_and_transparent",
-"right_and_transparent_and_glossy", "right_and_transparent_and_matte",
-"small_and_opaque_and_glossy", "small_and_opaque_and_matte",
-"small_and_transparent_and_glossy", "small_and_transparent_and_matte",
-"left_and_large_and_opaque_and_glossy", "left_and_large_and_opaque_and_matte",
-"left_and_large_and_transparent_and_glossy", "left_and_large_and_transparent_and_matte",
-"left_and_small_and_opaque_and_glossy", "left_and_small_and_opaque_and_matte",
-"left_and_small_and_transparent_and_glossy", "left_and_small_and_transparent_and_matte",
-"right_and_large_and_opaque_and_glossy", "right_and_large_and_opaque_and_matte",
-"right_and_large_and_transparent_and_glossy", "right_and_large_and_transparent_and_matte",
-"right_and_small_and_opaque_and_glossy", "right_and_small_and_opaque_and_matte",
-"right_and_small_and_transparent_and_glossy", "right_and_small_and_transparent_and_matte",
+    # example — replace with your desired held-out tasks:
+    # "right_and_large", "left_and_glossy",
 ]
 
 RUN_TAG = ("frozen" if FREEZE_ENCODER else "attnpool") + f"_{SPLIT_MODE}"
 
-# ---------------------------------------------------------------------------
-# Task split — computed once at import from eligible tasks
-# ---------------------------------------------------------------------------
 
 def _compute_split():
     import pandas as pd
@@ -123,7 +112,6 @@ def _compute_split():
     all_eligible = sorted(_run1_cfg.eligible_tasks(df_f, MIN_TASK_ASSIGNMENTS))
 
     if SPLIT_MODE == "arity":
-        # Train on all 1-way tasks; validate on all conjunctions
         train = sorted(t for t in all_eligible if "_and_" not in t)
         val   = sorted(t for t in all_eligible if "_and_"     in t)
 
@@ -154,6 +142,7 @@ def _compute_split():
         )
 
     return train, val
+
 
 TRAIN_TASKS, VAL_TASKS = _compute_split()
 

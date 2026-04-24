@@ -349,43 +349,44 @@ for results_path in candidates:
     plt.close()
 
     # -----------------------------------------------------------------------
-    # Plot 2 — pooled scatter: original vs corrected (joint_gen)
+    # Plot 2a & 2b — separate pooled scatter for original and corrected
     # -----------------------------------------------------------------------
     pooled_j = _pool("joint")
     if pooled_j is not None:
         pred_c, pred_o, true, totals = pooled_j
-        ts       = _true_sem(true, totals)
+        ts        = _true_sem(true, totals)
         mse_o, nf = _cmse_nf(pred_o, true, totals, N_MC)
         mse_c, _  = _cmse_nf(pred_c, true, totals, N_MC)
         rho_o, _  = spearmanr(pred_o, true)
         rho_c, _  = spearmanr(pred_c, true)
 
-        fig_s, axes_s = plt.subplots(1, 2, figsize=(9, 4.2),
-                                     sharex=True, sharey=True)
-        for ax, pred, color, label, rho, mse in [
-            (axes_s[0], pred_o, C_ORIG, f"original (h=0)\nρ={rho_o:.3f}  cMSE-NF={mse_o:+.4f}", rho_o, mse_o),
-            (axes_s[1], pred_c, C_CORR, f"corrected (hₙ)\nρ={rho_c:.3f}  cMSE-NF={mse_c:+.4f}", rho_c, mse_c),
+        for suffix, pred, color, sublabel, rho, mse in [
+            ("orig", pred_o, C_ORIG,
+             f"original (h=0)\nρ={rho_o:.3f}  cMSE-NF={mse_o:+.4f}", rho_o, mse_o),
+            ("corr", pred_c, C_CORR,
+             f"corrected (hₙ)\nρ={rho_c:.3f}  cMSE-NF={mse_c:+.4f}", rho_c, mse_c),
         ]:
-            ax.plot([0, 1], [0, 1], ls="--", color="gray", lw=1.2, zorder=0)
-            ax.errorbar(pred, true, yerr=ts,
-                        fmt="o", ms=4, alpha=0.5, color=color,
-                        elinewidth=0.4, capsize=0, linewidth=0)
-            ax.set_title(label, fontsize=9, pad=4)
-            ax.set(xlim=(-0.02, 1.02), ylim=(-0.02, 1.02))
-            ax.set_xticks([0, 0.5, 1]); ax.set_yticks([0, 0.5, 1])
-            ax.set_aspect("equal", adjustable="box")
-            ax.set_xlabel("Predicted P(yes)", fontsize=9)
-        axes_s[0].set_ylabel("Human P(yes)", fontsize=9)
-        axes_s[0].text(0.97, 0.03, f"NF={nf:.4f}",
-                       transform=axes_s[0].transAxes, fontsize=7,
-                       ha="right", va="bottom", color="gray")
-        fig_s.suptitle(f"Joint gen — pooled  [{run_tag}]", fontsize=10)
-        sns.despine(fig=fig_s, trim=True)
-        plt.tight_layout()
-        out = plots_dir / f"plot_tau_summary_{run_tag}.png"
-        plt.savefig(out, dpi=150, bbox_inches="tight")
-        print(f"  Saved: {out}")
-        plt.close()
+            fig_s, ax_s = plt.subplots(figsize=(4.5, 4.2))
+            ax_s.plot([0, 1], [0, 1], ls="--", color="gray", lw=1.2, zorder=0)
+            ax_s.errorbar(pred, true, yerr=ts,
+                          fmt="o", ms=4, alpha=0.5, color=color,
+                          elinewidth=0.4, capsize=0, linewidth=0)
+            ax_s.set_title(sublabel, fontsize=9, pad=4)
+            ax_s.set(xlim=(-0.02, 1.02), ylim=(-0.02, 1.02))
+            ax_s.set_xticks([0, 0.5, 1]); ax_s.set_yticks([0, 0.5, 1])
+            ax_s.set_aspect("equal", adjustable="box")
+            ax_s.set_xlabel("Predicted P(yes)", fontsize=9)
+            ax_s.set_ylabel("Human P(yes)", fontsize=9)
+            ax_s.text(0.97, 0.03, f"NF={nf:.4f}",
+                      transform=ax_s.transAxes, fontsize=7,
+                      ha="right", va="bottom", color="gray")
+            fig_s.suptitle(f"Joint gen — pooled  [{run_tag}]", fontsize=10)
+            sns.despine(fig=fig_s, trim=True)
+            plt.tight_layout()
+            out = plots_dir / f"plot_tau_summary_{suffix}_{run_tag}.png"
+            plt.savefig(out, dpi=150, bbox_inches="tight")
+            print(f"  Saved: {out}")
+            plt.close(fig_s)
 
     # -----------------------------------------------------------------------
     # Plot 3 & 4 — per-task scatters (corrected), one figure per region
@@ -422,16 +423,12 @@ for results_path in candidates:
             d     = corr_preds[region][task_name]
             valid = d["totals"] > 0
             pm    = d["pred"][valid]
-            po    = d["orig"][valid]
             tv    = d["true"][valid]
             tot   = d["totals"][valid]
             ts    = _true_sem(tv, tot)
             color = ARITY_COLOR.get(d["n_way"], "#555")
 
             ax.plot([0, 1], [0, 1], ls=":", color="gray", lw=0.7, zorder=0)
-            # faint original
-            ax.scatter(po, tv, s=6, alpha=0.3, color=C_ORIG, zorder=1)
-            # corrected with error bars
             ax.errorbar(pm, tv, yerr=ts,
                         fmt="o", ms=4, alpha=0.85, color=color,
                         elinewidth=0.5, capsize=0, linewidth=0, zorder=2)
@@ -460,9 +457,6 @@ for results_path in candidates:
         handles = [Line2D([0], [0], marker="o", color="w",
                           markerfacecolor=c, markersize=5, label=f"{a}-way")
                    for a, c in ARITY_COLOR.items() if a > 1]
-        handles += [Line2D([0], [0], marker="o", color="w",
-                           markerfacecolor=C_ORIG, markersize=5, alpha=0.4,
-                           label="original (faint)")]
         fig_t.legend(handles=handles, loc="lower right",
                      bbox_to_anchor=(1.0, 0.0), fontsize=7,
                      frameon=False, ncol=len(handles))
