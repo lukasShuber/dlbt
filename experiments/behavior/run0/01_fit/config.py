@@ -45,7 +45,7 @@ PATIENCE_PHASE2 = 50
 LR              = 1e-2
 LR_ATTNPOOL     = 1e-5
 N_MC            = 100
-FREEZE_ENCODER       = False
+FREEZE_ENCODER       = True
 MAPPER_HIDDEN        = None
 THRESHOLD_CORRECTION = True   # run arity-adjusted τₙ MC inference after training
 

@@ -1,10 +1,11 @@
 """
 Configuration for behavior run1 / 01_fit.
 
-Task split: seeded 80/20 random split over the eligible tasks
-(those with >= MIN_TASK_ASSIGNMENTS filtered assignments).
-TRAIN_TASKS / VAL_TASKS are computed once at import time and are
-fully reproducible given SPLIT_SEED and MIN_TASK_ASSIGNMENTS.
+Task split controlled by SPLIT_MODE:
+  "arity"  — TRAIN: all eligible 1-way tasks; VAL: all 2/3/4-way tasks.
+             Tests generalisation from atomic dimensions to conjunctions.
+  "random" — seeded 80/20 random split over all eligible tasks.
+             Standard held-out evaluation across all arities.
 """
 
 from pathlib import Path
@@ -51,19 +52,20 @@ PATIENCE_PHASE2  = 50
 LR               = 1e-1
 LR_ATTNPOOL      = 1e-5
 N_MC             = 100
-FREEZE_ENCODER   = False
+FREEZE_ENCODER   = True
 MAPPER_HIDDEN    = None
 
-RUN_TAG = "frozen" if FREEZE_ENCODER else "attnpool"
+SPLIT_MODE = "arity"   # "arity" | "random"
+SPLIT_SEED = 0         # used only when SPLIT_MODE == "random"
+TRAIN_FRAC = 0.80      # used only when SPLIT_MODE == "random"
+
+RUN_TAG = ("frozen" if FREEZE_ENCODER else "attnpool") + f"_{SPLIT_MODE}"
 
 # ---------------------------------------------------------------------------
-# 80/20 random task split — computed once at import from eligible tasks
+# Task split — computed once at import from eligible tasks
 # ---------------------------------------------------------------------------
-TRAIN_FRAC = 0.80
-SPLIT_SEED = 0    # separate from data SEED so the two are independent
 
 def _compute_split():
-    import numpy as np
     import pandas as pd
     sys.path.insert(0, str(_RUN1_DIR.parent / "run0"))
     from preprocess import filter_assignments
@@ -79,12 +81,24 @@ def _compute_split():
         main_perf_quantile = MAIN_PERF_QUANTILE,
         seed               = SEED,
     )
-    tasks = sorted(_run1_cfg.eligible_tasks(df_f, MIN_TASK_ASSIGNMENTS))
-    rng   = np.random.default_rng(SPLIT_SEED)
-    idx   = rng.permutation(len(tasks))
-    n_train = int(round(len(tasks) * TRAIN_FRAC))
-    train = sorted(tasks[i] for i in idx[:n_train])
-    val   = sorted(tasks[i] for i in idx[n_train:])
+    all_eligible = sorted(_run1_cfg.eligible_tasks(df_f, MIN_TASK_ASSIGNMENTS))
+
+    if SPLIT_MODE == "arity":
+        # Train on all 1-way tasks; validate on all conjunctions
+        train = sorted(t for t in all_eligible if "_and_" not in t)
+        val   = sorted(t for t in all_eligible if "_and_"     in t)
+
+    elif SPLIT_MODE == "random":
+        import numpy as np
+        rng     = np.random.default_rng(SPLIT_SEED)
+        idx     = rng.permutation(len(all_eligible))
+        n_train = int(round(len(all_eligible) * TRAIN_FRAC))
+        train   = sorted(all_eligible[i] for i in idx[:n_train])
+        val     = sorted(all_eligible[i] for i in idx[n_train:])
+
+    else:
+        raise ValueError(f"Unknown SPLIT_MODE {SPLIT_MODE!r}. Choose 'arity' or 'random'.")
+
     return train, val
 
 TRAIN_TASKS, VAL_TASKS = _compute_split()
