@@ -24,7 +24,7 @@ from tqdm import tqdm
 from dlbt.agents.dlbt import DlbtAgent
 from dlbt.data.dataset import BehavioralDataset
 from dlbt.data.image_ref import ImageRef
-from dlbt.data.task import TASKS, Task
+from dlbt.data.task import get_task, Task
 from dlbt.training.metrics import multinomial_nll, mse, corrected_mse
 
 
@@ -63,7 +63,7 @@ def evaluate(
     all_counts: List[torch.Tensor] = []
 
     for task_name, group in dataset.iter_tasks():
-        task    = TASKS[task_name]
+        task    = get_task(task_name)
         refs    = [image_refs[uid] for uid in group["uid"]]
         counts  = torch.tensor(
             group[["count_0", "count_1"]].values,
@@ -168,7 +168,7 @@ def train_dlbt(
         n_total    = len(train_dataset)
 
         for task_name, group in train_dataset.iter_tasks():
-            task   = TASKS[task_name]
+            task   = get_task(task_name)
             refs   = [image_refs[uid] for uid in group["uid"]]
             counts = torch.tensor(
                 group[["count_0", "count_1"]].values,
