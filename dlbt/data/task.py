@@ -191,7 +191,45 @@ TASKS: Dict[str, Task] = {
 }
 
 
+def make_task_from_name(name: str) -> Task:
+    """
+    Build any Task from its DLBT name string by parsing the components.
+
+    Each component maps to a single dimension condition:
+        right / left        -> lr == 1 / lr == 0
+        transparent / opaque -> tr == 1 / tr == 0
+        glossy / matte      -> gl == 1 / gl == 0
+        large / small       -> sl == 1 / sl == 0
+
+    Conjunctions are formed by splitting on '_and_' and requiring ALL
+    component conditions to be satisfied simultaneously.
+    """
+    _TOKEN_CONDITIONS = {
+        "right":       lambda lr, tr, gl, sl: lr == 1,
+        "left":        lambda lr, tr, gl, sl: lr == 0,
+        "transparent": lambda lr, tr, gl, sl: tr == 1,
+        "opaque":      lambda lr, tr, gl, sl: tr == 0,
+        "glossy":      lambda lr, tr, gl, sl: gl == 1,
+        "matte":       lambda lr, tr, gl, sl: gl == 0,
+        "large":       lambda lr, tr, gl, sl: sl == 1,
+        "small":       lambda lr, tr, gl, sl: sl == 0,
+    }
+    tokens = name.split("_and_")
+    for tok in tokens:
+        if tok not in _TOKEN_CONDITIONS:
+            raise ValueError(f"Unknown token '{tok}' in task name '{name}'")
+    conds = [_TOKEN_CONDITIONS[tok] for tok in tokens]
+
+    def condition(lr, tr, gl, sl):
+        return all(c(lr, tr, gl, sl) for c in conds)
+
+    return _task(name, condition)
+
+
 def get_task(name: str) -> Task:
     if name not in TASKS:
-        raise KeyError(f"Unknown task '{name}'. Available: {list(TASKS)}")
+        # Auto-build from name if not in registry
+        t = make_task_from_name(name)
+        TASKS[name] = t
+        return t
     return TASKS[name]

@@ -204,11 +204,11 @@ for results_path in candidates:
         summary = pickle.load(f)
 
     results_per_budget = summary["results"]
-    val_tasks          = [t for t in cfg.VAL_TASKS if t in
-                          next(iter(results_per_budget.values()))["preds"].get("joint_gen", {})]
+    tasks_in_data      = set(joint_gen_df["task_name"].unique())
+    val_tasks          = [t for t in cfg.VAL_TASKS if t in tasks_in_data]
 
     if not val_tasks:
-        print("  No joint_gen predictions found — skipping.")
+        print("  No joint_gen tasks found in behavioural data — skipping.")
         continue
 
     # Ordered budget labels (same ordering logic as run.py)
@@ -218,8 +218,24 @@ for results_path in candidates:
     # Per-budget: run corrected inference
     # ---------------------------------------------------------------------------
     corrected_per_budget = {}   # budget_label -> {task -> {pred, true, totals}}
-    orig_cmse_per_budget = {}
     corr_cmse_per_budget = {}
+
+    # Pre-compute frozen backbone features once (backbone is identical across all budgets)
+    backbone_cache = None
+    if not cfg.FREEZE_ENCODER:
+        first_ckpt = next(
+            (cfg.RESULTS_DIR / f"agent_{run_tag}_budget_{bl}.pt"
+             for bl in budget_labels
+             if (cfg.RESULTS_DIR / f"agent_{run_tag}_budget_{bl}.pt").exists()),
+            None,
+        )
+        if first_ckpt is not None:
+            print("  Precomputing backbone features (once for all budgets)...")
+            _tmp = _load_agent(first_ckpt, device)
+            all_refs_list = list(refs_dict.values())
+            _tmp.precompute_backbone_features(all_refs_list)
+            backbone_cache = _tmp._backbone_cache   # uid -> spatial tensor (cpu)
+            del _tmp
 
     for budget_label in budget_labels:
         ckpt_path = cfg.RESULTS_DIR / f"agent_{run_tag}_budget_{budget_label}.pt"
@@ -230,13 +246,14 @@ for results_path in candidates:
         print(f"\n  Budget: {budget_label}  (checkpoint: {ckpt_path.name})")
         agent = _load_agent(ckpt_path, device)
 
-        # Populate feature cache for frozen backbone
+        # Populate feature cache
         if cfg.FREEZE_ENCODER:
             agent._cache = {uid: feat.clone() for uid, feat in frozen_clip.items()}
         else:
-            # attnpool was fine-tuned — need to recompute features through updated attnpool
+            # Backbone is frozen/shared — reuse pre-computed spatial maps,
+            # only run the per-budget attnpool weights to get final features.
             from tqdm import tqdm as _tqdm
-            all_refs_list = list(refs_dict.values())
+            agent._backbone_cache = backbone_cache
             with torch.no_grad():
                 for i in _tqdm(range(0, len(all_refs_list), 16), desc="  caching", unit="batch"):
                     batch   = all_refs_list[i: i + 16]
@@ -280,69 +297,65 @@ for results_path in candidates:
 
         corrected_per_budget[budget_label] = corr_preds
 
-        # --- Pool for summary metrics ---
-        orig_preds_b, corr_preds_b, trues_b, tots_b = [], [], [], []
-        orig_jg = results_per_budget[budget_label]["preds"]["joint_gen"]
+        # --- Pool for summary metrics (ground truth from emp_p/emp_n, not pickle) ---
+        corr_preds_b, trues_b, tots_b = [], [], []
 
         for t in val_tasks:
-            if t not in corr_preds or t not in orig_jg:
+            if t not in corr_preds:
                 continue
-            d_orig = orig_jg[t]
             d_corr = corr_preds[t]
-            valid  = d_orig["totals"] > 0
+            valid  = d_corr["totals"] > 0
+            corr_preds_b.append(d_corr["pred"][valid])
+            trues_b.append(d_corr["true"][valid])
+            tots_b.append(d_corr["totals"][valid])
 
-            p_o  = d_orig["pred"]
-            pm_o = p_o[valid]
-            pm_c = d_corr["pred"][valid]
-            tv   = d_orig["true"][valid]
-            tot  = d_orig["totals"][valid]
-
-            orig_preds_b.append(pm_o)
-            corr_preds_b.append(pm_c)
-            trues_b.append(tv)
-            tots_b.append(tot)
-
-        if not orig_preds_b:
+        if not corr_preds_b:
             continue
 
-        orig_pool_b  = np.concatenate(orig_preds_b)
         corr_pool_b  = np.concatenate(corr_preds_b)
         trues_pool_b = np.concatenate(trues_b)
         tots_pool_b  = np.concatenate(tots_b)
 
-        orig_cmse, nf = _cmse_nf(orig_pool_b, trues_pool_b, tots_pool_b, cfg.N_MC)
-        corr_cmse, _  = _cmse_nf(corr_pool_b, trues_pool_b, tots_pool_b, N_MC)
-        orig_cmse_per_budget[budget_label] = orig_cmse
+        corr_cmse, nf = _cmse_nf(corr_pool_b, trues_pool_b, tots_pool_b, N_MC)
         corr_cmse_per_budget[budget_label] = corr_cmse
-        rho_o, _ = spearmanr(orig_pool_b, trues_pool_b)
         rho_c, _ = spearmanr(corr_pool_b, trues_pool_b)
-        print(f"    ORIGINAL:   ρ={rho_o:.3f}  cMSE-NF={orig_cmse:+.4f}")
         print(f"    CORRECTED:  ρ={rho_c:.3f}  cMSE-NF={corr_cmse:+.4f}  (NF={nf:.4f})")
 
     # ---------------------------------------------------------------------------
-    # Plot 1 — cMSE-NF vs budget curve
+    # Plot 1 — cMSE-NF vs budget curve  (analysis.py aesthetics, corrected only)
     # ---------------------------------------------------------------------------
+    n_pool   = summary.get("n_pool", None)
+
     def _budget_x(label):
-        if label == "full":
-            return summary.get("n_pool", np.nan)
-        return int(label)
+        return n_pool if label == "full" else int(label)
 
-    common_labels = [b for b in budget_labels
-                     if b in orig_cmse_per_budget and b in corr_cmse_per_budget]
-    xs   = np.array([_budget_x(b) for b in common_labels], dtype=float)
-    y_o  = np.array([orig_cmse_per_budget[b] for b in common_labels])
-    y_c  = np.array([corr_cmse_per_budget[b] for b in common_labels])
+    all_pts = sorted(
+        [(_budget_x(b), b, corr_cmse_per_budget[b])
+         for b in budget_labels if b in corr_cmse_per_budget],
+        key=lambda p: p[0],
+    )
+    xs_all  = [p[0] for p in all_pts]
+    labs    = [p[1] for p in all_pts]
+    ys_all  = [p[2] for p in all_pts]
 
-    fig_c, ax_c = plt.subplots(figsize=(5, 3.5))
-    ax_c.axhline(0, ls="--", color="gray", lw=0.8, zorder=0)
-    ax_c.plot(xs, y_o, "o-", color=C_ORIG, lw=1.5, ms=5, label="original (τ=0)")
-    ax_c.plot(xs, y_c, "o-", color=C_CORR, lw=1.5, ms=5, label="corrected (τₙ)")
+    full_idx = next((i for i, p in enumerate(all_pts) if p[1] == "full"),
+                    len(all_pts) - 1)
+    x_solid  = xs_all[:full_idx + 1]
+    y_solid  = ys_all[:full_idx + 1]
+
+    fig_c, ax_c = plt.subplots(figsize=(7, 4.5))
+    ax_c.plot(x_solid, y_solid, "o-", color=C_CORR, lw=1.8, ms=6,
+              label="joint gen (h corrected)")
+    ax_c.axhline(0, ls=":", color="gray", lw=0.8, alpha=0.6)
     ax_c.set_xscale("log")
-    ax_c.set_xlabel("Training trials (budget)", fontsize=10)
-    ax_c.set_ylabel("cMSE − NF  (joint gen)", fontsize=10)
-    ax_c.set_title(f"Data efficiency — threshold correction\n{run_tag}", fontsize=9)
-    ax_c.legend(fontsize=8, frameon=False)
-    sns.despine(ax=ax_c, trim=True)
+    ax_c.set_xlabel("Trial budget", fontsize=11)
+    ax_c.set_ylabel("cMSE − noise floor", fontsize=11)
+    ax_c.set_title(f"Data efficiency: h-corrected generalisation vs trial budget  [{run_tag}]",
+                   fontsize=11)
+    ax_c.set_xticks(x_solid)
+    ax_c.set_xticklabels(labs[:full_idx + 1], fontsize=9)
+    ax_c.legend(fontsize=9, frameon=False)
+    sns.despine(trim=True)
     plt.tight_layout()
     out_c = plots_dir / f"plot_de_tau_curve_{run_tag}.png"
     plt.savefig(out_c, dpi=150, bbox_inches="tight")
@@ -352,30 +365,27 @@ for results_path in candidates:
     # ---------------------------------------------------------------------------
     # "Full" budget: summary + per-task scatters
     # ---------------------------------------------------------------------------
+    corr_budget_labels = [b for b in budget_labels if b in corr_cmse_per_budget]
     full_label = "full" if "full" in corrected_per_budget else (
-        common_labels[-1] if common_labels else None
+        corr_budget_labels[-1] if corr_budget_labels else None
     )
     if full_label is None or full_label not in corrected_per_budget:
         print("  No full-budget corrected predictions — skipping summary plots.")
         continue
 
     corr_full = corrected_per_budget[full_label]
-    orig_full = results_per_budget[full_label]["preds"]["joint_gen"]
 
-    # Pool for summary metrics
-    orig_p_all, corr_p_all, trues_all, tots_all = [], [], [], []
+    # Pool for summary metrics (ground truth from corr_full, not pickle)
+    corr_p_all, trues_all, tots_all = [], [], []
     for t in val_tasks:
-        if t not in corr_full or t not in orig_full:
+        if t not in corr_full:
             continue
-        d_o   = orig_full[t]
         d_c   = corr_full[t]
-        valid = d_o["totals"] > 0
-        orig_p_all.append(d_o["pred"][valid])
+        valid = d_c["totals"] > 0
         corr_p_all.append(d_c["pred"][valid])
-        trues_all.append(d_o["true"][valid])
-        tots_all.append(d_o["totals"][valid])
+        trues_all.append(d_c["true"][valid])
+        tots_all.append(d_c["totals"][valid])
 
-    orig_pool  = np.concatenate(orig_p_all)
     corr_pool  = np.concatenate(corr_p_all)
     trues_pool = np.concatenate(trues_all)
     tots_pool  = np.concatenate(tots_all)
@@ -423,17 +433,16 @@ for results_path in candidates:
         ax.set_visible(False)
 
     for i, (ax, task_name) in enumerate(zip(axes_flat, val_tasks)):
-        if task_name not in corr_full or task_name not in orig_full:
+        if task_name not in corr_full:
             ax.set_visible(False)
             continue
 
-        d_o   = orig_full[task_name]
         d_c   = corr_full[task_name]
-        valid = d_o["totals"] > 0
+        valid = d_c["totals"] > 0
 
         pm_c = d_c["pred"][valid]
-        tv   = d_o["true"][valid]
-        tot  = d_o["totals"][valid]
+        tv   = d_c["true"][valid]
+        tot  = d_c["totals"][valid]
         ts   = _true_sem(tv, tot)
 
         ax.plot([0, 1], [0, 1], ls=":", color="gray", lw=0.7, zorder=0)
