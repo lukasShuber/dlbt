@@ -1,19 +1,10 @@
 """
 run1/01_fit/threshold_correction.py
 -------------------------------------
-Re-runs inference on the saved agent under three decision thresholds:
+Re-runs inference on the saved agent under two decision thresholds:
 
   h0  — standard threshold h = 0  (MC, N_MC samples)
   hn  — arity-adjusted h_n = 2·median(Beta(K₊, K₋)) − 1  (MC, N_MC samples)
-  hi  — analytic per-image prediction using actual α concentrations
-         with the h_n threshold:
-             q_n  = (h_n + 1) / 2  =  median( Beta(K₊, K₋) )
-             p_i  = 1 − Beta_CDF( q_n ; Σ_{yes} α_{ik} , Σ_{no} α_{ik} )
-         Same threshold as h_n, but the Beta distribution uses the actual
-         per-image α masses on the task's yes/no states instead of the
-         uniform K₊/K₋ assumption.  No MC sampling needed.
-
-Toggle MODES below to select which corrections to run/plot.
 
 Region evaluated (val tasks only):
   joint_gen — val tasks × probe images
@@ -32,7 +23,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 from matplotlib.lines import Line2D
-from scipy.stats import beta as scipy_beta, spearmanr
+from scipy.stats import beta as scipy_beta, spearmanr  # scipy_beta used for h_n threshold
 import torch
 from torch.distributions import Dirichlet
 
@@ -47,23 +38,19 @@ from dlbt.constants import K
 # ---------------------------------------------------------------------------
 # Toggle: which modes to compute and plot
 # ---------------------------------------------------------------------------
-MODES = ["h0", "hn", "hi"]   # any subset of {"h0", "hn", "hi"}
+MODES = ["h0", "hn"]   # any subset of {"h0", "hn"}
 
 MODE_LABEL = {
     "h0": "h = 0",
     "hn": "hₙ (arity)",
-    "hi": "hᵢ (analytic α)",
 }
 MODE_COLOR = {
     "h0": cfg.C_JOINT,    # teal
     "hn": "#E76F51",      # orange
-    "hi": "#9B5DE5",      # purple
 }
-# For h_i: no MC sampling, so no MC variance term in cMSE
 MODE_MC = {
     "h0": True,
     "hn": True,
-    "hi": False,
 }
 
 # ---------------------------------------------------------------------------
@@ -169,12 +156,10 @@ for results_path in candidates:
     with open(results_path, "rb") as f:
         res = pickle.load(f)
 
-    _pkl_val  = set(res.get("val_tasks", cfg.VAL_TASKS))
-    val_tasks = sorted(_pkl_val & set(cfg.VAL_TASKS), key=lambda t: (_arity(t), t))
+    val_tasks  = sorted(res.get("val_tasks", cfg.VAL_TASKS), key=lambda t: (_arity(t), t))
     train_uids = res.get("train_uids", set())
     test_uids  = res.get("test_uids",  set())
-    print(f"  val tasks: {len(_pkl_val)} in pickle, "
-          f"{len(val_tasks)} after MIN_TASK_ASSIGNMENTS filter")
+    print(f"  val tasks: {len(val_tasks)} (from pickle)")
 
     dlbt_orig = res.get("dlbt", {})
 
@@ -219,6 +204,11 @@ for results_path in candidates:
                         agent._cache[ref.uid] = feat.cpu()
             agent.save_cache(str(feat_cache_path))
             print(f"  Saved attnpool feature cache -> {feat_cache_path.name}")
+
+        # _encode() for freeze_encoder=False checks _backbone_cache, not _cache.
+        # We have baked the final attnpool output into _cache above, so flip the
+        # flag so _encode() uses _cache as a fast lookup during inference.
+        agent.freeze_encoder = True
 
     # -----------------------------------------------------------------------
     # Helper to pull ground-truth from pickle
@@ -269,20 +259,9 @@ for results_path in candidates:
                 p_h0 = (logit > 0.0   ).float().mean(dim=0).cpu().numpy()   # h = 0
                 p_hn = (logit > h_val ).float().mean(dim=0).cpu().numpy()   # h = h_n
 
-                # h_i: analytic prediction using actual per-image α concentrations
-                # but with the same h_n threshold (q_n = median(Beta(K₊, K₋))).
-                # Uses A₊^(i) = Σ_{yes} α_k and A₋^(i) = Σ_{no} α_k from the
-                # learned α rather than the uniform assumption K₊ / K₋.
-                q_n      = (h_val + 1.0) / 2.0                           # = median(Beta(K₊,K₋))
-                alpha_np = alpha.cpu().numpy()                            # [B, K]
-                A_plus   = alpha_np[:, yes_mask].sum(axis=1)             # [B]
-                A_minus  = alpha_np[:, ~yes_mask].sum(axis=1)            # [B]
-                p_hi     = 1.0 - scipy_beta.cdf(q_n, A_plus, A_minus)   # [B]
-
             corr_preds[region][task_name] = {
                 "h0":     p_h0,
                 "hn":     p_hn,
-                "hi":     p_hi,
                 "true":   true_p,
                 "totals": totals,
                 "h":      h_val,
@@ -413,8 +392,8 @@ for results_path in candidates:
 
             fig_t, axes_t = plt.subplots(
                 n_rows, N_COLS,
-                figsize=(N_COLS * 2.1, n_rows * 2.1),
-                gridspec_kw={"hspace": 0.60, "wspace": 0.15},
+                figsize=(N_COLS * 2.8, n_rows * 2.8),
+                gridspec_kw={"hspace": 0.55, "wspace": 0.20},
             )
             axes_flat = np.atleast_2d(axes_t).flatten()
             for ax in axes_flat[n_tasks:]:
@@ -436,23 +415,23 @@ for results_path in candidates:
 
                 y_top = 0.97
                 ax.text(0.05, y_top, f"h={d['h']:+.3f}  ({d['n_way']}-way)",
-                        transform=ax.transAxes, fontsize=5.5, color="gray", va="top")
+                        transform=ax.transAxes, fontsize=7, color="gray", va="top")
                 y_top -= 0.16
                 if valid.sum() >= 2:
                     rc, _ = spearmanr(pm, tv)
                     mc_v, _ = _cmse_nf(pm, tv, tot, MODE_MC[mode])
                     ax.text(0.05, y_top, f"ρ={rc:.2f}  m={mc_v:.3f}",
-                            transform=ax.transAxes, fontsize=5.5, color=color, va="top")
+                            transform=ax.transAxes, fontsize=7, color=color, va="top")
 
-                ax.set_title(_label(task_name), fontsize=6.5, pad=2, color=color)
+                ax.set_title(_label(task_name), fontsize=8, pad=3, color=color)
                 ax.set(xlim=(-0.05, 1.05), ylim=(-0.05, 1.05))
-                ax.tick_params(labelsize=4.5)
+                ax.tick_params(labelsize=6)
 
                 row_i, col_i = divmod(i, N_COLS)
                 if row_i == n_rows - 1 or i >= n_tasks - N_COLS:
-                    ax.set_xlabel("Pred", fontsize=6)
+                    ax.set_xlabel("Pred", fontsize=7)
                 if col_i == 0:
-                    ax.set_ylabel("Human", fontsize=6)
+                    ax.set_ylabel("Human", fontsize=7)
 
             handles = [Line2D([0], [0], marker="o", color="w",
                               markerfacecolor=c, markersize=5, label=f"{a}-way")

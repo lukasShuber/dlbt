@@ -58,7 +58,7 @@ N_MC             = 100
 FREEZE_ENCODER   = False
 MAPPER_HIDDEN    = None
 
-SPLIT_MODE = "manual"   # "arity" | "random" | "manual"
+SPLIT_MODE = "random"   # "arity" | "random" | "manual"
 SPLIT_SEED = 0         # used only when SPLIT_MODE == "random"
 TRAIN_FRAC = 0.80      # used only when SPLIT_MODE == "random"
 
