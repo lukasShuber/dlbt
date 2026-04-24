@@ -65,16 +65,16 @@ TRAIN_FRAC = 0.80      # used only when SPLIT_MODE == "random"
 # Used only when SPLIT_MODE == "manual".
 # Both lists are intersected with eligible_tasks() at import time.
 MANUAL_TRAIN_TASKS: list = [
-    "right", "small", "transparent", "matte"
-]
-MANUAL_VAL_TASKS: list = [
-    "glossy", "large", "left", "opaque",
-    "large_and_glossy", "large_and_matte", "large_and_opaque", "large_and_transparent",
+   "large_and_glossy", "large_and_matte", "large_and_opaque", "large_and_transparent",
 "left_and_glossy", "left_and_large", "left_and_matte", "left_and_opaque", "left_and_small",
 "left_and_transparent", "opaque_and_glossy", "opaque_and_matte", "right_and_glossy",
 "right_and_large", "right_and_matte", "right_and_opaque", "right_and_small",
 "right_and_transparent", "small_and_glossy", "small_and_matte", "small_and_opaque",
-"small_and_transparent", "transparent_and_glossy", "transparent_and_matte",
+"small_and_transparent", "transparent_and_glossy", "transparent_and_matte"
+
+]
+MANUAL_VAL_TASKS: list = [
+"glossy", "large", "left", "matte", "opaque", "right", "small", "transparent",
 "large_and_opaque_and_glossy", "large_and_opaque_and_matte",
 "large_and_transparent_and_glossy", "large_and_transparent_and_matte",
 "left_and_large_and_glossy", "left_and_large_and_matte", "left_and_large_and_opaque",
@@ -95,7 +95,7 @@ MANUAL_VAL_TASKS: list = [
 "right_and_large_and_opaque_and_glossy", "right_and_large_and_opaque_and_matte",
 "right_and_large_and_transparent_and_glossy", "right_and_large_and_transparent_and_matte",
 "right_and_small_and_opaque_and_glossy", "right_and_small_and_opaque_and_matte",
-"right_and_small_and_transparent_and_glossy", "right_and_small_and_transparent_and_matte",
+"right_and_small_and_transparent_and_glossy", "right_and_small_and_transparent_and_matte"
 ]
 
 RUN_TAG = ("frozen" if FREEZE_ENCODER else "attnpool") + f"_{SPLIT_MODE}"

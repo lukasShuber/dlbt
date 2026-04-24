@@ -188,20 +188,26 @@ def run_diagnostics(agent_path: Path, out_tag: str):
     if cfg.FREEZE_ENCODER:
         agent._cache = {uid: feat.clone() for uid, feat in frozen_clip.items()}
     else:
-        # attnpool variant — rebuild cache via backbone + attnpool
-        from tqdm import tqdm as _tqdm
-        all_refs_list = list(refs_dict.values())
-        agent.precompute_backbone_features(all_refs_list)
-        with torch.no_grad():
-            for i in _tqdm(range(0, len(all_refs_list), 16),
-                           desc="  caching attnpool feats", unit="batch"):
-                batch   = all_refs_list[i : i + 16]
-                spatial = torch.stack(
-                    [agent._backbone_cache[r.uid] for r in batch]
-                ).to(agent.device)
-                feats = agent.encoder.attnpool(spatial).float()
-                for ref, feat in zip(batch, feats):
-                    agent._cache[ref.uid] = feat.cpu()
+        feat_cache_path = cfg.RESULTS_DIR / f"features_{out_tag}.pt"
+        if feat_cache_path.exists():
+            print(f"  Loading cached attnpool features from {feat_cache_path.name}...")
+            agent.load_cache(str(feat_cache_path))
+        else:
+            from tqdm import tqdm as _tqdm
+            all_refs_list = list(refs_dict.values())
+            agent.precompute_backbone_features(all_refs_list)
+            with torch.no_grad():
+                for i in _tqdm(range(0, len(all_refs_list), 16),
+                               desc="  caching attnpool feats", unit="batch"):
+                    batch   = all_refs_list[i : i + 16]
+                    spatial = torch.stack(
+                        [agent._backbone_cache[r.uid] for r in batch]
+                    ).to(agent.device)
+                    feats = agent.encoder.attnpool(spatial).float()
+                    for ref, feat in zip(batch, feats):
+                        agent._cache[ref.uid] = feat.cpu()
+            agent.save_cache(str(feat_cache_path))
+            print(f"  Saved attnpool feature cache -> {feat_cache_path.name}")
 
     # Probe images available in cache, sorted by ground-truth state
     probe_refs = sorted(
