@@ -46,7 +46,7 @@ EVAL_CELL_FRAC = 0.10
 # Training
 # ---------------------------------------------------------------------------
 N_EPOCHS_PHASE1  = 1000
-PATIENCE_PHASE1  = 100
+PATIENCE_PHASE1  = 200
 N_EPOCHS_PHASE2  = 3000
 PATIENCE_PHASE2  = 50
 LR               = 1e-2
@@ -57,7 +57,7 @@ MAPPER_HIDDEN    = None
 
 SPLIT_MODE = "arity"   # "arity" | "random"
 SPLIT_SEED = 0         # used only when SPLIT_MODE == "random"
-TRAIN_FRAC = 0.50      # used only when SPLIT_MODE == "random"
+TRAIN_FRAC = 0.80      # used only when SPLIT_MODE == "random"
 
 RUN_TAG = ("frozen" if FREEZE_ENCODER else "attnpool") + f"_{SPLIT_MODE}"
 
