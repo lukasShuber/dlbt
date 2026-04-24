@@ -49,13 +49,13 @@ N_EPOCHS_PHASE1  = 1000
 PATIENCE_PHASE1  = 100
 N_EPOCHS_PHASE2  = 3000
 PATIENCE_PHASE2  = 50
-LR               = 1e-1
-LR_ATTNPOOL      = 1e-4
+LR               = 1e-2
+LR_ATTNPOOL      = 1e-5
 N_MC             = 100
-FREEZE_ENCODER   = True
+FREEZE_ENCODER   = False
 MAPPER_HIDDEN    = None
 
-SPLIT_MODE = "random"   # "arity" | "random"
+SPLIT_MODE = "arity"   # "arity" | "random"
 SPLIT_SEED = 0         # used only when SPLIT_MODE == "random"
 TRAIN_FRAC = 0.50      # used only when SPLIT_MODE == "random"
 

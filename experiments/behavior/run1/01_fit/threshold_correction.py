@@ -167,10 +167,15 @@ for results_path in candidates:
     with open(results_path, "rb") as f:
         res = pickle.load(f)
 
-    # Task / image lists from pickle — robust to config changes
-    val_tasks   = res.get("val_tasks",   cfg.VAL_TASKS)
+    # Task / image lists from pickle.
+    # Intersect with cfg.VAL_TASKS so that tasks excluded by the current
+    # MIN_TASK_ASSIGNMENTS setting are dropped even without re-running run.py.
+    _pkl_val  = set(res.get("val_tasks", cfg.VAL_TASKS))
+    val_tasks = sorted(_pkl_val & set(cfg.VAL_TASKS))
     train_uids  = res.get("train_uids",  set())
     test_uids   = res.get("test_uids",   set())
+    print(f"  val tasks: {len(_pkl_val)} in pickle, "
+          f"{len(val_tasks)} after MIN_TASK_ASSIGNMENTS filter")
 
     # Original (h=0) predictions already in the pickle
     dlbt_orig = res.get("dlbt", {})

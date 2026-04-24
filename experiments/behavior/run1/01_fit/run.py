@@ -83,9 +83,17 @@ df_filtered, diag = filter_assignments(
     seed               = cfg.SEED,
 )
 
+# Only pass eligible task IDs to aggregate_counts so that ineligible tasks
+# (those below MIN_TASK_ASSIGNMENTS) are excluded from full_ds, the
+# probe/main image split, and all diagnostics — not just from the sliced
+# training / evaluation datasets.
+_eligible_names = set(cfg.TRAIN_TASKS + cfg.VAL_TASKS)
+_eligible_beh_id = {k: v for k, v in cfg.BEH_ID_TO_TASK.items()
+                    if v in _eligible_names}
+
 full_ds, probe_uids, main_uids = aggregate_counts(
     df_filtered,
-    beh_id_to_task  = cfg.BEH_ID_TO_TASK,
+    beh_id_to_task  = _eligible_beh_id,
     use_trial_kinds = cfg.USE_TRIAL_KINDS,
 )
 
