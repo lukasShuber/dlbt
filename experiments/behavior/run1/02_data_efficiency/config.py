@@ -66,7 +66,7 @@ PATIENCE_PHASE2 = 50
 LR              = 1e-2
 LR_ATTNPOOL     = 1e-5
 N_MC            = 100
-FREEZE_ENCODER  = True
+FREEZE_ENCODER  = False
 MAPPER_HIDDEN   = None
 
 # Run arity-adjusted h_n MC inference after each budget (in addition to h=0).

@@ -63,7 +63,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 N_MC        = 2000
 N_MC_FIT    = 2000
-N_STEPS_FIT = 1000
+N_STEPS_FIT = 5000
 LR_FIT      = 0.05
 TEMPERATURE = 50.0
 RNG         = np.random.default_rng(42)
@@ -243,7 +243,7 @@ def fit_alpha(uid: str, task_data: list = None,
         [[c0, c1] for du, c0, c1 in task_data],
         dtype=torch.float32)
 
-    log_alpha = torch.zeros(K, dtype=torch.float32, requires_grad=True)
+    log_alpha = torch.full((K,), np.log(10.0), dtype=torch.float32, requires_grad=True)
     optimizer = torch.optim.Adam([log_alpha], lr=LR_FIT)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=n_steps, eta_min=1e-4)
