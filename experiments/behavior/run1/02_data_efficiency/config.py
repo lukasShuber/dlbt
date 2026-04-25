@@ -54,7 +54,7 @@ EVAL_CELL_FRAC = 0.10
 # Trial budgets to sweep.  "full" = all trials in the 90% training cells.
 # Each integer B means: uniformly sample B trials (without replacement from
 # the pool of all individual training trials; with replacement if B > pool).
-TRIAL_BUDGETS = [10, 100, 1_000, "full"]
+TRIAL_BUDGETS = [10, 100, 1_000, 10_000, "full"]
 
 # ---------------------------------------------------------------------------
 # Training
@@ -66,16 +66,16 @@ PATIENCE_PHASE2 = 50
 LR              = 1e-2
 LR_ATTNPOOL     = 1e-5
 N_MC            = 100
-FREEZE_ENCODER  = False
+FREEZE_ENCODER  = True
 MAPPER_HIDDEN   = None
 
 # Run arity-adjusted h_n MC inference after each budget (in addition to h=0).
-THRESHOLD_CORRECTION = True
+THRESHOLD_CORRECTION = False
 
 # ---------------------------------------------------------------------------
 # Task split
 # ---------------------------------------------------------------------------
-SPLIT_MODE = "arity"   # "arity" | "random" | "manual"
+SPLIT_MODE = "random"   # "arity" | "random" | "manual"
 SPLIT_SEED = 0         # used only when SPLIT_MODE == "random"
 TRAIN_FRAC = 0.80      # used only when SPLIT_MODE == "random"
 

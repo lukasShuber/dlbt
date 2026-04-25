@@ -3,7 +3,7 @@ oracle_check.py
 ---------------
 Two-stage Dirichlet upper-bound check on probe-image human data.
 
-Stage 3 — Per-image unconstrained Dirichlet MLE  ("DLBT on steroids")
+Stage 3 — Per-image unconstrained Dirichlet MLE
     For each probe image, directly optimise K=16 free Dirichlet parameters to
     maximise the multinomial log-likelihood of observed choice counts across
     ALL tasks.  No metadata structure assumed — this is the tightest possible
