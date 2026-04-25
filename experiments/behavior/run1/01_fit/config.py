@@ -48,7 +48,7 @@ EVAL_CELL_FRAC = 0.10
 # ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
-N_EPOCHS_PHASE1  = 1000
+N_EPOCHS_PHASE1  = 2000
 PATIENCE_PHASE1  = 200
 N_EPOCHS_PHASE2  = 3000
 PATIENCE_PHASE2  = 50
@@ -58,7 +58,7 @@ N_MC             = 100
 FREEZE_ENCODER   = False
 MAPPER_HIDDEN    = None
 
-SPLIT_MODE = "manual"   # "arity" | "random" | "manual"
+SPLIT_MODE = "random"   # "arity" | "random" | "manual"
 SPLIT_SEED = 0         # used only when SPLIT_MODE == "random"
 TRAIN_FRAC = 0.80      # used only when SPLIT_MODE == "random"
 
