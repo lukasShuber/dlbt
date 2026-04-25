@@ -55,7 +55,7 @@ PATIENCE_PHASE2  = 50
 LR               = 1e-1
 LR_ATTNPOOL      = 1e-4
 N_MC             = 100
-FREEZE_ENCODER   = False
+FREEZE_ENCODER   = True
 MAPPER_HIDDEN    = None
 
 SPLIT_MODE = "random"   # "arity" | "random" | "manual"
