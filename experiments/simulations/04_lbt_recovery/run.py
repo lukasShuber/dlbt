@@ -1,10 +1,9 @@
 """
 Simulation 04 — LBT recovery sanity check.
 
-GT_MODE = "peaked": each image's Dirichlet is peaked at its true latent state
-    with concentration c, uniform (1.0) elsewhere:
-        alpha_true[k] = c   if k == true_state
-        alpha_true[k] = 1.0 otherwise
+GT_MODE = "peaked": each image's Dirichlet is peaked at its true latent state:
+        alpha_true[k] = CONCENTRATION    if k == true_state
+        alpha_true[k] = CONCENTRATION_BG otherwise
 
 GT_MODE = "random": each image's α_k ~ Uniform(GT_ALPHA_LOW, GT_ALPHA_HIGH)
     drawn independently; CONCENTRATIONS is ignored.
@@ -86,9 +85,10 @@ def _arity(task) -> int:
     return task.name.count("_and_") + 1
 
 
-def make_gt_alpha(true_state: int, concentration: float) -> np.ndarray:
-    """α peaked at true_state with given concentration; 1.0 elsewhere."""
-    alpha = np.ones(K, dtype=np.float64)
+def make_gt_alpha(true_state: int, concentration: float,
+                  bg: float = 1.0) -> np.ndarray:
+    """α peaked at true_state with given concentration; bg elsewhere."""
+    alpha = np.full(K, bg, dtype=np.float64)
     alpha[true_state] = concentration
     return alpha
 
@@ -120,7 +120,7 @@ def plot_alpha_heatmap(alpha_matrix: np.ndarray,
     Heatmap: rows = images, cols = latent states.
     If true_states is provided, draw a blue box around each diagonal cell.
     """
-    fig, ax = plt.subplots(figsize=(7, 7))
+    fig, ax = plt.subplots(figsize=(10, 7))
     sns.heatmap(
         alpha_matrix,
         ax=ax,
@@ -201,7 +201,7 @@ if VAL_TASKS:
 if GT_MODE == "peaked":
     tag       = f"c{cfg.CONCENTRATION:g}"
     gt_alphas = {
-        r.uid: make_gt_alpha(r.latent_state, cfg.CONCENTRATION)
+        r.uid: make_gt_alpha(r.latent_state, cfg.CONCENTRATION, cfg.CONCENTRATION_BG)
         for r in probe_refs
     }
 elif GT_MODE == "random":
@@ -340,7 +340,7 @@ for split_label, mask_split in [("train", is_train), ("val", ~is_train)]:
 # Plot 01a — ground-truth α heatmap
 # ---------------------------------------------------------------------------
 gt_matrix = np.stack([gt_alphas[r.uid] for r in probe_refs])   # [16, 16]
-gt_title  = (f"Ground-truth α  [concentration={cfg.CONCENTRATION}]"
+gt_title  = (f"Ground-truth α  [peak={cfg.CONCENTRATION}, bg={cfg.CONCENTRATION_BG}]"
              if GT_MODE == "peaked"
              else f"Ground-truth α  [random U({cfg.GT_ALPHA_LOW},{cfg.GT_ALPHA_HIGH})]")
 plot_alpha_heatmap(
@@ -353,7 +353,7 @@ plot_alpha_heatmap(
 # ---------------------------------------------------------------------------
 # Plot 01b — recovered α heatmap
 # ---------------------------------------------------------------------------
-rec_title = (f"Recovered α  [concentration={cfg.CONCENTRATION}  epoch={result.best_epoch}]"
+rec_title = (f"Recovered α  [peak={cfg.CONCENTRATION}, bg={cfg.CONCENTRATION_BG}  epoch={result.best_epoch}]"
              if GT_MODE == "peaked"
              else f"Recovered α  [random GT  epoch={result.best_epoch}]")
 plot_alpha_heatmap(
