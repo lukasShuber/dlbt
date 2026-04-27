@@ -32,7 +32,7 @@ RESULTS_DIR = Path(__file__).parent / "results"
 SEED          = 42
 N_TRIALS      = 100       # synthetic trials per (image, task) cell
 N_MC          = 1000      # MC samples for LbtAgent inference
-N_EPOCHS      = 1000
+N_EPOCHS      = 300
 LR            = 1e-2
 GRAD_CLIP     = 1.0
 
@@ -42,7 +42,7 @@ GRAD_CLIP     = 1.0
 # GT_MODE = "peaked"  — α[true_state] = CONCENTRATION, α[other] = CONCENTRATION_BG
 # GT_MODE = "random"  — α_k ~ U(GT_ALPHA_LOW, GT_ALPHA_HIGH) for all k, i.i.d.
 GT_MODE          = "peaked"
-CONCENTRATION    = 2.0     # used when GT_MODE == "peaked": peak value
+CONCENTRATION    = 10.0     # used when GT_MODE == "peaked": peak value
 CONCENTRATION_BG = 0.2     # used when GT_MODE == "peaked": background value
 GT_ALPHA_LOW     = 1.0     # used when GT_MODE == "random"
 GT_ALPHA_HIGH    = 2.0     # used when GT_MODE == "random"
