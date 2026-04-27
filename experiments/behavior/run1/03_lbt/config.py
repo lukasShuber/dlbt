@@ -52,9 +52,9 @@ MIN_TASK_ASSIGNMENTS = _run1_cfg.MIN_TASK_ASSIGNMENTS
 # Training
 # ---------------------------------------------------------------------------
 N_EPOCHS  = 200
-LR        = 1e-2
+LR        = 0.8
 GRAD_CLIP = 1.0
-N_MC      = 500       # MC samples for LbtAgent inference
+N_MC      = 1000       # MC samples for LbtAgent inference
 
 # ---------------------------------------------------------------------------
 # LbtAgent parameter initialisation
@@ -70,10 +70,10 @@ INIT_SEED       = 0
 # ---------------------------------------------------------------------------
 # Task split
 # ---------------------------------------------------------------------------
-SPLIT_MODE    = "random"       # "all" | "arity" | "random"
+SPLIT_MODE    = "arity"       # "all" | "arity" | "random"
 
 # Used when SPLIT_MODE == "arity":
-TRAIN_ARITIES = [1]         # arities included in training
+TRAIN_ARITIES = [4]         # arities included in training
 HOLD_OUT_REST = True        # True → remaining arities go to val; False → no val
 
 # Used when SPLIT_MODE == "random":
