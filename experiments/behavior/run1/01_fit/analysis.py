@@ -163,6 +163,7 @@ def _region_figure(pt, region_name, task_list, cond_color, color,
                    run_tag, n_seeds, mc_n, noise_floor_val):
     """Pooled scatter (left) + per-task grid (right)."""
     cond, _ = cond_color
+    task_list   = sorted(task_list, key=lambda t: (_arity(t), t))
     n_tasks     = len(task_list)
     n_task_rows = math.ceil(n_tasks / N_TASK_COLS)
 
