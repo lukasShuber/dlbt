@@ -50,8 +50,8 @@ GRAD_CLIP     = 1.0
 GT_MODE          = "graded"
 CONCENTRATION    = 5.0     # used when GT_MODE == "peaked": peak value
 CONCENTRATION_BG = 1.0     # used when GT_MODE == "peaked": background value
-GRADED_LEVELS    = [1.0, 1.5, 2.5, 4.0, 8.0]  # used when GT_MODE == "graded":
-                                                # index = number of shared features
+GRADED_LEVELS    = [1.0, 2.0, 4.0, 7.0, 10.0]  # used when GT_MODE == "graded":
+                                                 # index = number of shared features
 GT_ALPHA_LOW     = 1.0     # used when GT_MODE == "random"
 GT_ALPHA_HIGH    = 2.0     # used when GT_MODE == "random"
 GT_SEED          = 1       # used when GT_MODE == "random"
