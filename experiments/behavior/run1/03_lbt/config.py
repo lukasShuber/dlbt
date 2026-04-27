@@ -70,11 +70,11 @@ INIT_SEED       = 0
 # ---------------------------------------------------------------------------
 # Task split
 # ---------------------------------------------------------------------------
-SPLIT_MODE    = "all"       # "all" | "arity" | "random"
+SPLIT_MODE    = "random"       # "all" | "arity" | "random"
 
 # Used when SPLIT_MODE == "arity":
 TRAIN_ARITIES = [1]         # arities included in training
-HOLD_OUT_REST = False        # True → remaining arities go to val; False → no val
+HOLD_OUT_REST = True        # True → remaining arities go to val; False → no val
 
 # Used when SPLIT_MODE == "random":
 TRAIN_FRAC  = 0.80
