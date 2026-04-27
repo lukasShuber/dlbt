@@ -42,7 +42,7 @@ GRAD_CLIP     = 1.0
 # GT_MODE = "peaked"  — α[true_state] = CONCENTRATION, α[other] = CONCENTRATION_BG
 # GT_MODE = "random"  — α_k ~ U(GT_ALPHA_LOW, GT_ALPHA_HIGH) for all k, i.i.d.
 GT_MODE          = "peaked"
-CONCENTRATION    = 20.0     # used when GT_MODE == "peaked": peak value
+CONCENTRATION    = 5.0     # used when GT_MODE == "peaked": peak value
 CONCENTRATION_BG = 1.0     # used when GT_MODE == "peaked": background value
 GT_ALPHA_LOW     = 1.0     # used when GT_MODE == "random"
 GT_ALPHA_HIGH    = 2.0     # used when GT_MODE == "random"
@@ -65,7 +65,7 @@ INIT_SEED       = 0            # used when INIT_MODE == "random"
 # ---------------------------------------------------------------------------
 # Task split
 # ---------------------------------------------------------------------------
-SPLIT_MODE    = "arity"    # "all" | "arity" | "random"
+SPLIT_MODE    = "all"    # "all" | "arity" | "random"
 
 # Used when SPLIT_MODE == "arity":
 TRAIN_ARITIES = [1]       # arities included in training, e.g. [1], [1, 2]
