@@ -57,7 +57,7 @@ GT_SEED          = 1       # used when GT_MODE == "random"
 # INIT_MODE = "random"  — each α_k drawn independently from
 #                         Uniform(INIT_ALPHA_LOW, INIT_ALPHA_HIGH)
 INIT_MODE       = "uniform"
-INIT_ALPHA      = 2.5          # used when INIT_MODE == "uniform"
+INIT_ALPHA      = 3.0          # used when INIT_MODE == "uniform"
 INIT_ALPHA_LOW  = 0.5          # used when INIT_MODE == "random"
 INIT_ALPHA_HIGH = 3.0          # used when INIT_MODE == "random"
 INIT_SEED       = 0            # used when INIT_MODE == "random"
