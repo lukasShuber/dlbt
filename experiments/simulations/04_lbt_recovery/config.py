@@ -48,7 +48,7 @@ GRAD_CLIP     = 1.0
 #                         4 shared → GRADED_LEVELS[4]  (= true state, peak)
 # GT_MODE = "random"  — α_k ~ U(GT_ALPHA_LOW, GT_ALPHA_HIGH) for all k, i.i.d.
 GT_MODE          = "peaked"
-CONCENTRATION    = 20.0     # used when GT_MODE == "peaked": peak value
+CONCENTRATION    = 30.0     # used when GT_MODE == "peaked": peak value
 CONCENTRATION_BG = 0.1     # used when GT_MODE == "peaked": background value
 GRADED_LEVELS    = [1.0, 2.0, 4.0, 7.0, 10.0]  # used when GT_MODE == "graded":
                                                  # index = number of shared features
@@ -65,7 +65,7 @@ GT_SEED          = 1       # used when GT_MODE == "random"
 # INIT_MODE = "random"  — each α_k drawn independently from
 #                         Uniform(INIT_ALPHA_LOW, INIT_ALPHA_HIGH)
 INIT_MODE       = "uniform"
-INIT_ALPHA      = 20.0          # used when INIT_MODE == "uniform"
+INIT_ALPHA      = 1.0          # used when INIT_MODE == "uniform"
 INIT_ALPHA_LOW  = 0.5          # used when INIT_MODE == "random"
 INIT_ALPHA_HIGH = 3.0          # used when INIT_MODE == "random"
 INIT_SEED       = 0            # used when INIT_MODE == "random"
