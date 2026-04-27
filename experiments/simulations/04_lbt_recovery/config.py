@@ -49,7 +49,7 @@ GRAD_CLIP     = 1.0
 # GT_MODE = "random"  — α_k ~ U(GT_ALPHA_LOW, GT_ALPHA_HIGH) for all k, i.i.d.
 GT_MODE          = "peaked"
 CONCENTRATION    = 5.0     # used when GT_MODE == "peaked": peak value
-CONCENTRATION_BG = 0.2     # used when GT_MODE == "peaked": background value
+CONCENTRATION_BG = 0.1     # used when GT_MODE == "peaked": background value
 GRADED_LEVELS    = [1.0, 2.0, 4.0, 7.0, 10.0]  # used when GT_MODE == "graded":
                                                  # index = number of shared features
 GT_ALPHA_LOW     = 1.0     # used when GT_MODE == "random"
@@ -76,7 +76,7 @@ INIT_SEED       = 0            # used when INIT_MODE == "random"
 SPLIT_MODE    = "arity"    # "all" | "arity" | "random"
 
 # Used when SPLIT_MODE == "arity":
-TRAIN_ARITIES = [4]       # arities included in training, e.g. [1], [1, 2]
+TRAIN_ARITIES = [3]       # arities included in training, e.g. [1], [1, 2]
 HOLD_OUT_REST = True      # True → remaining arities go to val; False → no val
 
 # Used when SPLIT_MODE == "random":
