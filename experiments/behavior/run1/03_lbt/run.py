@@ -134,7 +134,9 @@ print(f"  Aggregated cells: {len(full_ds):,}  "
 # Restrict to probe images only
 # ---------------------------------------------------------------------------
 probe_df = full_ds.df[full_ds.df["uid"].isin(probe_uids)].copy()
-print(f"  Probe-only cells: {len(probe_df):,}")
+probe_df["n_trials"] = probe_df["count_0"] + probe_df["count_1"]
+avg_n = probe_df["n_trials"].mean()
+print(f"  Probe-only cells: {len(probe_df):,}  |  avg trials/cell: {avg_n:.1f}")
 
 refs_by_uid  = {r.uid: r for r in refs_all}
 probe_refs   = sorted(
