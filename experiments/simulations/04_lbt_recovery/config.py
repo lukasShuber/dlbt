@@ -45,7 +45,7 @@ GRAD_CLIP     = 1.0
 GT_MODE        = "random"
 CONCENTRATION  = 5.0       # used when GT_MODE == "peaked"
 GT_ALPHA_LOW   = 1.0       # used when GT_MODE == "random"
-GT_ALPHA_HIGH  = 10.0      # used when GT_MODE == "random"
+GT_ALPHA_HIGH  = 2.0      # used when GT_MODE == "random"
 GT_SEED        = 1         # used when GT_MODE == "random"
 
 # ---------------------------------------------------------------------------
@@ -65,11 +65,11 @@ INIT_SEED       = 0            # used when INIT_MODE == "random"
 # ---------------------------------------------------------------------------
 # Task split
 # ---------------------------------------------------------------------------
-SPLIT_MODE    = "all"    # "all" | "arity" | "random"
+SPLIT_MODE    = "arity"    # "all" | "arity" | "random"
 
 # Used when SPLIT_MODE == "arity":
 TRAIN_ARITIES = [1]       # arities included in training, e.g. [1], [1, 2]
-HOLD_OUT_REST = True      # True → remaining arities go to val; False → no val
+HOLD_OUT_REST = False      # True → remaining arities go to val; False → no val
 
 # Used when SPLIT_MODE == "random":
 TRAIN_FRAC   = 0.80
