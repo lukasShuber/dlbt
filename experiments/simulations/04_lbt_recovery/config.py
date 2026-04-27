@@ -42,7 +42,7 @@ GRAD_CLIP     = 1.0
 # GT_MODE = "peaked"  — α[true_state] = CONCENTRATION, α[other] = CONCENTRATION_BG
 # GT_MODE = "random"  — α_k ~ U(GT_ALPHA_LOW, GT_ALPHA_HIGH) for all k, i.i.d.
 GT_MODE          = "peaked"
-CONCENTRATION    = 30.0     # used when GT_MODE == "peaked": peak value
+CONCENTRATION    = 20.0     # used when GT_MODE == "peaked": peak value
 CONCENTRATION_BG = 1.0     # used when GT_MODE == "peaked": background value
 GT_ALPHA_LOW     = 1.0     # used when GT_MODE == "random"
 GT_ALPHA_HIGH    = 2.0     # used when GT_MODE == "random"
@@ -57,7 +57,7 @@ GT_SEED          = 1       # used when GT_MODE == "random"
 # INIT_MODE = "random"  — each α_k drawn independently from
 #                         Uniform(INIT_ALPHA_LOW, INIT_ALPHA_HIGH)
 INIT_MODE       = "uniform"
-INIT_ALPHA      = 1.0          # used when INIT_MODE == "uniform"
+INIT_ALPHA      = 10.0          # used when INIT_MODE == "uniform"
 INIT_ALPHA_LOW  = 0.5          # used when INIT_MODE == "random"
 INIT_ALPHA_HIGH = 3.0          # used when INIT_MODE == "random"
 INIT_SEED       = 0            # used when INIT_MODE == "random"
