@@ -120,7 +120,7 @@ def plot_alpha_heatmap(alpha_matrix: np.ndarray,
     Heatmap: rows = images, cols = latent states.
     If true_states is provided, draw a blue box around each diagonal cell.
     """
-    fig, ax = plt.subplots(figsize=(10, 7))
+    fig, ax = plt.subplots(figsize=(5, 4))
     sns.heatmap(
         alpha_matrix,
         ax=ax,
