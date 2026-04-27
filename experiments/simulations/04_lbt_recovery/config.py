@@ -39,6 +39,20 @@ GRAD_CLIP     = 1.0
 CONCENTRATIONS = [5.0]    # extend e.g. to [2, 5, 10, 50] for a sweep
 
 # ---------------------------------------------------------------------------
+# LbtAgent parameter initialisation (NOT the ground-truth observer)
+# Controls how the fitted agent's α table is initialised before training.
+# The ground-truth is set by CONCENTRATIONS (peaked at true_state, 1.0 elsewhere).
+# ---------------------------------------------------------------------------
+# INIT_MODE = "uniform" — all α start at INIT_ALPHA (set to any level, e.g. 1.0, 10.0)
+# INIT_MODE = "random"  — each α_k drawn independently from
+#                         Uniform(INIT_ALPHA_LOW, INIT_ALPHA_HIGH)
+INIT_MODE       = "uniform"
+INIT_ALPHA      = 1.0          # used when INIT_MODE == "uniform"
+INIT_ALPHA_LOW  = 0.5          # used when INIT_MODE == "random"
+INIT_ALPHA_HIGH = 3.0          # used when INIT_MODE == "random"
+INIT_SEED       = 0            # used when INIT_MODE == "random"
+
+# ---------------------------------------------------------------------------
 # Task split
 # ---------------------------------------------------------------------------
 SPLIT_MODE   = "all"    # "all" | "arity" | "random"

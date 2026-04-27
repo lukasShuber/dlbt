@@ -157,7 +157,7 @@ RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 plots_dir = RESULTS_DIR / "plots"
 plots_dir.mkdir(exist_ok=True)
 
-device = torch.device("cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 rng    = np.random.default_rng(SEED)
 torch.manual_seed(SEED)
 
@@ -251,12 +251,31 @@ for concentration in CONCENTRATIONS:
     # -----------------------------------------------------------------------
     # Initialise and train LbtAgent
     # -----------------------------------------------------------------------
-    agent = LbtAgent(
-        uid_list     = [r.uid for r in probe_refs],
-        n_mc_samples = N_MC,
-        device       = device,
-        init_alpha   = 1.0,
-    )
+    if cfg.INIT_MODE == "uniform":
+        agent = LbtAgent(
+            uid_list     = [r.uid for r in probe_refs],
+            n_mc_samples = N_MC,
+            device       = device,
+            init_alpha   = cfg.INIT_ALPHA,
+        )
+    elif cfg.INIT_MODE == "random":
+        import torch.nn.functional as _F2
+        agent = LbtAgent(
+            uid_list     = [r.uid for r in probe_refs],
+            n_mc_samples = N_MC,
+            device       = device,
+        )
+        init_rng   = np.random.default_rng(cfg.INIT_SEED)
+        n          = len(probe_refs)
+        alpha_rand = init_rng.uniform(
+            cfg.INIT_ALPHA_LOW, cfg.INIT_ALPHA_HIGH, size=(n, K)
+        ).astype(np.float32)
+        # Invert softplus: log(exp(α) - 1)
+        alpha_t = torch.tensor(alpha_rand)
+        with torch.no_grad():
+            agent.log_alpha.copy_(torch.log(torch.exp(alpha_t) - 1.0))
+    else:
+        raise ValueError(f"Unknown INIT_MODE {cfg.INIT_MODE!r}")
 
     print("  Training LbtAgent (all data, train loss as stopping criterion)...")
     result = train_lbt(
