@@ -32,7 +32,7 @@ RESULTS_DIR = Path(__file__).parent / "results"
 SEED          = 42
 N_TRIALS      = 100       # synthetic trials per (image, task) cell
 N_MC          = 1000      # MC samples for LbtAgent inference
-N_EPOCHS      = 300
+N_EPOCHS      = 1000
 LR            = 1e-2
 GRAD_CLIP     = 1.0
 
