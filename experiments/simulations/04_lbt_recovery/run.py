@@ -340,9 +340,7 @@ for split_label, mask_split in [("train", is_train), ("val", ~is_train)]:
 # Plot 01a — ground-truth α heatmap
 # ---------------------------------------------------------------------------
 gt_matrix = np.stack([gt_alphas[r.uid] for r in probe_refs])   # [16, 16]
-gt_title  = (f"Ground-truth α  [peak={cfg.CONCENTRATION}, bg={cfg.CONCENTRATION_BG}]"
-             if GT_MODE == "peaked"
-             else f"Ground-truth α  [random U({cfg.GT_ALPHA_LOW},{cfg.GT_ALPHA_HIGH})]")
+gt_title  = "Ground-truth α"
 plot_alpha_heatmap(
     gt_matrix, image_labels,
     title       = gt_title,
@@ -353,9 +351,7 @@ plot_alpha_heatmap(
 # ---------------------------------------------------------------------------
 # Plot 01b — recovered α heatmap
 # ---------------------------------------------------------------------------
-rec_title = (f"Recovered α  [peak={cfg.CONCENTRATION}, bg={cfg.CONCENTRATION_BG}  epoch={result.best_epoch}]"
-             if GT_MODE == "peaked"
-             else f"Recovered α  [random GT  epoch={result.best_epoch}]")
+rec_title = "Recovered α"
 plot_alpha_heatmap(
     recovered_alpha, image_labels,
     title       = rec_title,
