@@ -93,6 +93,19 @@ def make_gt_alpha(true_state: int, concentration: float,
     return alpha
 
 
+def make_gt_alpha_graded(true_state: int, levels: list) -> np.ndarray:
+    """α graded by number of shared features with true_state.
+
+    levels[n] is the α value for states sharing exactly n out of 4 features
+    with true_state (so levels[4] is the peak at the true state itself).
+    """
+    alpha = np.empty(K, dtype=np.float64)
+    for k in range(K):
+        n_shared = 4 - bin(true_state ^ k).count("1")   # popcount of XOR
+        alpha[k] = levels[n_shared]
+    return alpha
+
+
 def oracle_p_right(alpha: np.ndarray, task, n_mc: int = 5000,
                    rng: np.random.Generator = None) -> float:
     """Exact P(right) under Dir(alpha) via MC (large n_mc → low noise)."""
@@ -202,6 +215,12 @@ if GT_MODE == "peaked":
     tag       = f"c{cfg.CONCENTRATION:g}"
     gt_alphas = {
         r.uid: make_gt_alpha(r.latent_state, cfg.CONCENTRATION, cfg.CONCENTRATION_BG)
+        for r in probe_refs
+    }
+elif GT_MODE == "graded":
+    tag       = "graded_" + "_".join(f"{v:g}" for v in cfg.GRADED_LEVELS)
+    gt_alphas = {
+        r.uid: make_gt_alpha_graded(r.latent_state, cfg.GRADED_LEVELS)
         for r in probe_refs
     }
 elif GT_MODE == "random":

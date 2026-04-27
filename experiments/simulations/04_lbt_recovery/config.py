@@ -40,10 +40,18 @@ GRAD_CLIP     = 1.0
 # Ground-truth observer
 # ---------------------------------------------------------------------------
 # GT_MODE = "peaked"  — α[true_state] = CONCENTRATION, α[other] = CONCENTRATION_BG
+# GT_MODE = "graded"  — α_k depends on # shared features with true_state (0–4):
+#                         0 shared → GRADED_LEVELS[0]  (minimum)
+#                         1 shared → GRADED_LEVELS[1]
+#                         2 shared → GRADED_LEVELS[2]
+#                         3 shared → GRADED_LEVELS[3]
+#                         4 shared → GRADED_LEVELS[4]  (= true state, peak)
 # GT_MODE = "random"  — α_k ~ U(GT_ALPHA_LOW, GT_ALPHA_HIGH) for all k, i.i.d.
-GT_MODE          = "peaked"
+GT_MODE          = "graded"
 CONCENTRATION    = 5.0     # used when GT_MODE == "peaked": peak value
 CONCENTRATION_BG = 1.0     # used when GT_MODE == "peaked": background value
+GRADED_LEVELS    = [1.0, 1.5, 2.5, 4.0, 8.0]  # used when GT_MODE == "graded":
+                                                # index = number of shared features
 GT_ALPHA_LOW     = 1.0     # used when GT_MODE == "random"
 GT_ALPHA_HIGH    = 2.0     # used when GT_MODE == "random"
 GT_SEED          = 1       # used when GT_MODE == "random"
