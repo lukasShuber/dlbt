@@ -33,7 +33,7 @@ SEED          = 42
 N_TRIALS      = 100       # synthetic trials per (image, task) cell
 N_MC          = 50000      # MC samples for LbtAgent inference
 N_EPOCHS      = 200
-LR            = 0.89
+LR            = 0.85
 GRAD_CLIP     = 1.0
 
 # ---------------------------------------------------------------------------
@@ -58,7 +58,7 @@ BETA             = 8.0     # sigmoid slope for left/right, transparency, glossin
 SCALE_BETA       = 15.0    # sigmoid slope for scale
 BASE_CONCENTRATION = 0.1   # baseline added to λ before scaling
 PEAK             = 15.0    # added concentration for maximally clear images
-MIN_LAM          = 8.0     # floor on λ — ensures signal even for ambiguous images
+MIN_LAM          = 10.0     # floor on λ — ensures signal even for ambiguous images
 SHARPNESS        = 4.0     # q = q**SHARPNESS before normalising — sharpens the peak
 GT_ALPHA_LOW     = 1.0     # used when GT_MODE == "random"
 GT_ALPHA_HIGH    = 2.0     # used when GT_MODE == "random"
@@ -81,7 +81,7 @@ INIT_SEED       = 0            # used when INIT_MODE == "random"
 # ---------------------------------------------------------------------------
 # Task split
 # ---------------------------------------------------------------------------
-SPLIT_MODE    = "arity"    # "all" | "arity" | "random"
+SPLIT_MODE    = "all"    # "all" | "arity" | "random"
 
 # Used when SPLIT_MODE == "arity":
 TRAIN_ARITIES = [4]       # arities included in training, e.g. [1], [1, 2]
