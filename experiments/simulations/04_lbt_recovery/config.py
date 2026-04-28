@@ -33,7 +33,7 @@ SEED          = 42
 N_TRIALS      = 100       # synthetic trials per (image, task) cell
 N_MC          = 50000      # MC samples for LbtAgent inference
 N_EPOCHS      = 200
-LR            = 0.1
+LR            = 0.8
 GRAD_CLIP     = 1.0
 
 # ---------------------------------------------------------------------------
@@ -54,9 +54,9 @@ CONCENTRATION_BG = 0.1     # used when GT_MODE == "peaked": background value
 GRADED_LEVELS    = [0.01, 2.0, 4.0, 8.0, 100.0]  # used when GT_MODE == "graded"
                                                    # index = number of shared features
 # used when GT_MODE == "factorized":
-BETA             = 2.5     # sigmoid slope for left/right, transparency, glossiness
-SCALE_BETA       = 5.0    # sigmoid slope for scale
-BASE_CONCENTRATION = 1.0   # minimum concentration (flat images)
+BETA             = 8.0     # sigmoid slope for left/right, transparency, glossiness
+SCALE_BETA       = 15.0    # sigmoid slope for scale
+BASE_CONCENTRATION = 0.1   # minimum concentration (flat images)
 PEAK             = 15.0    # added concentration for maximally clear images
 GT_ALPHA_LOW     = 1.0     # used when GT_MODE == "random"
 GT_ALPHA_HIGH    = 2.0     # used when GT_MODE == "random"
