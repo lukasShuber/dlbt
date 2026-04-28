@@ -81,10 +81,10 @@ INIT_SEED       = 0            # used when INIT_MODE == "random"
 # ---------------------------------------------------------------------------
 # Task split
 # ---------------------------------------------------------------------------
-SPLIT_MODE    = "all"    # "all" | "arity" | "random"
+SPLIT_MODE    = "arity"    # "all" | "arity" | "random"
 
 # Used when SPLIT_MODE == "arity":
-TRAIN_ARITIES = [2,3]       # arities included in training, e.g. [1], [1, 2]
+TRAIN_ARITIES = [4]       # arities included in training, e.g. [1], [1, 2]
 HOLD_OUT_REST = True      # True → remaining arities go to val; False → no val
 
 # Used when SPLIT_MODE == "random":
