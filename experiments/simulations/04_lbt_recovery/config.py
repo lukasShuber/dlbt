@@ -59,7 +59,7 @@ SCALE_BETA       = 15.0    # sigmoid slope for scale
 BASE_CONCENTRATION = 0.1   # baseline added to λ before scaling
 PEAK             = 15.0    # added concentration for maximally clear images
 MIN_LAM          = 10.0     # floor on λ — ensures signal even for ambiguous images
-SHARPNESS        = 1.0     # q = q**SHARPNESS before normalising — sharpens the peak
+SHARPNESS        = 6.0     # q = q**SHARPNESS before normalising — sharpens the peak
 GT_ALPHA_LOW     = 1.0     # used when GT_MODE == "random"
 GT_ALPHA_HIGH    = 2.0     # used when GT_MODE == "random"
 GT_SEED          = 1       # used when GT_MODE == "random"
