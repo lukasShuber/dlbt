@@ -42,7 +42,8 @@ from scipy.stats import spearmanr
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
 from dlbt.agents.lbt import LbtAgent
-from dlbt.constants import K, DIM_LEFT_RIGHT, DIM_TRANSP, DIM_GLOSS, DIM_SMALL_LARGE
+from dlbt.constants import (K, DIM_LEFT_RIGHT, DIM_TRANSP, DIM_GLOSS, DIM_SMALL_LARGE,
+                             X_THRESHOLD, TRANSP_THRESH, GLOSS_THRESH, SCALE_THRESH)
 from dlbt.data.dataset import BehavioralDataset
 from dlbt.data.image_ref import load_image_refs, image_refs_as_list
 from dlbt.data.task import get_task
@@ -91,6 +92,48 @@ def make_gt_alpha(true_state: int, concentration: float,
     alpha = np.full(K, bg, dtype=np.float64)
     alpha[true_state] = concentration
     return alpha
+
+
+def _sigmoid(x: float) -> float:
+    return 1.0 / (1.0 + np.exp(-x))
+
+
+def make_gt_alpha_factorized(uid: str, cont_meta: dict) -> np.ndarray:
+    """Factorized Dirichlet α from continuous image metadata.
+
+    Per-feature probabilities are computed via sigmoid centered at the
+    category threshold (same as 03_belief_distributions).  The K=16 α values
+    are set proportional to the product of per-feature probabilities, so
+    states that align with the image's actual continuous percept get high α
+    and states that differ on any feature get low α.  Concentration λ scales
+    with 'clarity' — images near a feature boundary get a flat (uncertain)
+    Dirichlet; images far from all boundaries get a sharp (confident) one.
+    """
+    z        = cont_meta[uid]
+    p_right  = _sigmoid(cfg.BETA       * (z["x"]            - X_THRESHOLD))
+    p_transp = _sigmoid(cfg.BETA       * (z["transparency"] - TRANSP_THRESH))
+    p_glossy = _sigmoid(cfg.BETA       * (z["glossiness"]   - GLOSS_THRESH))
+    p_large  = _sigmoid(cfg.SCALE_BETA * (z["scale"]        - SCALE_THRESH))
+
+    q = np.empty(K, dtype=np.float64)
+    for k in range(K):
+        k_right  = (k >> DIM_LEFT_RIGHT)  & 1
+        k_transp = (k >> DIM_TRANSP)      & 1
+        k_glossy = (k >> DIM_GLOSS)       & 1
+        k_large  = (k >> DIM_SMALL_LARGE) & 1
+        q[k] = (
+            (p_right  if k_right  else 1.0 - p_right)  *
+            (p_transp if k_transp else 1.0 - p_transp) *
+            (p_glossy if k_glossy else 1.0 - p_glossy) *
+            (p_large  if k_large  else 1.0 - p_large)
+        )
+
+    clarity = (abs(p_right  - 0.5) * 2.0 *
+               abs(p_transp - 0.5) * 2.0 *
+               abs(p_glossy - 0.5) * 2.0 *
+               abs(p_large  - 0.5) * 2.0)
+    lam = cfg.BASE_CONCENTRATION + cfg.PEAK * clarity
+    return 1e-6 + lam * q
 
 
 def make_gt_alpha_graded(true_state: int, levels: list) -> np.ndarray:
@@ -183,6 +226,23 @@ refs_dict = load_image_refs(METADATA)
 refs_all  = image_refs_as_list(refs_dict)
 print(f"  Total images: {len(refs_all)}")
 
+# Load continuous metadata (needed for GT_MODE == "factorized")
+import json as _json
+cont_meta: dict = {}
+with open(METADATA) as _f:
+    for _line in _f:
+        _line = _line.strip()
+        if not _line:
+            continue
+        _rec = _json.loads(_line)
+        _z   = _rec["z"]
+        cont_meta[_rec["id"]] = dict(
+            x            = _z["pos_xy"][0],
+            transparency = _z["transparency"],
+            glossiness   = _z["glossiness"],
+            scale        = _z["scale"],
+        )
+
 # Group by latent state and take first of each
 by_state = defaultdict(list)
 for r in refs_all:
@@ -221,6 +281,12 @@ elif GT_MODE == "graded":
     tag       = "graded_" + "_".join(f"{v:g}" for v in cfg.GRADED_LEVELS)
     gt_alphas = {
         r.uid: make_gt_alpha_graded(r.latent_state, cfg.GRADED_LEVELS)
+        for r in probe_refs
+    }
+elif GT_MODE == "factorized":
+    tag       = f"factorized_b{cfg.BETA:g}_p{cfg.PEAK:g}"
+    gt_alphas = {
+        r.uid: make_gt_alpha_factorized(r.uid, cont_meta)
         for r in probe_refs
     }
 elif GT_MODE == "random":

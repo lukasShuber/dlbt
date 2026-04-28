@@ -39,19 +39,25 @@ GRAD_CLIP     = 1.0
 # ---------------------------------------------------------------------------
 # Ground-truth observer
 # ---------------------------------------------------------------------------
-# GT_MODE = "peaked"  — α[true_state] = CONCENTRATION, α[other] = CONCENTRATION_BG
-# GT_MODE = "graded"  — α_k depends on # shared features with true_state (0–4):
-#                         0 shared → GRADED_LEVELS[0]  (minimum)
-#                         1 shared → GRADED_LEVELS[1]
-#                         2 shared → GRADED_LEVELS[2]
-#                         3 shared → GRADED_LEVELS[3]
-#                         4 shared → GRADED_LEVELS[4]  (= true state, peak)
-# GT_MODE = "random"  — α_k ~ U(GT_ALPHA_LOW, GT_ALPHA_HIGH) for all k, i.i.d.
-GT_MODE          = "graded"
+# GT_MODE = "peaked"     — α[true_state] = CONCENTRATION, α[other] = CONCENTRATION_BG
+# GT_MODE = "graded"    — α_k depends on # shared features with true_state (0–4):
+#                           0 shared → GRADED_LEVELS[0]  (minimum)
+#                           ...
+#                           4 shared → GRADED_LEVELS[4]  (= true state, peak)
+# GT_MODE = "factorized" — uses real image continuous metadata (x, transparency,
+#                           glossiness, scale); per-feature probabilities via sigmoid,
+#                           α_k = λ × ∏ p(feature_k), λ = BASE_CONC + PEAK × clarity
+# GT_MODE = "random"    — α_k ~ U(GT_ALPHA_LOW, GT_ALPHA_HIGH) for all k, i.i.d.
+GT_MODE          = "factorized"
 CONCENTRATION    = 5.0     # used when GT_MODE == "peaked": peak value
 CONCENTRATION_BG = 0.1     # used when GT_MODE == "peaked": background value
-GRADED_LEVELS    = [0.01, 2.0, 4.0, 8.0, 100.0]  # used when GT_MODE == "graded":
-                                                 # index = number of shared features
+GRADED_LEVELS    = [0.01, 2.0, 4.0, 8.0, 100.0]  # used when GT_MODE == "graded"
+                                                   # index = number of shared features
+# used when GT_MODE == "factorized":
+BETA             = 5.0     # sigmoid slope for left/right, transparency, glossiness
+SCALE_BETA       = 10.0    # sigmoid slope for scale
+BASE_CONCENTRATION = 1.0   # minimum concentration (flat images)
+PEAK             = 15.0    # added concentration for maximally clear images
 GT_ALPHA_LOW     = 1.0     # used when GT_MODE == "random"
 GT_ALPHA_HIGH    = 2.0     # used when GT_MODE == "random"
 GT_SEED          = 1       # used when GT_MODE == "random"
