@@ -57,7 +57,7 @@ GRADED_LEVELS    = [0.01, 2.0, 4.0, 8.0, 100.0]  # used when GT_MODE == "graded"
 BETA             = 8.0     # sigmoid slope for left/right, transparency, glossiness
 SCALE_BETA       = 15.0    # sigmoid slope for scale
 BASE_CONCENTRATION = 0.1   # minimum concentration (flat images)
-PEAK             = 15.0    # added concentration for maximally clear images
+PEAK             = 30.0    # added concentration for maximally clear images
 GT_ALPHA_LOW     = 1.0     # used when GT_MODE == "random"
 GT_ALPHA_HIGH    = 2.0     # used when GT_MODE == "random"
 GT_SEED          = 1       # used when GT_MODE == "random"
