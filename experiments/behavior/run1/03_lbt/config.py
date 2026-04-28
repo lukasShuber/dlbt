@@ -52,7 +52,7 @@ MIN_TASK_ASSIGNMENTS = _run1_cfg.MIN_TASK_ASSIGNMENTS
 # Training
 # ---------------------------------------------------------------------------
 N_EPOCHS  = 200
-LR        = 0.8
+LR        = 0.85
 GRAD_CLIP = 1.0
 N_MC      = 1000       # MC samples for LbtAgent inference
 
@@ -61,16 +61,16 @@ N_MC      = 1000       # MC samples for LbtAgent inference
 # ---------------------------------------------------------------------------
 # INIT_MODE = "uniform" — all α start at INIT_ALPHA (e.g. 1.0 = flat prior)
 # INIT_MODE = "random"  — each α_k ~ U(INIT_ALPHA_LOW, INIT_ALPHA_HIGH)
-INIT_MODE       = "uniform"
+INIT_MODE       = "random"
 INIT_ALPHA      = 1.0
-INIT_ALPHA_LOW  = 0.5
-INIT_ALPHA_HIGH = 3.0
+INIT_ALPHA_LOW  = 0.1
+INIT_ALPHA_HIGH = 0.5
 INIT_SEED       = 0
 
 # ---------------------------------------------------------------------------
 # Task split
 # ---------------------------------------------------------------------------
-SPLIT_MODE    = "arity"       # "all" | "arity" | "random"
+SPLIT_MODE    = "all"       # "all" | "arity" | "random"
 
 # Used when SPLIT_MODE == "arity":
 TRAIN_ARITIES = [4]         # arities included in training
