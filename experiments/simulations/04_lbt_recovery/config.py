@@ -73,7 +73,7 @@ GT_SEED          = 1       # used when GT_MODE == "random"
 INIT_MODE       = "random"
 INIT_ALPHA      = 1.0          # used when INIT_MODE == "uniform"
 INIT_ALPHA_LOW  = 0.1          # used when INIT_MODE == "random"
-INIT_ALPHA_HIGH = 5.0          # used when INIT_MODE == "random"
+INIT_ALPHA_HIGH = 2.0          # used when INIT_MODE == "random"
 INIT_SEED       = 0            # used when INIT_MODE == "random"
 
 # ---------------------------------------------------------------------------
