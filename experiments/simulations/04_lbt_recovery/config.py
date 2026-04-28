@@ -33,7 +33,7 @@ SEED          = 42
 N_TRIALS      = 100       # synthetic trials per (image, task) cell
 N_MC          = 50000      # MC samples for LbtAgent inference
 N_EPOCHS      = 200
-LR            = 0.8
+LR            = 0.95
 GRAD_CLIP     = 1.0
 
 # ---------------------------------------------------------------------------
