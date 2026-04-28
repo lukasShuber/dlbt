@@ -56,8 +56,10 @@ GRADED_LEVELS    = [0.01, 2.0, 4.0, 8.0, 100.0]  # used when GT_MODE == "graded"
 # used when GT_MODE == "factorized":
 BETA             = 8.0     # sigmoid slope for left/right, transparency, glossiness
 SCALE_BETA       = 15.0    # sigmoid slope for scale
-BASE_CONCENTRATION = 0.1   # minimum concentration (flat images)
+BASE_CONCENTRATION = 0.1   # baseline added to λ before scaling
 PEAK             = 30.0    # added concentration for maximally clear images
+MIN_LAM          = 3.0     # floor on λ — ensures signal even for ambiguous images
+SHARPNESS        = 2.0     # q = q**SHARPNESS before normalising — sharpens the peak
 GT_ALPHA_LOW     = 1.0     # used when GT_MODE == "random"
 GT_ALPHA_HIGH    = 2.0     # used when GT_MODE == "random"
 GT_SEED          = 1       # used when GT_MODE == "random"

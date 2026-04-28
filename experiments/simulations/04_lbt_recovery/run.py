@@ -128,11 +128,15 @@ def make_gt_alpha_factorized(uid: str, cont_meta: dict) -> np.ndarray:
             (p_large  if k_large  else 1.0 - p_large)
         )
 
+    # Sharpen q: suppresses near-zero entries, amplifies the peak
+    q = q ** cfg.SHARPNESS
+    q /= q.sum()
+
     clarity = (abs(p_right  - 0.5) * 2.0 *
                abs(p_transp - 0.5) * 2.0 *
                abs(p_glossy - 0.5) * 2.0 *
                abs(p_large  - 0.5) * 2.0)
-    lam = cfg.BASE_CONCENTRATION + cfg.PEAK * clarity
+    lam = max(cfg.MIN_LAM, cfg.BASE_CONCENTRATION + cfg.PEAK * clarity)
     return 1e-6 + lam * q
 
 
