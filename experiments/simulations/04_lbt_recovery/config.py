@@ -88,7 +88,7 @@ GT_SEED          = 1       # used when GT_MODE == "random"
 #                         Uniform(INIT_ALPHA_LOW, INIT_ALPHA_HIGH)
 INIT_MODE       = "random"
 INIT_ALPHA      = 1.0          # used when INIT_MODE == "uniform"
-INIT_ALPHA_LOW  = 0.1          # used when INIT_MODE == "random"
+INIT_ALPHA_LOW  = 1.0          # used when INIT_MODE == "random"
 INIT_ALPHA_HIGH = 8.0         # used when INIT_MODE == "random"
 INIT_SEED       = 0            # used when INIT_MODE == "random"
 
