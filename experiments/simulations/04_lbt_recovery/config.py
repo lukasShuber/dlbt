@@ -33,7 +33,7 @@ SEED          = 42
 N_TRIALS      = 100       # synthetic trials per (image, task) cell
 N_MC          = 50000      # MC samples for LbtAgent inference
 N_EPOCHS      = 200
-LR            = 0.3
+LR            = 0.85
 GRAD_CLIP     = 1.0
 
 # ---------------------------------------------------------------------------
@@ -82,7 +82,7 @@ GT_SEED          = 1       # used when GT_MODE == "random"
 INIT_MODE       = "random"
 INIT_ALPHA      = 1.0          # used when INIT_MODE == "uniform"
 INIT_ALPHA_LOW  = 0.1          # used when INIT_MODE == "random"
-INIT_ALPHA_HIGH = 1.0         # used when INIT_MODE == "random"
+INIT_ALPHA_HIGH = 0.5         # used when INIT_MODE == "random"
 INIT_SEED       = 0            # used when INIT_MODE == "random"
 
 # ---------------------------------------------------------------------------
