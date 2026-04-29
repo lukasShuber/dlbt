@@ -33,7 +33,7 @@ SEED          = 42
 N_TRIALS      = 100       # synthetic trials per (image, task) cell
 N_MC          = 10000      # MC samples for LbtAgent inference
 N_EPOCHS      = 200
-LR            = 0.3
+LR            = 0.85
 GRAD_CLIP     = 1.0
 
 # ---------------------------------------------------------------------------
@@ -60,20 +60,12 @@ GT_MODE          = "graded"
 CONCENTRATION    = 5.0     # used when GT_MODE == "peaked": peak value
 CONCENTRATION_BG = 1.0     # used when GT_MODE == "peaked": background value
 GRADED_LEVELS    = [1.0, 2.0, 4.0, 6.0, 8.0]  # used when GT_MODE == "graded"
-                                                   # index = number of shared features
+                                                 # index = number of shared features
 # used when GT_MODE == "factorized":
-# BETA             = 8.0     # sigmoid slope for left/right, transparency, glossiness
-# SCALE_BETA       = 15.0    # sigmoid slope for scale
-# BASE_CONCENTRATION = 0.1   # baseline added to λ before scaling
-# PEAK             = 15.0    # added concentration for maximally clear images
-# MIN_LAM          = 10.0     # floor on λ — ensures signal even for ambiguous images
-# SHARPNESS        = 4.0     # q = q**SHARPNESS before normalising — sharpens the peak
-BETA             = 5.0     # sigmoid slope for left/right, transparency, glossiness
-SCALE_BETA       = 8.0    # sigmoid slope for scale
-BASE_CONCENTRATION = 0.1   # baseline added to λ before scaling
-PEAK             = 12.0    # added concentration for maximally clear images
-MIN_LAM          = 3.0     # floor on λ — ensures signal even for ambiguous images
-SHARPNESS        = 2.0     # q = q**SHARPNESS before normalising — sharpens the peak
+BETA               = 5.0   # sigmoid slope for left/right, transparency, glossiness
+SCALE_BETA         = 10.0  # sigmoid slope for scale
+BASE_CONCENTRATION = 1.0   # minimum concentration (flat/ambiguous images)
+PEAK               = 15.0  # added concentration for maximally clear images
 GT_ALPHA_LOW     = 0.1     # used when GT_MODE == "random"
 GT_ALPHA_HIGH    = 4.0     # used when GT_MODE == "random"
 GT_SEED          = 1       # used when GT_MODE == "random"
