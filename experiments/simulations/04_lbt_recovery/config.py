@@ -62,12 +62,18 @@ CONCENTRATION_BG = 0.1     # used when GT_MODE == "peaked": background value
 GRADED_LEVELS    = [0.01, 2.0, 4.0, 5.0, 8.0]  # used when GT_MODE == "graded"
                                                    # index = number of shared features
 # used when GT_MODE == "factorized":
-BETA             = 8.0     # sigmoid slope for left/right, transparency, glossiness
-SCALE_BETA       = 15.0    # sigmoid slope for scale
+# BETA             = 8.0     # sigmoid slope for left/right, transparency, glossiness
+# SCALE_BETA       = 15.0    # sigmoid slope for scale
+# BASE_CONCENTRATION = 0.1   # baseline added to λ before scaling
+# PEAK             = 15.0    # added concentration for maximally clear images
+# MIN_LAM          = 10.0     # floor on λ — ensures signal even for ambiguous images
+# SHARPNESS        = 4.0     # q = q**SHARPNESS before normalising — sharpens the peak
+BETA             = 5.0     # sigmoid slope for left/right, transparency, glossiness
+SCALE_BETA       = 8.0    # sigmoid slope for scale
 BASE_CONCENTRATION = 0.1   # baseline added to λ before scaling
-PEAK             = 15.0    # added concentration for maximally clear images
-MIN_LAM          = 10.0     # floor on λ — ensures signal even for ambiguous images
-SHARPNESS        = 4.0     # q = q**SHARPNESS before normalising — sharpens the peak
+PEAK             = 12.0    # added concentration for maximally clear images
+MIN_LAM          = 3.0     # floor on λ — ensures signal even for ambiguous images
+SHARPNESS        = 2.0     # q = q**SHARPNESS before normalising — sharpens the peak
 GT_ALPHA_LOW     = 0.1     # used when GT_MODE == "random"
 GT_ALPHA_HIGH    = 4.0     # used when GT_MODE == "random"
 GT_SEED          = 1       # used when GT_MODE == "random"
@@ -82,8 +88,8 @@ GT_SEED          = 1       # used when GT_MODE == "random"
 #                         Uniform(INIT_ALPHA_LOW, INIT_ALPHA_HIGH)
 INIT_MODE       = "random"
 INIT_ALPHA      = 1.0          # used when INIT_MODE == "uniform"
-INIT_ALPHA_LOW  = 0.1          # used when INIT_MODE == "random"
-INIT_ALPHA_HIGH = 0.5          # used when INIT_MODE == "random"
+INIT_ALPHA_LOW  = 1.0          # used when INIT_MODE == "random"
+INIT_ALPHA_HIGH = 5.0         # used when INIT_MODE == "random"
 INIT_SEED       = 0            # used when INIT_MODE == "random"
 
 # ---------------------------------------------------------------------------
