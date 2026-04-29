@@ -33,7 +33,7 @@ SEED          = 42
 N_TRIALS      = 100       # synthetic trials per (image, task) cell
 N_MC          = 10000      # MC samples for LbtAgent inference
 N_EPOCHS      = 300
-LR            = 0.01
+LR            = 0.1
 GRAD_CLIP     = 1.0
 
 # ---------------------------------------------------------------------------
@@ -56,10 +56,10 @@ NORMALIZED_UTILITY = True
 #                           glossiness, scale); per-feature probabilities via sigmoid,
 #                           α_k = λ × ∏ p(feature_k), λ = BASE_CONC + PEAK × clarity
 # GT_MODE = "random"    — α_k ~ U(GT_ALPHA_LOW, GT_ALPHA_HIGH) for all k, i.i.d.
-GT_MODE          = "random"
+GT_MODE          = "graded"
 CONCENTRATION    = 5.0     # used when GT_MODE == "peaked": peak value
 CONCENTRATION_BG = 0.1     # used when GT_MODE == "peaked": background value
-GRADED_LEVELS    = [0.01, 2.0, 4.0, 8.0, 16.0]  # used when GT_MODE == "graded"
+GRADED_LEVELS    = [0.01, 2.0, 4.0, 5.0, 0.0]  # used when GT_MODE == "graded"
                                                    # index = number of shared features
 # used when GT_MODE == "factorized":
 BETA             = 8.0     # sigmoid slope for left/right, transparency, glossiness
