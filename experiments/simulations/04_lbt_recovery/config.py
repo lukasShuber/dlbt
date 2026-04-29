@@ -33,7 +33,7 @@ SEED          = 42
 N_TRIALS      = 100       # synthetic trials per (image, task) cell
 N_MC          = 50000      # MC samples for LbtAgent inference
 N_EPOCHS      = 200
-LR            = 0.4
+LR            = 0.25
 GRAD_CLIP     = 1.0
 
 # ---------------------------------------------------------------------------
@@ -88,7 +88,7 @@ INIT_SEED       = 0            # used when INIT_MODE == "random"
 # ---------------------------------------------------------------------------
 # Task split
 # ---------------------------------------------------------------------------
-SPLIT_MODE    = "arity"    # "all" | "arity" | "random"
+SPLIT_MODE    = "all"    # "all" | "arity" | "random"
 
 # Used when SPLIT_MODE == "arity":
 TRAIN_ARITIES = [4]       # arities included in training, e.g. [1], [1, 2]
