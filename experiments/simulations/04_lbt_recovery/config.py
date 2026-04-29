@@ -66,7 +66,7 @@ BETA               = 2.5   # sigmoid slope for left/right, transparency, glossin
 SCALE_BETA         = 5.0   # sigmoid slope for scale
 BASE_CONCENTRATION = 1.0   # minimum concentration (flat/ambiguous images)
 PEAK               = 8.0   # added concentration for maximally clear images
-OFFSET             = 0.2   # uniform floor added to all α entries
+OFFSET             = 0.0   # uniform floor added to all α entries
 GT_ALPHA_LOW     = 0.1     # used when GT_MODE == "random"
 GT_ALPHA_HIGH    = 4.0     # used when GT_MODE == "random"
 GT_SEED          = 1       # used when GT_MODE == "random"
