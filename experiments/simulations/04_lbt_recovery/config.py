@@ -59,7 +59,7 @@ NORMALIZED_UTILITY = True
 GT_MODE          = "graded"
 CONCENTRATION    = 5.0     # used when GT_MODE == "peaked": peak value
 CONCENTRATION_BG = 1.0     # used when GT_MODE == "peaked": background value
-GRADED_LEVELS    = [0.1, 2.0, 4.0, 6.0, 8.0]  # used when GT_MODE == "graded"
+GRADED_LEVELS    = [1.0, 2.0, 4.0, 6.0, 8.0]  # used when GT_MODE == "graded"
                                                    # index = number of shared features
 # used when GT_MODE == "factorized":
 # BETA             = 8.0     # sigmoid slope for left/right, transparency, glossiness
