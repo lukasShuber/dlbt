@@ -56,7 +56,7 @@ NORMALIZED_UTILITY = True
 #                           glossiness, scale); per-feature probabilities via sigmoid,
 #                           α_k = λ × ∏ p(feature_k), λ = BASE_CONC + PEAK × clarity
 # GT_MODE = "random"    — α_k ~ U(GT_ALPHA_LOW, GT_ALPHA_HIGH) for all k, i.i.d.
-GT_MODE          = "graded"
+GT_MODE          = "random"
 CONCENTRATION    = 5.0     # used when GT_MODE == "peaked": peak value
 CONCENTRATION_BG = 0.1     # used when GT_MODE == "peaked": background value
 GRADED_LEVELS    = [0.01, 2.0, 4.0, 8.0, 16.0]  # used when GT_MODE == "graded"
@@ -68,8 +68,8 @@ BASE_CONCENTRATION = 0.1   # baseline added to λ before scaling
 PEAK             = 15.0    # added concentration for maximally clear images
 MIN_LAM          = 10.0     # floor on λ — ensures signal even for ambiguous images
 SHARPNESS        = 4.0     # q = q**SHARPNESS before normalising — sharpens the peak
-GT_ALPHA_LOW     = 1.0     # used when GT_MODE == "random"
-GT_ALPHA_HIGH    = 2.0     # used when GT_MODE == "random"
+GT_ALPHA_LOW     = 0.1     # used when GT_MODE == "random"
+GT_ALPHA_HIGH    = 4.0     # used when GT_MODE == "random"
 GT_SEED          = 1       # used when GT_MODE == "random"
 
 # ---------------------------------------------------------------------------
