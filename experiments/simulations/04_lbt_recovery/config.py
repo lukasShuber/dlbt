@@ -33,7 +33,7 @@ SEED          = 42
 N_TRIALS      = 100       # synthetic trials per (image, task) cell
 N_MC          = 50000      # MC samples for LbtAgent inference
 N_EPOCHS      = 200
-LR            = 0.25
+LR            = 0.5
 GRAD_CLIP     = 1.0
 
 # ---------------------------------------------------------------------------
@@ -79,8 +79,8 @@ GT_SEED          = 1       # used when GT_MODE == "random"
 # INIT_MODE = "uniform" — all α start at INIT_ALPHA (set to any level, e.g. 1.0, 10.0)
 # INIT_MODE = "random"  — each α_k drawn independently from
 #                         Uniform(INIT_ALPHA_LOW, INIT_ALPHA_HIGH)
-INIT_MODE       = "uniform"
-INIT_ALPHA      = 5.0          # used when INIT_MODE == "uniform"
+INIT_MODE       = "random"
+INIT_ALPHA      = 1.0          # used when INIT_MODE == "uniform"
 INIT_ALPHA_LOW  = 1.0         # used when INIT_MODE == "random"
 INIT_ALPHA_HIGH = 7.0        # used when INIT_MODE == "random"
 INIT_SEED       = 0            # used when INIT_MODE == "random"
