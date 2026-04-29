@@ -68,7 +68,7 @@ BASE_CONCENTRATION = 1.0   # minimum concentration (flat/ambiguous images)
 PEAK               = 8.0   # added concentration for maximally clear images
 OFFSET             = 0.2   # uniform floor added to all α entries
 GT_ALPHA_LOW     = 0.1     # used when GT_MODE == "random"
-GT_ALPHA_HIGH    = 1.0     # used when GT_MODE == "random"
+GT_ALPHA_HIGH    = 0.5     # used when GT_MODE == "random"
 GT_SEED          = 1       # used when GT_MODE == "random"
 
 # ---------------------------------------------------------------------------
@@ -82,7 +82,7 @@ GT_SEED          = 1       # used when GT_MODE == "random"
 INIT_MODE       = "random"
 INIT_ALPHA      = 1.0          # used when INIT_MODE == "uniform"
 INIT_ALPHA_LOW  = 0.1          # used when INIT_MODE == "random"
-INIT_ALPHA_HIGH = 1.0         # used when INIT_MODE == "random"
+INIT_ALPHA_HIGH = 0.5         # used when INIT_MODE == "random"
 INIT_SEED       = 0            # used when INIT_MODE == "random"
 
 # ---------------------------------------------------------------------------
