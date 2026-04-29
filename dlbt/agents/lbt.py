@@ -42,16 +42,18 @@ class LbtAgent(nn.Module):
 
     def __init__(
         self,
-        uid_list:     List[str],
-        n_mc_samples: int = 1000,
-        device:       torch.device = torch.device("cpu"),
-        init_alpha:   float = 1.0,
+        uid_list:           List[str],
+        n_mc_samples:       int = 1000,
+        device:             torch.device = torch.device("cpu"),
+        init_alpha:         float = 1.0,
+        normalize_utility:  bool = False,
     ):
         super().__init__()
-        self.uid_list    = list(uid_list)
-        self.uid_to_idx  = {uid: i for i, uid in enumerate(self.uid_list)}
-        self.n_mc_samples = n_mc_samples
-        self.device      = device
+        self.uid_list          = list(uid_list)
+        self.uid_to_idx        = {uid: i for i, uid in enumerate(self.uid_list)}
+        self.n_mc_samples      = n_mc_samples
+        self.device            = device
+        self.normalize_utility = normalize_utility
 
         n = len(self.uid_list)
         # Parameterise as log_alpha so softplus always gives positive α.
@@ -78,6 +80,29 @@ class LbtAgent(nn.Module):
         return F.softplus(self.log_alpha[idxs]).clamp(min=1e-6)   # [B, K]
 
     # -----------------------------------------------------------------------
+    # Utility vector
+    # -----------------------------------------------------------------------
+
+    def _delta_u(self, task: Task) -> torch.Tensor:
+        """
+        Return the utility vector for `task`.
+
+        normalize_utility=False (default):
+            ΔU[k] = +1  if k ∈ Z+,  −1  if k ∈ Z−   (original SEU rule)
+
+        normalize_utility=True:
+            ΔU[k] = +1/|Z+|  if k ∈ Z+,  −1/|Z−|  if k ∈ Z−
+            Equivalent to comparing posterior/prior ratios — unbiased under
+            a uniform prior regardless of task arity.
+        """
+        du = torch.tensor(task.delta_u, dtype=torch.float32, device=self.device)
+        if self.normalize_utility:
+            n_pos = float((du > 0).sum())
+            n_neg = float((du < 0).sum())
+            du = torch.where(du > 0, du / n_pos, du / n_neg)
+        return du
+
+    # -----------------------------------------------------------------------
     # Choice probabilities — mirrors DlbtAgent exactly
     # -----------------------------------------------------------------------
 
@@ -98,9 +123,7 @@ class LbtAgent(nn.Module):
         """Straight-through argmax — identical to DlbtAgent._choice_probs_train."""
         N       = self.n_mc_samples
         alpha   = self.get_alpha(image_refs).clamp(min=0.1)           # [B, K]
-        delta_u = torch.tensor(
-            task.delta_u, dtype=torch.float32, device=self.device
-        )
+        delta_u = self._delta_u(task)                                  # [K]
 
         b      = Dirichlet(alpha).rsample((N,))                        # [N, B, K]
         logit  = torch.einsum("nbk,k->nb", b, delta_u)                # [N, B]
@@ -120,9 +143,7 @@ class LbtAgent(nn.Module):
         """Clean hard MC average — identical to DlbtAgent._choice_probs_eval."""
         N       = self.n_mc_samples
         alpha   = self.get_alpha(image_refs).clamp(min=0.1)           # [B, K]
-        delta_u = torch.tensor(
-            task.delta_u, dtype=torch.float32, device=self.device
-        )
+        delta_u = self._delta_u(task)                                  # [K]
 
         b       = Dirichlet(alpha).sample((N,))                        # [N, B, K]
         logit   = torch.einsum("nbk,k->nb", b, delta_u)               # [N, B]

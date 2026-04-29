@@ -153,20 +153,37 @@ def make_gt_alpha_graded(true_state: int, levels: list) -> np.ndarray:
     return alpha
 
 
+def effective_delta_u(task) -> np.ndarray:
+    """Return the effective utility vector for the decision rule.
+
+    NORMALIZED_UTILITY = True  → ΔU[k] = +1/|Z+| (positive states)
+                                          -1/|Z-| (negative states)
+    NORMALIZED_UTILITY = False → ΔU[k] = +1 / -1  (original)
+    """
+    du = task.delta_u.astype(np.float64)
+    if cfg.NORMALIZED_UTILITY:
+        n_pos = float((du > 0).sum())
+        n_neg = float((du < 0).sum())
+        du = np.where(du > 0, 1.0 / n_pos, -1.0 / n_neg)
+    return du
+
+
 def oracle_p_right(alpha: np.ndarray, task, n_mc: int = 5000,
                    rng: np.random.Generator = None) -> float:
     """Exact P(right) under Dir(alpha) via MC (large n_mc → low noise)."""
     if rng is None:
         rng = np.random.default_rng(0)
-    b = rng.dirichlet(alpha, size=n_mc)          # [n_mc, K]
-    return float((b @ task.delta_u > 0).mean())
+    du = effective_delta_u(task)
+    b  = rng.dirichlet(alpha, size=n_mc)          # [n_mc, K]
+    return float((b @ du > 0).mean())
 
 
 def simulate_cell(alpha: np.ndarray, task, n_trials: int,
                   rng: np.random.Generator):
     """Draw n_trials choices from Dir(alpha) for a given task."""
+    du       = effective_delta_u(task)
     b        = rng.dirichlet(alpha, size=n_trials)   # [n_trials, K]
-    count_1  = int((b @ task.delta_u > 0).sum())
+    count_1  = int((b @ du > 0).sum())
     count_0  = n_trials - count_1
     return count_0, count_1
 
@@ -346,17 +363,19 @@ print(f"Training cells: {len(train_ds)}")
 # ---------------------------------------------------------------------------
 if cfg.INIT_MODE == "uniform":
     agent = LbtAgent(
-        uid_list     = [r.uid for r in probe_refs],
-        n_mc_samples = N_MC,
-        device       = device,
-        init_alpha   = cfg.INIT_ALPHA,
+        uid_list          = [r.uid for r in probe_refs],
+        n_mc_samples      = N_MC,
+        device            = device,
+        init_alpha        = cfg.INIT_ALPHA,
+        normalize_utility = cfg.NORMALIZED_UTILITY,
     )
 elif cfg.INIT_MODE == "random":
     import torch.nn.functional as _F2
     agent = LbtAgent(
-        uid_list     = [r.uid for r in probe_refs],
-        n_mc_samples = N_MC,
-        device       = device,
+        uid_list          = [r.uid for r in probe_refs],
+        n_mc_samples      = N_MC,
+        device            = device,
+        normalize_utility = cfg.NORMALIZED_UTILITY,
     )
     init_rng   = np.random.default_rng(cfg.INIT_SEED)
     n          = len(probe_refs)

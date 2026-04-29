@@ -31,10 +31,18 @@ RESULTS_DIR = Path(__file__).parent / "results"
 # ---------------------------------------------------------------------------
 SEED          = 42
 N_TRIALS      = 100       # synthetic trials per (image, task) cell
-N_MC          = 50000      # MC samples for LbtAgent inference
+N_MC          = 10000      # MC samples for LbtAgent inference
 N_EPOCHS      = 200
 LR            = 0.85
 GRAD_CLIP     = 1.0
+
+# ---------------------------------------------------------------------------
+# Decision rule
+# ---------------------------------------------------------------------------
+# NORMALIZED_UTILITY = True  — use ΔU[k] = +1/|Z+| or -1/|Z-| (Bayes-corrected)
+# NORMALIZED_UTILITY = False — use ΔU[k] = +1 or -1  (original argmax rule)
+# Applied consistently in: GT behavior generation, oracle P(right), LbtAgent training
+NORMALIZED_UTILITY = True
 
 # ---------------------------------------------------------------------------
 # Ground-truth observer
@@ -48,10 +56,10 @@ GRAD_CLIP     = 1.0
 #                           glossiness, scale); per-feature probabilities via sigmoid,
 #                           α_k = λ × ∏ p(feature_k), λ = BASE_CONC + PEAK × clarity
 # GT_MODE = "random"    — α_k ~ U(GT_ALPHA_LOW, GT_ALPHA_HIGH) for all k, i.i.d.
-GT_MODE          = "factorized"
+GT_MODE          = "graded"
 CONCENTRATION    = 5.0     # used when GT_MODE == "peaked": peak value
 CONCENTRATION_BG = 0.1     # used when GT_MODE == "peaked": background value
-GRADED_LEVELS    = [0.01, 2.0, 4.0, 8.0, 100.0]  # used when GT_MODE == "graded"
+GRADED_LEVELS    = [0.01, 2.0, 4.0, 8.0, 16.0]  # used when GT_MODE == "graded"
                                                    # index = number of shared features
 # used when GT_MODE == "factorized":
 BETA             = 8.0     # sigmoid slope for left/right, transparency, glossiness
