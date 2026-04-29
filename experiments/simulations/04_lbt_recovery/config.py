@@ -56,7 +56,7 @@ NORMALIZED_UTILITY = True
 #                           glossiness, scale); per-feature probabilities via sigmoid,
 #                           α_k = λ × ∏ p(feature_k), λ = BASE_CONC + PEAK × clarity
 # GT_MODE = "random"    — α_k ~ U(GT_ALPHA_LOW, GT_ALPHA_HIGH) for all k, i.i.d.
-GT_MODE          = "factorized"
+GT_MODE          = "graded"
 CONCENTRATION    = 5.0     # used when GT_MODE == "peaked": peak value
 CONCENTRATION_BG = 1.0     # used when GT_MODE == "peaked": background value
 GRADED_LEVELS    = [1.0, 2.0, 4.0, 6.0, 8.0]  # used when GT_MODE == "graded"
@@ -87,7 +87,7 @@ INIT_SEED       = 0            # used when INIT_MODE == "random"
 # ---------------------------------------------------------------------------
 # Task split
 # ---------------------------------------------------------------------------
-SPLIT_MODE    = "all"    # "all" | "arity" | "random"
+SPLIT_MODE    = "arity"    # "all" | "arity" | "random"
 
 # Used when SPLIT_MODE == "arity":
 TRAIN_ARITIES = [4]       # arities included in training, e.g. [1], [1, 2]
