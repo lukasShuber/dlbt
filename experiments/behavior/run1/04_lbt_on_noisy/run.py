@@ -212,10 +212,13 @@ emp_probe = _emp_pright(probe_df)
 train_names = set(cfg.TRAIN_TASKS)
 val_names   = set(cfg.VAL_TASKS)
 
-train_df = main_df[main_df["task_name"].isin(train_names)].copy()
-train_ds = BehavioralDataset(train_df)
+train_main_df  = main_df[ main_df[ "task_name"].isin(train_names)].copy()
+train_probe_df = probe_df[probe_df["task_name"].isin(train_names)].copy()
+train_df       = pd.concat([train_main_df, train_probe_df], ignore_index=True)
+train_ds       = BehavioralDataset(train_df)
 
-print(f"\n  Train cells (main × train tasks): {len(train_ds)}")
+print(f"\n  Train cells: {len(train_ds)}  "
+      f"({len(train_main_df)} main + {len(train_probe_df)} probe)")
 
 # ---------------------------------------------------------------------------
 # Initialise LbtAgent on MAIN images only
