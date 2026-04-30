@@ -183,8 +183,14 @@ probe_refs = sorted(
 )
 all_refs_dict = {r.uid: r for r in main_refs + probe_refs}
 
+all_refs_for_agent = main_refs + [r for r in probe_refs
+                                    if r.uid not in {x.uid for x in main_refs}]
+all_refs_dict = {r.uid: r for r in all_refs_for_agent}
+
 print(f"  Main  image refs: {len(main_refs)}")
 print(f"  Probe image refs: {len(probe_refs)}")
+print(f"  Agent uid_list:   {len(all_refs_for_agent)}  "
+      f"(main + probe, probe α stays at init — not updated during training)")
 
 # ---------------------------------------------------------------------------
 # Empirical P(right) — stored separately for main and probe
@@ -216,7 +222,7 @@ print(f"\n  Train cells (main × train tasks): {len(train_ds)}")
 # ---------------------------------------------------------------------------
 if cfg.INIT_MODE == "uniform":
     agent = LbtAgent(
-        uid_list          = [r.uid for r in main_refs],
+        uid_list          = [r.uid for r in all_refs_for_agent],
         n_mc_samples      = cfg.N_MC,
         device            = device,
         init_alpha        = cfg.INIT_ALPHA,
@@ -224,14 +230,14 @@ if cfg.INIT_MODE == "uniform":
     )
 elif cfg.INIT_MODE == "random":
     agent = LbtAgent(
-        uid_list          = [r.uid for r in main_refs],
+        uid_list          = [r.uid for r in all_refs_for_agent],
         n_mc_samples      = cfg.N_MC,
         device            = device,
         normalize_utility = cfg.NORMALIZED_UTILITY,
     )
     init_rng   = np.random.default_rng(cfg.INIT_SEED)
     alpha_rand = init_rng.uniform(
-        cfg.INIT_ALPHA_LOW, cfg.INIT_ALPHA_HIGH, size=(len(main_refs), K)
+        cfg.INIT_ALPHA_LOW, cfg.INIT_ALPHA_HIGH, size=(len(all_refs_for_agent), K)
     ).astype(np.float32)
     alpha_t = torch.tensor(alpha_rand)
     with torch.no_grad():
@@ -355,27 +361,47 @@ plt.close(fig)
 print(f"\nSaved: {out}")
 
 # ---------------------------------------------------------------------------
-# Plot 02 — scatter panels
+# Plot 02a — scatter: main images (low-res / noisy)
 # ---------------------------------------------------------------------------
-panels = [
-    (pred_train,     emp_train,     ar_train,     "Train\n(main × train tasks)"),
-    (pred_stim,      emp_stim,      ar_stim,      "Stim-gen\n(probe × train tasks)"),
+main_panels = [
+    (pred_train,    emp_train,    ar_train,    "Train tasks"),
 ]
 if has_val:
-    panels += [
-        (pred_val_main,  emp_val_main,  ar_val_main,  "Held-out val\n(main × val tasks)"),
-        (pred_val_probe, emp_val_probe, ar_val_probe, "Joint\n(probe × val tasks)"),
-    ]
+    main_panels.append(
+        (pred_val_main, emp_val_main, ar_val_main, "Val tasks (held-out)"),
+    )
 
-n_panels = len(panels)
+n_panels = len(main_panels)
 fig, axes = plt.subplots(1, n_panels, figsize=(4.2 * n_panels, 4.5), squeeze=False)
-
-for ax, (pred, emp, arity_arr, title) in zip(axes[0], panels):
-    _scatter_panel(ax, pred, emp, arity_arr, f"{title}\n[{cfg.RUN_TAG}]")
-
+fig.suptitle(f"Main images  [{cfg.RUN_TAG}]", fontsize=11, y=1.01)
+for ax, (pred, emp, arity_arr, title) in zip(axes[0], main_panels):
+    _scatter_panel(ax, pred, emp, arity_arr, title)
 sns.despine(trim=True)
 plt.tight_layout()
-out = plots_dir / f"plot_02_scatter_{cfg.RUN_TAG}.png"
+out = plots_dir / f"plot_02a_scatter_main_{cfg.RUN_TAG}.png"
+fig.savefig(out, dpi=150, bbox_inches="tight")
+plt.close(fig)
+print(f"Saved: {out}")
+
+# ---------------------------------------------------------------------------
+# Plot 02b — scatter: probe images (high-res)
+# ---------------------------------------------------------------------------
+probe_panels = [
+    (pred_stim,  emp_stim,  ar_stim,  "Train tasks"),
+]
+if has_val:
+    probe_panels.append(
+        (pred_val_probe, emp_val_probe, ar_val_probe, "Val tasks (held-out)"),
+    )
+
+n_panels = len(probe_panels)
+fig, axes = plt.subplots(1, n_panels, figsize=(4.2 * n_panels, 4.5), squeeze=False)
+fig.suptitle(f"Probe images  [{cfg.RUN_TAG}]", fontsize=11, y=1.01)
+for ax, (pred, emp, arity_arr, title) in zip(axes[0], probe_panels):
+    _scatter_panel(ax, pred, emp, arity_arr, title)
+sns.despine(trim=True)
+plt.tight_layout()
+out = plots_dir / f"plot_02b_scatter_probe_{cfg.RUN_TAG}.png"
 fig.savefig(out, dpi=150, bbox_inches="tight")
 plt.close(fig)
 print(f"Saved: {out}")
