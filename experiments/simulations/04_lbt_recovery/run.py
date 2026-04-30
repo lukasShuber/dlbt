@@ -50,7 +50,7 @@ from dlbt.data.task import get_task
 from dlbt.training.train_lbt import train_lbt
 
 sys.path.insert(0, str(Path(__file__).parent))
-import config_rnd_rep as cfg
+import config as cfg
 
 METADATA       = cfg.METADATA
 RESULTS_DIR    = cfg.RESULTS_DIR
