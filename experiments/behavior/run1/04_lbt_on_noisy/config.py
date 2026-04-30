@@ -1,8 +1,9 @@
 """
-Configuration for behavior run1 / 03_lbt.
+Configuration for behavior run1 / 04_lbt_on_noisy.
 
-Fits a bare LbtAgent (no encoder — learnable α table per probe image) directly
-to the combined run0 + run1 behavioral data.  No image features are used.
+Like 03_lbt but trains on ALL images (probe + main), not just probe images.
+Main images contribute noisier behavioral signal (fewer dedicated trials),
+hence the name.  One Dirichlet α vector is learned per image UID.
 
 SPLIT_MODE controls the train / val task split:
 
@@ -16,8 +17,8 @@ SPLIT_MODE controls the train / val task split:
 
 INIT_MODE controls how the fitted LbtAgent's α table is initialised:
 
-  "uniform" — all α start at INIT_ALPHA (set to any level, e.g. 1.0, 10.0).
-  "random"  — each α_k drawn from Uniform(INIT_ALPHA_LOW, INIT_ALPHA_HIGH).
+  "uniform" — all α start at INIT_ALPHA (e.g. 1.0 = flat prior).
+  "random"  — each α_k ~ U(INIT_ALPHA_LOW, INIT_ALPHA_HIGH).
 """
 
 from pathlib import Path
@@ -48,6 +49,10 @@ MIN_CATCH_PERF     = _run1_cfg.MIN_CATCH_PERF
 MAIN_PERF_QUANTILE = _run1_cfg.MAIN_PERF_QUANTILE
 MIN_TASK_ASSIGNMENTS = _run1_cfg.MIN_TASK_ASSIGNMENTS
 
+# Minimum trials per (image, task) cell to include in training.
+# Cells below this are dropped (main images often have very few trials).
+MIN_TRIALS_PER_CELL = 3
+
 # ---------------------------------------------------------------------------
 # Decision rule
 # ---------------------------------------------------------------------------
@@ -61,15 +66,15 @@ NORMALIZED_UTILITY = True
 N_EPOCHS  = 200
 LR        = 0.1
 GRAD_CLIP = 1.0
-N_MC      = 50000       # MC samples for LbtAgent inference
+N_MC      = 5000       # MC samples for LbtAgent inference
 
 # ---------------------------------------------------------------------------
 # LbtAgent parameter initialisation
 # ---------------------------------------------------------------------------
 # INIT_MODE = "uniform" — all α start at INIT_ALPHA (e.g. 1.0 = flat prior)
 # INIT_MODE = "random"  — each α_k ~ U(INIT_ALPHA_LOW, INIT_ALPHA_HIGH)
-INIT_MODE       = "uniform"
-INIT_ALPHA      = 20.0
+INIT_MODE       = "random"
+INIT_ALPHA      = 1.0
 INIT_ALPHA_LOW  = 0.1
 INIT_ALPHA_HIGH = 1.0
 INIT_SEED       = 0
@@ -77,10 +82,10 @@ INIT_SEED       = 0
 # ---------------------------------------------------------------------------
 # Task split
 # ---------------------------------------------------------------------------
-SPLIT_MODE    = "arity"       # "all" | "arity" | "random"
+SPLIT_MODE    = "all"       # "all" | "arity" | "random"
 
 # Used when SPLIT_MODE == "arity":
-TRAIN_ARITIES = [4]         # arities included in training
+TRAIN_ARITIES = [1, 2]     # arities included in training
 HOLD_OUT_REST = True        # True → remaining arities go to val; False → no val
 
 # Used when SPLIT_MODE == "random":
@@ -88,7 +93,7 @@ TRAIN_FRAC  = 0.80
 SPLIT_SEED  = 0
 
 _nu_tag = "norm" if NORMALIZED_UTILITY else "raw"
-RUN_TAG  = f"lbt_{SPLIT_MODE}_{_nu_tag}"
+RUN_TAG  = f"lbt_noisy_{SPLIT_MODE}_{_nu_tag}"
 
 # ---------------------------------------------------------------------------
 # Task split — computed at import from eligible tasks in the real data
