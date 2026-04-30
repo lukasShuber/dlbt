@@ -49,12 +49,19 @@ MAIN_PERF_QUANTILE = _run1_cfg.MAIN_PERF_QUANTILE
 MIN_TASK_ASSIGNMENTS = _run1_cfg.MIN_TASK_ASSIGNMENTS
 
 # ---------------------------------------------------------------------------
+# Decision rule
+# ---------------------------------------------------------------------------
+# NORMALIZED_UTILITY = True  — ΔU[k] = +1/|Z+| or -1/|Z-| (Bayes-corrected)
+# NORMALIZED_UTILITY = False — ΔU[k] = +1 or -1  (original argmax rule)
+NORMALIZED_UTILITY = True
+
+# ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
 N_EPOCHS  = 200
-LR        = 0.85
+LR        = 0.25
 GRAD_CLIP = 1.0
-N_MC      = 1000       # MC samples for LbtAgent inference
+N_MC      = 10000       # MC samples for LbtAgent inference
 
 # ---------------------------------------------------------------------------
 # LbtAgent parameter initialisation
@@ -80,7 +87,8 @@ HOLD_OUT_REST = True        # True → remaining arities go to val; False → no
 TRAIN_FRAC  = 0.80
 SPLIT_SEED  = 0
 
-RUN_TAG = f"lbt_{SPLIT_MODE}"
+_nu_tag = "norm" if NORMALIZED_UTILITY else "raw"
+RUN_TAG  = f"lbt_{SPLIT_MODE}_{_nu_tag}"
 
 # ---------------------------------------------------------------------------
 # Task split — computed at import from eligible tasks in the real data

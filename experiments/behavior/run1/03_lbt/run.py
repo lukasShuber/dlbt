@@ -179,16 +179,18 @@ for _, row in probe_df.iterrows():
 # ---------------------------------------------------------------------------
 if cfg.INIT_MODE == "uniform":
     agent = LbtAgent(
-        uid_list     = [r.uid for r in probe_refs],
-        n_mc_samples = cfg.N_MC,
-        device       = device,
-        init_alpha   = cfg.INIT_ALPHA,
+        uid_list           = [r.uid for r in probe_refs],
+        n_mc_samples       = cfg.N_MC,
+        device             = device,
+        init_alpha         = cfg.INIT_ALPHA,
+        normalize_utility  = cfg.NORMALIZED_UTILITY,
     )
 elif cfg.INIT_MODE == "random":
     agent = LbtAgent(
-        uid_list     = [r.uid for r in probe_refs],
-        n_mc_samples = cfg.N_MC,
-        device       = device,
+        uid_list           = [r.uid for r in probe_refs],
+        n_mc_samples       = cfg.N_MC,
+        device             = device,
+        normalize_utility  = cfg.NORMALIZED_UTILITY,
     )
     init_rng   = np.random.default_rng(cfg.INIT_SEED)
     n          = len(probe_refs)
