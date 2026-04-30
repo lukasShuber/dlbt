@@ -69,9 +69,9 @@ N_MC      = 50000       # MC samples for LbtAgent inference
 # INIT_MODE = "uniform" — all α start at INIT_ALPHA (e.g. 1.0 = flat prior)
 # INIT_MODE = "random"  — each α_k ~ U(INIT_ALPHA_LOW, INIT_ALPHA_HIGH)
 INIT_MODE       = "uniform"
-INIT_ALPHA      = 0.8
-INIT_ALPHA_LOW  = 0.1
-INIT_ALPHA_HIGH = 1.0
+INIT_ALPHA      = 1.0
+INIT_ALPHA_LOW  = 0.2
+INIT_ALPHA_HIGH = 0.9
 INIT_SEED       = 0
 
 # ---------------------------------------------------------------------------
