@@ -62,8 +62,8 @@ CONCENTRATION_BG = 1.0     # used when GT_MODE == "peaked": background value
 GRADED_LEVELS    = [1.0, 2.0, 4.0, 6.0, 8.0]  # used when GT_MODE == "graded"
                                                  # index = number of shared features
 # used when GT_MODE == "factorized":
-BETA               = 5.0   # sigmoid slope for left/right, transparency, glossiness
-SCALE_BETA         = 10.0   # sigmoid slope for scale
+BETA               = 4.0   # sigmoid slope for left/right, transparency, glossiness
+SCALE_BETA         = 8.0   # sigmoid slope for scale
 BASE_CONCENTRATION = 1.0   # minimum concentration (flat/ambiguous images)
 PEAK               = 8.0   # added concentration for maximally clear images
 OFFSET             = 0.2   # uniform floor added to all α entries
