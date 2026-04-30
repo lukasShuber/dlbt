@@ -60,8 +60,8 @@ NORMALIZED_UTILITY = True
 # ---------------------------------------------------------------------------
 N_EPOCHS  = 200
 LR        = 0.1
-GRAD_CLIP = 1.0
-N_MC      = 50000       # MC samples for LbtAgent inference
+GRAD_CLIP = 0.5
+N_MC      = 10000       # MC samples for LbtAgent inference
 
 # ---------------------------------------------------------------------------
 # LbtAgent parameter initialisation
