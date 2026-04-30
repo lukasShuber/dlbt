@@ -61,7 +61,7 @@ NORMALIZED_UTILITY = True
 N_EPOCHS  = 500
 LR        = 0.01
 GRAD_CLIP = 1.0
-N_MC      = 10000       # MC samples for LbtAgent inference
+N_MC      = 1000       # MC samples for LbtAgent inference
 
 # ---------------------------------------------------------------------------
 # LbtAgent parameter initialisation
@@ -72,7 +72,7 @@ INIT_MODE       = "random"
 INIT_ALPHA      = 1.0
 INIT_ALPHA_LOW  = 0.6
 INIT_ALPHA_HIGH = 0.7
-INIT_SEED       = 42
+INIT_SEED       = 0
 
 # ---------------------------------------------------------------------------
 # Task split
