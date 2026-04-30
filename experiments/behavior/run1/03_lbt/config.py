@@ -61,7 +61,7 @@ NORMALIZED_UTILITY = True
 N_EPOCHS  = 500
 LR        = 0.01
 GRAD_CLIP = 1.0
-N_MC      = 1000       # MC samples for LbtAgent inference
+N_MC      = 10000       # MC samples for LbtAgent inference
 
 # ---------------------------------------------------------------------------
 # LbtAgent parameter initialisation
@@ -77,7 +77,7 @@ INIT_SEED       = 0
 # ---------------------------------------------------------------------------
 # Task split
 # ---------------------------------------------------------------------------
-SPLIT_MODE    = "arity"       # "all" | "arity" | "random"
+SPLIT_MODE    = "all"       # "all" | "arity" | "random"
 
 # Used when SPLIT_MODE == "arity":
 TRAIN_ARITIES = [4]         # arities included in training
