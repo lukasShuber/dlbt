@@ -51,7 +51,7 @@ MIN_TASK_ASSIGNMENTS = _run1_cfg.MIN_TASK_ASSIGNMENTS
 
 # Minimum trials per (image, task) cell to include in training.
 # Cells below this are dropped (main images often have very few trials).
-MIN_TRIALS_PER_CELL = 3
+MIN_TRIALS_PER_CELL = 2
 
 # ---------------------------------------------------------------------------
 # Decision rule
@@ -63,7 +63,7 @@ NORMALIZED_UTILITY = True
 # ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
-N_EPOCHS  = 200
+N_EPOCHS  = 500
 LR        = 0.1
 GRAD_CLIP = 1.0
 N_MC      = 5000       # MC samples for LbtAgent inference
@@ -75,8 +75,8 @@ N_MC      = 5000       # MC samples for LbtAgent inference
 # INIT_MODE = "random"  — each α_k ~ U(INIT_ALPHA_LOW, INIT_ALPHA_HIGH)
 INIT_MODE       = "random"
 INIT_ALPHA      = 1.0
-INIT_ALPHA_LOW  = 0.1
-INIT_ALPHA_HIGH = 1.0
+INIT_ALPHA_LOW  = 0.6
+INIT_ALPHA_HIGH = 0.7
 INIT_SEED       = 0
 
 # ---------------------------------------------------------------------------
