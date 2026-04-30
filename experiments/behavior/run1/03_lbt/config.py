@@ -71,7 +71,7 @@ N_MC      = 50000       # MC samples for LbtAgent inference
 INIT_MODE       = "random"
 INIT_ALPHA      = 1.0
 INIT_ALPHA_LOW  = 0.3
-INIT_ALPHA_HIGH = 0.7
+INIT_ALPHA_HIGH = 0.1
 INIT_SEED       = 0
 
 # ---------------------------------------------------------------------------
