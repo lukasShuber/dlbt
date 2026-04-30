@@ -1,14 +1,19 @@
 """
-run1/04_lbt_on_noisy/run.py — LbtAgent fit on all images (probe + main).
+run1/04_lbt_on_noisy/run.py — LbtAgent fit on main images only.
 
-Like 03_lbt but includes main images in addition to probe images, giving
-more images to fit but noisier behavioral signal per cell (fewer trials).
-One Dirichlet α vector is learned per image UID.
+Trains on MAIN images only (probe images are never used for training).
+Probe images are evaluated post-hoc to assess stimulus-generation quality.
+
+Scatter panels produced:
+  1. Train         — main images  × training tasks
+  2. Stim-gen      — probe images × training tasks   (always)
+  3. Held-out val  — main images  × val tasks         (if val tasks exist)
+  4. Joint         — probe images × val tasks         (if val tasks exist)
 
 Outputs (all written to results/plots/):
-  plot_01_alpha_{RUN_TAG}.png    — recovered α heatmap (images × latent states)
-  plot_02_scatter_{RUN_TAG}.png  — predicted vs empirical P(right), coloured by arity
-  plot_03_curves_{RUN_TAG}.png   — training / val NLL and cMSE curves
+  plot_01_alpha_{RUN_TAG}.png    — recovered α heatmap (probe images × latent states)
+  plot_02_scatter_{RUN_TAG}.png  — scatter panels
+  plot_03_curves_{RUN_TAG}.png   — training NLL and cMSE curves
 
 Run from repo root:
     python experiments/behavior/run1/04_lbt_on_noisy/run.py
@@ -62,6 +67,30 @@ def _arity(task_name: str) -> int:
     return task_name.count("_and_") + 1
 
 
+def _scatter_panel(ax, pred, emp, arity_arr, title):
+    """Draw one scatter panel with arity colouring and stats."""
+    ARITY_COLOR = {1: "#2a6fb5", 2: "#43AA8B", 3: "#E76F51", 4: "#9B5DE5"}
+    ax.plot([0, 1], [0, 1], ls="--", color="gray", lw=1.2, zorder=0)
+    for n in range(1, 5):
+        mask = arity_arr == n
+        if not mask.any():
+            continue
+        ax.scatter(pred[mask], emp[mask],
+                   s=12, alpha=0.45, color=ARITY_COLOR[n],
+                   label=f"{n}-way", zorder=2)
+    if len(pred) > 1:
+        rho, _ = spearmanr(pred, emp)
+        mse    = float(np.mean((pred - emp) ** 2))
+        ax.set_title(f"{title}\nρ={rho:.3f}  MSE={mse:.4f}", fontsize=9)
+    else:
+        ax.set_title(title, fontsize=9)
+    ax.set(xlim=(-0.02, 1.02), ylim=(-0.02, 1.02))
+    ax.set_aspect("equal", adjustable="box")
+    ax.set_xlabel("Predicted P(right)  [LbtAgent]", fontsize=8)
+    ax.set_ylabel("Empirical P(right)  [human]",    fontsize=8)
+    ax.legend(fontsize=7, frameon=False, title="arity", title_fontsize=7)
+
+
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
@@ -73,6 +102,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 np.random.seed(cfg.SEED)
 torch.manual_seed(cfg.SEED)
 
+has_val = len(cfg.VAL_TASKS) > 0
+
 print(f"Device: {device}")
 print(f"Run tag: {cfg.RUN_TAG}")
 print(f"Split mode: {cfg.SPLIT_MODE}  "
@@ -82,8 +113,8 @@ print(f"Split mode: {cfg.SPLIT_MODE}  "
 # Load image refs
 # ---------------------------------------------------------------------------
 print("\nLoading image refs...")
-refs_dict = load_image_refs(cfg.METADATA)
-refs_all  = image_refs_as_list(refs_dict)
+refs_dict   = load_image_refs(cfg.METADATA)
+refs_all    = image_refs_as_list(refs_dict)
 refs_by_uid = {r.uid: r for r in refs_all}
 print(f"  Total images: {len(refs_all)}")
 
@@ -108,7 +139,6 @@ df_filtered, diag = filter_assignments(
 print(f"  After QC: {len(df_filtered):,} trials  "
       f"({diag['n_pass_both']} / {diag['n_total_assignments']} assignments passed)")
 
-# Aggregate all eligible tasks (train + val)
 _eligible_names  = set(cfg.TRAIN_TASKS + cfg.VAL_TASKS)
 _eligible_beh_id = {k: v for k, v in cfg.BEH_ID_TO_TASK.items()
                     if v in _eligible_names}
@@ -118,78 +148,90 @@ full_ds, probe_uids, main_uids = aggregate_counts(
     beh_id_to_task  = _eligible_beh_id,
     use_trial_kinds = cfg.USE_TRIAL_KINDS,
 )
-all_uids = probe_uids | main_uids
 print(f"  Aggregated cells: {len(full_ds):,}  "
       f"({len(probe_uids)} probe + {len(main_uids)} main images)")
 
 # ---------------------------------------------------------------------------
-# Use all images (probe + main); apply minimum-trials filter
+# Split into main-image df (training) and probe-image df (evaluation)
+# Apply minimum-trials filter to main images
 # ---------------------------------------------------------------------------
-all_df = full_ds.df[full_ds.df["uid"].isin(all_uids)].copy()
-all_df["n_trials"] = all_df["count_0"] + all_df["count_1"]
-all_df = all_df[all_df["n_trials"] >= cfg.MIN_TRIALS_PER_CELL].copy()
+full_df = full_ds.df.copy()
+full_df["n_trials"] = full_df["count_0"] + full_df["count_1"]
 
-avg_n = all_df["n_trials"].mean()
-n_images = all_df["uid"].nunique()
-print(f"  All images cells: {len(all_df):,}  "
-      f"({n_images} images, avg trials/cell: {avg_n:.1f})")
-print(f"  Probe images: {len(probe_uids)}  |  Main images: {len(main_uids)}")
+main_df  = full_df[full_df["uid"].isin(main_uids)].copy()
+main_df  = main_df[main_df["n_trials"] >= cfg.MIN_TRIALS_PER_CELL].copy()
 
-# Build sorted image refs list
-all_refs = sorted(
-    [refs_by_uid[uid] for uid in all_df["uid"].unique() if uid in refs_by_uid],
+probe_df = full_df[full_df["uid"].isin(probe_uids)].copy()
+
+avg_n_main  = main_df["n_trials"].mean()
+avg_n_probe = probe_df["n_trials"].mean() if len(probe_df) > 0 else 0
+print(f"  Main  cells: {len(main_df):,}  ({main_df['uid'].nunique()} images, "
+      f"avg trials/cell: {avg_n_main:.1f})")
+print(f"  Probe cells: {len(probe_df):,}  ({probe_df['uid'].nunique()} images, "
+      f"avg trials/cell: {avg_n_probe:.1f})")
+
+# ---------------------------------------------------------------------------
+# Build image ref lists
+# ---------------------------------------------------------------------------
+main_refs = sorted(
+    [refs_by_uid[uid] for uid in main_df["uid"].unique() if uid in refs_by_uid],
     key=lambda r: r.latent_state,
 )
-all_refs_dict = {r.uid: r for r in all_refs}
-print(f"  Image refs found: {len(all_refs)}")
+probe_refs = sorted(
+    [refs_by_uid[uid] for uid in probe_uids if uid in refs_by_uid],
+    key=lambda r: r.latent_state,
+)
+all_refs_dict = {r.uid: r for r in main_refs + probe_refs}
+
+print(f"  Main  image refs: {len(main_refs)}")
+print(f"  Probe image refs: {len(probe_refs)}")
 
 # ---------------------------------------------------------------------------
-# Empirical P(right) for scatter plot
+# Empirical P(right) — stored separately for main and probe
 # ---------------------------------------------------------------------------
-emp_pright = {}
-for _, row in all_df.iterrows():
-    total = row["count_0"] + row["count_1"]
-    if total > 0:
-        emp_pright[(row["uid"], row["task_name"])] = row["count_1"] / total
+def _emp_pright(df):
+    out = {}
+    for _, row in df.iterrows():
+        total = row["count_0"] + row["count_1"]
+        if total > 0:
+            out[(row["uid"], row["task_name"])] = row["count_1"] / total
+    return out
+
+emp_main  = _emp_pright(main_df)
+emp_probe = _emp_pright(probe_df)
 
 # ---------------------------------------------------------------------------
-# Train / val dataset split
+# Train / val split — MAIN images only
 # ---------------------------------------------------------------------------
 train_names = set(cfg.TRAIN_TASKS)
 val_names   = set(cfg.VAL_TASKS)
 
-train_df = all_df[all_df["task_name"].isin(train_names)].copy()
-val_df   = all_df[all_df["task_name"].isin(val_names)].copy()
-
+train_df = main_df[main_df["task_name"].isin(train_names)].copy()
 train_ds = BehavioralDataset(train_df)
-val_ds   = BehavioralDataset(val_df) if len(val_df) > 0 else None
 
-print(f"\n  Train cells: {len(train_ds)}")
-if val_ds:
-    print(f"  Val   cells: {len(val_ds)}")
+print(f"\n  Train cells (main × train tasks): {len(train_ds)}")
 
 # ---------------------------------------------------------------------------
-# Initialise LbtAgent
+# Initialise LbtAgent on MAIN images only
 # ---------------------------------------------------------------------------
 if cfg.INIT_MODE == "uniform":
     agent = LbtAgent(
-        uid_list           = [r.uid for r in all_refs],
-        n_mc_samples       = cfg.N_MC,
-        device             = device,
-        init_alpha         = cfg.INIT_ALPHA,
-        normalize_utility  = cfg.NORMALIZED_UTILITY,
+        uid_list          = [r.uid for r in main_refs],
+        n_mc_samples      = cfg.N_MC,
+        device            = device,
+        init_alpha        = cfg.INIT_ALPHA,
+        normalize_utility = cfg.NORMALIZED_UTILITY,
     )
 elif cfg.INIT_MODE == "random":
     agent = LbtAgent(
-        uid_list           = [r.uid for r in all_refs],
-        n_mc_samples       = cfg.N_MC,
-        device             = device,
-        normalize_utility  = cfg.NORMALIZED_UTILITY,
+        uid_list          = [r.uid for r in main_refs],
+        n_mc_samples      = cfg.N_MC,
+        device            = device,
+        normalize_utility = cfg.NORMALIZED_UTILITY,
     )
     init_rng   = np.random.default_rng(cfg.INIT_SEED)
-    n          = len(all_refs)
     alpha_rand = init_rng.uniform(
-        cfg.INIT_ALPHA_LOW, cfg.INIT_ALPHA_HIGH, size=(n, K)
+        cfg.INIT_ALPHA_LOW, cfg.INIT_ALPHA_HIGH, size=(len(main_refs), K)
     ).astype(np.float32)
     alpha_t = torch.tensor(alpha_rand)
     with torch.no_grad():
@@ -198,98 +240,112 @@ else:
     raise ValueError(f"Unknown INIT_MODE {cfg.INIT_MODE!r}")
 
 # ---------------------------------------------------------------------------
-# Train
+# Train (on main images × training tasks only)
 # ---------------------------------------------------------------------------
-print("\nTraining LbtAgent...")
+print("\nTraining LbtAgent on main images...")
 result = train_lbt(
     agent,
     train_ds,
-    val_ds if val_ds is not None else train_ds,
+    train_ds,             # no val during training
     all_refs_dict,
     n_epochs  = cfg.N_EPOCHS,
     lr        = cfg.LR,
-    patience  = cfg.N_EPOCHS,   # no early stopping
+    patience  = cfg.N_EPOCHS,
     grad_clip = cfg.GRAD_CLIP,
 )
-print(f"Best epoch: {result.best_epoch}  |  Best val cMSE: {result.best_val_mse:.4f}")
+print(f"Best epoch: {result.best_epoch}  |  Best cMSE: {result.best_val_mse:.4f}")
 
 # ---------------------------------------------------------------------------
-# Extract recovered α (probe images only, for interpretable heatmap)
+# Helper: predict P(right) for a set of (refs, tasks, emp_dict)
 # ---------------------------------------------------------------------------
-agent.eval()
-with torch.no_grad():
-    recovered_alpha = F.softplus(agent.log_alpha).cpu().numpy()   # [n_all, K]
-
-# For heatmap: restrict to probe images, sorted by latent state
-probe_refs_sorted = sorted(
-    [refs_by_uid[uid] for uid in probe_uids if uid in refs_by_uid],
-    key=lambda r: r.latent_state,
-)
-probe_idx = [agent.uid_to_idx[r.uid] for r in probe_refs_sorted
-             if r.uid in agent.uid_to_idx]
-probe_alpha = recovered_alpha[probe_idx]
-probe_labels = [_state_label(r.latent_state) for r in probe_refs_sorted
-                if r.uid in agent.uid_to_idx]
+def _collect_predictions(refs, task_names, emp_dict):
+    """Returns arrays: pred, emp, arity — for all (ref, task) pairs with data."""
+    all_tasks_obj = {n: get_task(n) for n in task_names}
+    pred_list, emp_list, arity_list = [], [], []
+    agent.eval()
+    with torch.no_grad():
+        for task_name, task_obj in all_tasks_obj.items():
+            refs_with_data = [r for r in refs if (r.uid, task_name) in emp_dict]
+            if not refs_with_data:
+                continue
+            probs = agent.choice_probs(refs_with_data, task_obj)[:, 1].cpu().numpy()
+            for i, ref in enumerate(refs_with_data):
+                pred_list.append(probs[i])
+                emp_list.append(emp_dict[(ref.uid, task_name)])
+                arity_list.append(_arity(task_name))
+    return np.array(pred_list), np.array(emp_list), np.array(arity_list)
 
 # ---------------------------------------------------------------------------
-# Compute predicted P(right) — evaluate on probe images for scatter
+# Collect predictions for all four panels
 # ---------------------------------------------------------------------------
-print("\nComputing predicted P(right)...")
-all_task_names = list(_eligible_names)
-all_tasks_obj  = {n: get_task(n) for n in all_task_names}
+print("\nComputing predictions...")
+pred_train, emp_train, ar_train = _collect_predictions(
+    main_refs, cfg.TRAIN_TASKS, emp_main)
+print(f"  Train panel:    {len(pred_train)} cells")
 
-pred_probs, emp_probs, arities_arr, is_train_flag = [], [], [], []
-agent.eval()
-with torch.no_grad():
-    for task_name, task_obj in all_tasks_obj.items():
-        # Evaluate on all refs that have data
-        refs_with_data = [r for r in all_refs if (r.uid, task_name) in emp_pright]
-        if not refs_with_data:
-            continue
-        probs = agent.choice_probs(refs_with_data, task_obj)[:, 1].cpu().numpy()
-        for i, ref in enumerate(refs_with_data):
-            pred_probs.append(probs[i])
-            emp_probs.append(emp_pright[(ref.uid, task_name)])
-            arities_arr.append(_arity(task_name))
-            is_train_flag.append(task_name in train_names)
+pred_stim, emp_stim, ar_stim = _collect_predictions(
+    probe_refs, cfg.TRAIN_TASKS, emp_probe)
+print(f"  Stim-gen panel: {len(pred_stim)} cells")
 
-pred_probs    = np.array(pred_probs)
-emp_probs     = np.array(emp_probs)
-arities_arr   = np.array(arities_arr)
-is_train_flag = np.array(is_train_flag)
+if has_val:
+    pred_val_main, emp_val_main, ar_val_main = _collect_predictions(
+        main_refs, cfg.VAL_TASKS, emp_main)
+    pred_val_probe, emp_val_probe, ar_val_probe = _collect_predictions(
+        probe_refs, cfg.VAL_TASKS, emp_probe)
+    print(f"  Held-out main panel:  {len(pred_val_main)} cells")
+    print(f"  Joint panel:          {len(pred_val_probe)} cells")
 
-for split_label, mask_split in [("train", is_train_flag),
-                                 ("val",   ~is_train_flag)]:
-    if not mask_split.any():
+# ---------------------------------------------------------------------------
+# Print stats
+# ---------------------------------------------------------------------------
+for label, pred, emp in [
+    ("train  (main  × train tasks)",  pred_train,     emp_train),
+    ("stimgen (probe × train tasks)", pred_stim,       emp_stim),
+    *([("val main  (main  × val tasks)",  pred_val_main,  emp_val_main),
+       ("joint    (probe × val tasks)",   pred_val_probe, emp_val_probe)]
+      if has_val else []),
+]:
+    if len(pred) < 2:
         continue
-    rho, _ = spearmanr(pred_probs[mask_split], emp_probs[mask_split])
-    mse    = float(np.mean((pred_probs[mask_split] - emp_probs[mask_split]) ** 2))
-    print(f"[{split_label}]  ρ={rho:.3f}  MSE={mse:.4f}")
-    for n in range(1, 5):
-        mask_n = mask_split & (arities_arr == n)
-        if not mask_n.any():
-            continue
-        rho_n, _ = spearmanr(pred_probs[mask_n], emp_probs[mask_n])
-        mse_n    = float(np.mean((pred_probs[mask_n] - emp_probs[mask_n]) ** 2))
-        print(f"  {n}-way  ρ={rho_n:.3f}  MSE={mse_n:.4f}")
+    rho, _ = spearmanr(pred, emp)
+    mse    = float(np.mean((pred - emp) ** 2))
+    print(f"[{label}]  ρ={rho:.3f}  MSE={mse:.4f}")
 
 # ---------------------------------------------------------------------------
-# Plot 01 — recovered α heatmap (probe images only)
+# Plot 01 — recovered α heatmap (probe images)
 # ---------------------------------------------------------------------------
+# For probe images, we don't have α from the agent directly (they weren't
+# trained). We show the main-image α as a heatmap instead, grouped by
+# latent state using mean α per latent state.
+agent.eval()
+with torch.no_grad():
+    main_alpha = F.softplus(agent.log_alpha).cpu().numpy()   # [n_main, K]
+
+# Average α per latent state across main images
+from collections import defaultdict
+alpha_by_state = defaultdict(list)
+for i, ref in enumerate(main_refs):
+    alpha_by_state[ref.latent_state].append(main_alpha[i])
+
+state_mean_alpha = np.zeros((K, K))
+for s in range(K):
+    if alpha_by_state[s]:
+        state_mean_alpha[s] = np.mean(alpha_by_state[s], axis=0)
+
 fig, ax = plt.subplots(figsize=(5, 4))
 sns.heatmap(
-    probe_alpha,
+    state_mean_alpha,
     ax=ax,
     xticklabels=STATE_LABELS,
-    yticklabels=probe_labels,
+    yticklabels=STATE_LABELS,
     cmap="YlOrRd",
-    cbar_kws={"label": "αₖ"},
+    cbar_kws={"label": "mean αₖ"},
     linewidths=0.3,
     linecolor="white",
 )
 ax.set_xlabel("Latent state", fontsize=10)
-ax.set_ylabel("Probe image",  fontsize=10)
-ax.set_title("Recovered α  [probe images]", fontsize=11)
+ax.set_ylabel("Image latent state (mean over main images)", fontsize=9)
+ax.set_title("Recovered α  [main images, averaged by latent state]", fontsize=10)
 ax.tick_params(axis="x", labelsize=7, rotation=45)
 ax.tick_params(axis="y", labelsize=7, rotation=0)
 plt.tight_layout()
@@ -299,37 +355,23 @@ plt.close(fig)
 print(f"\nSaved: {out}")
 
 # ---------------------------------------------------------------------------
-# Plot 02 — scatter: predicted vs empirical P(right), coloured by arity
+# Plot 02 — scatter panels
 # ---------------------------------------------------------------------------
-ARITY_COLOR = {1: "#2a6fb5", 2: "#43AA8B", 3: "#E76F51", 4: "#9B5DE5"}
+panels = [
+    (pred_train,     emp_train,     ar_train,     "Train\n(main × train tasks)"),
+    (pred_stim,      emp_stim,      ar_stim,      "Stim-gen\n(probe × train tasks)"),
+]
+if has_val:
+    panels += [
+        (pred_val_main,  emp_val_main,  ar_val_main,  "Held-out val\n(main × val tasks)"),
+        (pred_val_probe, emp_val_probe, ar_val_probe, "Joint\n(probe × val tasks)"),
+    ]
 
-splits_to_plot = [("train", is_train_flag)]
-if val_ds is not None:
-    splits_to_plot.append(("val", ~is_train_flag))
+n_panels = len(panels)
+fig, axes = plt.subplots(1, n_panels, figsize=(4.2 * n_panels, 4.5), squeeze=False)
 
-n_panels = len(splits_to_plot)
-fig, axes = plt.subplots(1, n_panels, figsize=(4.5 * n_panels, 4.5), squeeze=False)
-
-for ax, (split_label, mask_split) in zip(axes[0], splits_to_plot):
-    if not mask_split.any():
-        ax.set_visible(False)
-        continue
-    ax.plot([0, 1], [0, 1], ls="--", color="gray", lw=1.2, zorder=0)
-    for n in range(1, 5):
-        mask_n = mask_split & (arities_arr == n)
-        if not mask_n.any():
-            continue
-        ax.scatter(pred_probs[mask_n], emp_probs[mask_n],
-                   s=12, alpha=0.45, color=ARITY_COLOR[n],
-                   label=f"{n}-way", zorder=2)
-    rho, _ = spearmanr(pred_probs[mask_split], emp_probs[mask_split])
-    mse    = float(np.mean((pred_probs[mask_split] - emp_probs[mask_split]) ** 2))
-    ax.set(xlim=(-0.02, 1.02), ylim=(-0.02, 1.02))
-    ax.set_aspect("equal", adjustable="box")
-    ax.set_xlabel("Predicted P(right)  [fitted LbtAgent]", fontsize=9)
-    ax.set_ylabel("Empirical P(right)  [human]", fontsize=9)
-    ax.set_title(f"{split_label}  [{cfg.RUN_TAG}]\nρ={rho:.3f}   MSE={mse:.4f}", fontsize=9)
-    ax.legend(fontsize=8, frameon=False, title="arity", title_fontsize=8)
+for ax, (pred, emp, arity_arr, title) in zip(axes[0], panels):
+    _scatter_panel(ax, pred, emp, arity_arr, f"{title}\n[{cfg.RUN_TAG}]")
 
 sns.despine(trim=True)
 plt.tight_layout()
@@ -344,17 +386,13 @@ print(f"Saved: {out}")
 epochs = range(len(result.train_nlls))
 fig, axes = plt.subplots(1, 2, figsize=(10, 3.5))
 
-axes[0].plot(epochs, result.train_nlls, color="#E76F51", label="train")
-if val_ds is not None and result.val_nlls:
-    axes[0].plot(epochs, result.val_nlls, color="#2a6fb5", label="val")
+axes[0].plot(epochs, result.train_nlls, color="#E76F51")
 axes[0].set_xlabel("epoch"); axes[0].set_ylabel("NLL")
-axes[0].set_title(f"NLL  [{cfg.RUN_TAG}]"); axes[0].legend()
+axes[0].set_title(f"NLL  [{cfg.RUN_TAG}]")
 
-axes[1].plot(epochs, result.train_mses, color="#E76F51", label="train")
-if val_ds is not None and result.val_mses:
-    axes[1].plot(epochs, result.val_mses, color="#2a6fb5", label="val")
+axes[1].plot(epochs, result.train_mses, color="#E76F51")
 axes[1].set_xlabel("epoch"); axes[1].set_ylabel("cMSE")
-axes[1].set_title(f"cMSE  [{cfg.RUN_TAG}]"); axes[1].legend()
+axes[1].set_title(f"cMSE  [{cfg.RUN_TAG}]")
 
 sns.despine()
 plt.tight_layout()
