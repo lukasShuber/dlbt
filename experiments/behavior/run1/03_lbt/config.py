@@ -59,7 +59,7 @@ NORMALIZED_UTILITY = True
 # Training
 # ---------------------------------------------------------------------------
 N_EPOCHS  = 200
-LR        = 0.25
+LR        = 0.1
 GRAD_CLIP = 1.0
 N_MC      = 50000       # MC samples for LbtAgent inference
 
@@ -77,10 +77,10 @@ INIT_SEED       = 0
 # ---------------------------------------------------------------------------
 # Task split
 # ---------------------------------------------------------------------------
-SPLIT_MODE    = "random"       # "all" | "arity" | "random"
+SPLIT_MODE    = "arity"       # "all" | "arity" | "random"
 
 # Used when SPLIT_MODE == "arity":
-TRAIN_ARITIES = [4]         # arities included in training
+TRAIN_ARITIES = [4,1]         # arities included in training
 HOLD_OUT_REST = True        # True → remaining arities go to val; False → no val
 
 # Used when SPLIT_MODE == "random":
