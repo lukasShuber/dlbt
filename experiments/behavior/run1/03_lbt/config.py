@@ -59,7 +59,7 @@ NORMALIZED_UTILITY = True
 # Training
 # ---------------------------------------------------------------------------
 N_EPOCHS  = 200
-LR        = 0.25
+LR        = 0.1
 GRAD_CLIP = 1.0
 N_MC      = 10000       # MC samples for LbtAgent inference
 
@@ -70,7 +70,7 @@ N_MC      = 10000       # MC samples for LbtAgent inference
 # INIT_MODE = "random"  — each α_k ~ U(INIT_ALPHA_LOW, INIT_ALPHA_HIGH)
 INIT_MODE       = "random"
 INIT_ALPHA      = 1.0
-INIT_ALPHA_LOW  = 0.05
+INIT_ALPHA_LOW  = 0.1
 INIT_ALPHA_HIGH = 1.0
 INIT_SEED       = 0
 
