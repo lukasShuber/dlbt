@@ -184,6 +184,7 @@ if cfg.INIT_MODE == "uniform":
         device             = device,
         init_alpha         = cfg.INIT_ALPHA,
         normalize_utility  = cfg.NORMALIZED_UTILITY,
+        use_prior_trick    = cfg.USE_PRIOR_TRICK,
     )
 elif cfg.INIT_MODE == "random":
     agent = LbtAgent(
@@ -191,6 +192,7 @@ elif cfg.INIT_MODE == "random":
         n_mc_samples       = cfg.N_MC,
         device             = device,
         normalize_utility  = cfg.NORMALIZED_UTILITY,
+        use_prior_trick    = cfg.USE_PRIOR_TRICK,
     )
     init_rng   = np.random.default_rng(cfg.INIT_SEED)
     n          = len(probe_refs)

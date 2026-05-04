@@ -47,6 +47,7 @@ class LbtAgent(nn.Module):
         device:             torch.device = torch.device("cpu"),
         init_alpha:         float = 1.0,
         normalize_utility:  bool = False,
+        use_prior_trick:    bool = False,
     ):
         super().__init__()
         self.uid_list          = list(uid_list)
@@ -54,6 +55,7 @@ class LbtAgent(nn.Module):
         self.n_mc_samples      = n_mc_samples
         self.device            = device
         self.normalize_utility = normalize_utility
+        self.use_prior_trick   = use_prior_trick
 
         n = len(self.uid_list)
         # Parameterise as log_alpha so softplus always gives positive α.
@@ -103,6 +105,39 @@ class LbtAgent(nn.Module):
         return du
 
     # -----------------------------------------------------------------------
+    # Prior trick
+    # -----------------------------------------------------------------------
+
+    def _apply_prior_trick(self, b: torch.Tensor, task: Task) -> torch.Tensor:
+        """
+        Apply T_t(b): reweight each belief sample by the task-specific prior
+        ratio P̃_t(z) / P̃_u(z), then renormalise.
+
+        P̃_u = uniform (1/K).
+        P̃_t = balanced: 0.5/|Z+| for z ∈ Z+,  0.5/|Z-| for z ∈ Z-.
+
+        The prior ratio (up to a shared constant) is:
+            w(z) = 1/|Z+|  if z ∈ Z+
+                   1/|Z-|  if z ∈ Z-
+
+        This is the exact Bayesian transformation from the uniform-prior
+        posterior to the balanced-prior posterior (Bayes' rule, prior swap).
+
+        Args:
+            b:    [N, B, K]  MC belief samples
+            task: Task object carrying delta_u (±1)
+
+        Returns:
+            b_t:  [N, B, K]  transformed and renormalised beliefs
+        """
+        du      = torch.tensor(task.delta_u, dtype=torch.float32, device=self.device)
+        n_pos   = (du > 0).sum().float()
+        n_neg   = (du < 0).sum().float()
+        weights = (du > 0).float() / n_pos + (du < 0).float() / n_neg  # [K]
+        b_w     = b * weights                                            # [N, B, K]
+        return b_w / b_w.sum(dim=-1, keepdim=True)                      # [N, B, K]
+
+    # -----------------------------------------------------------------------
     # Choice probabilities — mirrors DlbtAgent exactly
     # -----------------------------------------------------------------------
 
@@ -126,6 +161,8 @@ class LbtAgent(nn.Module):
         delta_u = self._delta_u(task)                                  # [K]
 
         b      = Dirichlet(alpha).rsample((N,))                        # [N, B, K]
+        if self.use_prior_trick:
+            b  = self._apply_prior_trick(b, task)
         logit  = torch.einsum("nbk,k->nb", b, delta_u)                # [N, B]
 
         logits_2d  = torch.stack([-logit, logit], dim=-1)             # [N, B, 2]
@@ -146,6 +183,8 @@ class LbtAgent(nn.Module):
         delta_u = self._delta_u(task)                                  # [K]
 
         b       = Dirichlet(alpha).sample((N,))                        # [N, B, K]
+        if self.use_prior_trick:
+            b   = self._apply_prior_trick(b, task)
         logit   = torch.einsum("nbk,k->nb", b, delta_u)               # [N, B]
         hard    = (logit > 0).float()                                  # [N, B]
         p_right = hard.mean(dim=0)                                     # [B]

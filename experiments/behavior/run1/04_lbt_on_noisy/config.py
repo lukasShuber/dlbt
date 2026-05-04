@@ -56,9 +56,13 @@ MIN_TRIALS_PER_CELL = 2
 # ---------------------------------------------------------------------------
 # Decision rule
 # ---------------------------------------------------------------------------
-# NORMALIZED_UTILITY = True  — ΔU[k] = +1/|Z+| or -1/|Z-| (Bayes-corrected)
-# NORMALIZED_UTILITY = False — ΔU[k] = +1 or -1  (original argmax rule)
-NORMALIZED_UTILITY = True
+# Decision rule — choose at most one:
+# NORMALIZED_UTILITY = True  — ΔU[k] = +1/|Z+| or -1/|Z-|  (scales utility vector)
+# USE_PRIOR_TRICK    = True  — applies T_t to belief samples before SEU
+#                              (Bayesian prior swap — preferred, better gradients)
+# Do NOT enable both simultaneously.
+NORMALIZED_UTILITY = False
+USE_PRIOR_TRICK    = True
 
 # ---------------------------------------------------------------------------
 # Training
@@ -92,8 +96,8 @@ HOLD_OUT_REST = True        # True → remaining arities go to val; False → no
 TRAIN_FRAC  = 0.80
 SPLIT_SEED  = 0
 
-_nu_tag = "norm" if NORMALIZED_UTILITY else "raw"
-RUN_TAG  = f"lbt_noisy_{SPLIT_MODE}_{_nu_tag}"
+_rule_tag = "pt" if USE_PRIOR_TRICK else ("norm" if NORMALIZED_UTILITY else "raw")
+RUN_TAG   = f"lbt_noisy_{SPLIT_MODE}_{_rule_tag}"
 
 # ---------------------------------------------------------------------------
 # Task split — computed at import from eligible tasks in the real data
