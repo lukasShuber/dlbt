@@ -2,17 +2,24 @@
 run1/01_fit/analysis.py — plots for the run1 01_fit training run.
 
 Figures produced per results pkl:
-  plot_01_curves_<tag>.png     — learning curves: NLL + cMSE w/ noise floors
-  plot_02_train_<tag>.png      — train region: pooled scatter + per-task grid
-  plot_02b_eval_<tag>.png      — eval region (in-dist held-out cells)
-  plot_03_stim_gen_<tag>.png   — stim gen: pooled + per-task grid
-  plot_04_task_gen_<tag>.png   — task gen: pooled + per-task grid
-  plot_05_joint_gen_<tag>.png  — joint gen: pooled + per-task grid
-  plot_06_slda_<tag>.png       — SLDA train + stim_gen per-task grid
+  plot_01_curves_<tag>.png              — learning curves: NLL + cMSE
+  plot_02_train_scatter_<tag>.png       — train: pooled scatter
+  plot_02_train_grid_<tag>.png          — train: per-task grid
+  plot_02b_eval_scatter_<tag>.png       — eval: pooled scatter
+  plot_02b_eval_grid_<tag>.png          — eval: per-task grid
+  plot_03_stim_gen_scatter_<tag>.png    — stim gen: pooled scatter
+  plot_03_stim_gen_grid_<tag>.png       — stim gen: per-task grid
+  plot_04_task_gen_scatter_<tag>.png    — task gen: pooled scatter
+  plot_04_task_gen_grid_<tag>.png       — task gen: per-task grid
+  plot_05_joint_gen_scatter_<tag>.png   — joint gen: pooled scatter
+  plot_05_joint_gen_grid_<tag>.png      — joint gen: per-task grid
+  plot_06_slda_train_scatter_<tag>.png  — SLDA train: pooled scatter
+  plot_06_slda_train_grid_<tag>.png     — SLDA train: per-task grid
+  plot_06_slda_stim_scatter_<tag>.png   — SLDA stim gen: pooled scatter
+  plot_06_slda_stim_grid_<tag>.png      — SLDA stim gen: per-task grid
 
-Task lists are read from the saved pickle (not re-imported from config)
-so analysis works correctly even if config.py's random split changes.
-Panels are coloured by task arity.
+DLBT and SLDA use the same plotting functions: arity-coloured dots,
+ρ + cMSE-NF stats per panel, standalone scatter + grid figures.
 
 Run from repo root:
     python experiments/behavior/run1/01_fit/analysis.py
@@ -25,7 +32,6 @@ import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
 import numpy as np
 import seaborn as sns
 from matplotlib.lines import Line2D
@@ -35,7 +41,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import config as cfg
 
 # ---------------------------------------------------------------------------
-# Constants & helpers
+# Constants
 # ---------------------------------------------------------------------------
 C_TRAIN = cfg.C_TRAIN
 C_EVAL  = cfg.C_EVAL
@@ -49,8 +55,11 @@ ARITY_COLOR = {1: "#2a6fb5", 2: "#43AA8B", 3: "#E76F51", 4: "#9B5DE5"}
 plots_dir = cfg.RESULTS_DIR / "plots"
 plots_dir.mkdir(exist_ok=True)
 
-N_TASK_COLS = 8   # wider grid for 52 train tasks
+N_TASK_COLS = 8
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def _arity(task_name: str) -> int:
     return task_name.count("_and_") + 1
@@ -75,12 +84,20 @@ def _noise_floor_local(true_vals: np.ndarray, totals: np.ndarray) -> float:
 
 
 def _compute_metrics(pt: dict, task_names: list, mc_n=None, n_seeds=1):
-    """Pool predictions across tasks; return (pred_mean, pred_sem, true, totals, rho, raw_mse, net_mse)."""
-    all_preds  = np.concatenate([pt[t]["pred"]   for t in task_names if t in pt], axis=-1)
-    all_trues  = np.concatenate([pt[t]["true"]   for t in task_names if t in pt])
-    all_totals = np.concatenate([pt[t]["totals"] for t in task_names if t in pt])
+    """Pool predictions across tasks.
 
-    valid = all_totals > 0
+    Returns (pred_mean, pred_sem, true, totals, rho, raw_mse, net_mse)
+    or None if no data is available.
+    """
+    present = [t for t in task_names if t in pt]
+    if not present:
+        return None
+
+    all_preds  = np.concatenate([pt[t]["pred"]   for t in present], axis=-1)
+    all_trues  = np.concatenate([pt[t]["true"]   for t in present])
+    all_totals = np.concatenate([pt[t]["totals"] for t in present])
+
+    valid      = all_totals > 0
     all_preds  = all_preds[..., valid] if all_preds.ndim == 2 else all_preds[valid]
     all_trues  = all_trues[valid]
     all_totals = all_totals[valid]
@@ -102,7 +119,7 @@ def _compute_metrics(pt: dict, task_names: list, mc_n=None, n_seeds=1):
 
 
 def _draw_pooled(ax, pred_mean, pred_sem, all_trues, all_totals,
-                 rho, raw_mse, net_mse, color, title="", n_seeds=1):
+                 rho, raw_mse, net_mse, color, title=""):
     true_sem = _true_sem(all_trues, all_totals)
     ax.plot([0, 1], [0, 1], ls="--", color="gray", lw=1.2, zorder=0)
     ax.errorbar(pred_mean, all_trues,
@@ -118,13 +135,12 @@ def _draw_pooled(ax, pred_mean, pred_sem, all_trues, all_totals,
     ax.tick_params(labelsize=9)
 
 
-def _draw_task_panel(ax, pt: dict, task_name: str, cond_color: tuple, n_seeds=1, mc_n=None):
+def _draw_task_panel(ax, pt: dict, cond: str, task_name: str, n_seeds=1, mc_n=None):
     """Single per-task scatter panel, dot colour = arity colour."""
-    cond, _ = cond_color
     ax.plot([0, 1], [0, 1], ls=":", color="gray", lw=0.7, zorder=0)
     color = ARITY_COLOR.get(_arity(task_name), "#555")
 
-    if task_name not in pt[cond]:
+    if task_name not in pt.get(cond, {}):
         ax.set_visible(False)
         return
 
@@ -149,76 +165,79 @@ def _draw_task_panel(ax, pt: dict, task_name: str, cond_color: tuple, n_seeds=1,
         if mc_n and mc_n > 1:
             raw -= float(np.mean(pm * (1 - pm))) / (mc_n - 1)
         net = raw - _noise_floor_local(tv, tot)
-        ax.text(0.05, y_top, f"ρ={rho:.2f}",
-                transform=ax.transAxes, fontsize=5.5, color=color, va="top")
-        ax.text(0.05, y_top - 0.15, f"m={net:.3f}",
-                transform=ax.transAxes, fontsize=5.5, color=color, va="top")
+        ax.text(0.05, y_top,        f"ρ={rho:.2f}", transform=ax.transAxes,
+                fontsize=5.5, color=color, va="top")
+        ax.text(0.05, y_top - 0.15, f"m={net:.3f}", transform=ax.transAxes,
+                fontsize=5.5, color=color, va="top")
 
     ax.set_title(_label(task_name), fontsize=6, pad=2, color=color)
     ax.set(xlim=(-0.05, 1.05), ylim=(-0.05, 1.05))
     ax.tick_params(labelsize=4.5)
 
 
-def _region_figure(pt, region_name, task_list, cond_color, color,
-                   run_tag, n_seeds, mc_n, noise_floor_val):
-    """Pooled scatter (left) + per-task grid (right)."""
-    cond, _ = cond_color
-    task_list   = sorted(task_list, key=lambda t: (_arity(t), t))
+def _plot_summary(pt, cond, task_names, color, run_tag, region_name,
+                  n_seeds, mc_n, noise_floor_val, title):
+    """Save a standalone pooled scatter figure."""
+    metrics = _compute_metrics(pt.get(cond, {}), task_names, mc_n=mc_n, n_seeds=n_seeds)
+    if metrics is None:
+        print(f"  Skipping summary {region_name}: no data.")
+        return
+    pred_mean, pred_sem, all_trues, all_totals, rho, raw_mse, net_mse = metrics
+
+    fig, ax = plt.subplots(figsize=(4.5, 4.2))
+    _draw_pooled(ax, pred_mean, pred_sem, all_trues, all_totals,
+                 rho, raw_mse, net_mse, color=color, title=title)
+    ax.set_xlabel("Predicted P(yes)", fontsize=9)
+    ax.set_ylabel("Human P(yes)",     fontsize=9)
+    if noise_floor_val is not None:
+        ax.text(0.97, 0.03, f"NF={noise_floor_val:.4f}",
+                transform=ax.transAxes, fontsize=7,
+                ha="right", va="bottom", color="gray")
+    ax.set_aspect("equal", adjustable="box")
+    sns.despine(fig=fig, trim=True)
+    plt.tight_layout()
+    out = plots_dir / f"plot_{region_name}_scatter_{run_tag}.png"
+    plt.savefig(out, dpi=150, bbox_inches="tight")
+    print(f"  Saved: {out}")
+    plt.close()
+
+
+def _plot_task_grid(pt, cond, task_list, run_tag, region_name, n_seeds, mc_n):
+    """Save a standalone per-task grid figure."""
+    task_list = sorted(task_list, key=lambda t: (_arity(t), t))
+    present   = [t for t in task_list if t in pt.get(cond, {})]
+    if not present:
+        print(f"  Skipping grid {region_name}: no data.")
+        return
+
     n_tasks     = len(task_list)
     n_task_rows = math.ceil(n_tasks / N_TASK_COLS)
 
-    # Collect only tasks present in this condition
-    present = [t for t in task_list if t in pt.get(cond, {})]
-    if not present:
-        print(f"  Skipping {region_name}: no predictions found.")
-        return
-
-    pred_mean, pred_sem, all_trues, all_totals, rho, raw_mse, net_mse = \
-        _compute_metrics(pt[cond], present, mc_n=mc_n, n_seeds=n_seeds)
-
-    total_cols = 2 + N_TASK_COLS
-    total_rows = max(n_task_rows, 2)
-    fig = plt.figure(figsize=(total_cols * 1.8 + 0.4, total_rows * 2.0 + 0.5))
-    gs  = gridspec.GridSpec(total_rows, total_cols,
-                            hspace=0.65, wspace=0.25, figure=fig)
-
-    ax_pooled = fig.add_subplot(gs[:, :2])
-    _draw_pooled(ax_pooled, pred_mean, pred_sem, all_trues, all_totals,
-                 rho, raw_mse, net_mse, color=color,
-                 title=f"{region_name.replace('_', ' ').title()} — pooled",
-                 n_seeds=n_seeds)
-    ax_pooled.set_xlabel("Predicted P(yes)", fontsize=9)
-    ax_pooled.set_ylabel("Human P(yes)",     fontsize=9)
-    if noise_floor_val is not None:
-        ax_pooled.text(0.97, 0.03, f"NF={noise_floor_val:.4f}",
-                       transform=ax_pooled.transAxes, fontsize=7,
-                       ha="right", va="bottom", color="gray")
-
-    axes_flat = [fig.add_subplot(gs[r, 2 + c])
-                 for r in range(n_task_rows)
-                 for c in range(N_TASK_COLS)]
-
+    fig, axes = plt.subplots(
+        n_task_rows, N_TASK_COLS,
+        figsize=(N_TASK_COLS * 1.8, n_task_rows * 2.0),
+        gridspec_kw={"hspace": 0.65, "wspace": 0.10},
+    )
+    axes_flat = np.atleast_2d(axes).flatten()
     for ax in axes_flat[n_tasks:]:
         ax.set_visible(False)
 
     for i, (ax, task_name) in enumerate(zip(axes_flat, task_list)):
-        _draw_task_panel(ax, pt, task_name, cond_color, n_seeds=n_seeds, mc_n=mc_n)
+        _draw_task_panel(ax, pt, cond, task_name, n_seeds=n_seeds, mc_n=mc_n)
         row_i, col_i = divmod(i, N_TASK_COLS)
         if row_i == n_task_rows - 1 or i >= n_tasks - N_TASK_COLS:
             ax.set_xlabel("Pred",  fontsize=6)
         if col_i == 0:
             ax.set_ylabel("Human", fontsize=6)
 
-    # Arity legend
     handles = [Line2D([0], [0], marker="o", color="w",
                       markerfacecolor=c, markersize=5, label=f"{a}-way")
                for a, c in ARITY_COLOR.items()]
     fig.legend(handles=handles, loc="lower right",
                bbox_to_anchor=(1.0, 0.0), fontsize=7,
                frameon=False, ncol=4)
-
     sns.despine(fig=fig, trim=True)
-    out = plots_dir / f"plot_{region_name}_{run_tag}.png"
+    out = plots_dir / f"plot_{region_name}_grid_{run_tag}.png"
     plt.savefig(out, dpi=150, bbox_inches="tight")
     print(f"  Saved: {out}")
     plt.close()
@@ -235,7 +254,9 @@ candidates = sorted(cfg.RESULTS_DIR.glob("results_*.pkl"))
 if args.tag:
     candidates = [p for p in candidates if args.tag in p.stem]
 if not candidates:
-    raise FileNotFoundError(f"No results_*.pkl found in {cfg.RESULTS_DIR}. Run run.py first.")
+    raise FileNotFoundError(
+        f"No results_*.pkl found in {cfg.RESULTS_DIR}. Run run.py first."
+    )
 
 for results_path in candidates:
     run_tag = results_path.stem[len("results_"):]
@@ -253,7 +274,7 @@ for results_path in candidates:
     slda           = res.get("slda", {})
     n_seeds        = res.get("n_seeds", 1)
 
-    # Task lists from pickle — robust to config changes
+    # Task lists read from pickle — robust to config changes between runs.
     train_tasks = res.get("train_tasks", cfg.TRAIN_TASKS)
     val_tasks   = res.get("val_tasks",   cfg.VAL_TASKS)
 
@@ -277,8 +298,8 @@ for results_path in candidates:
     ax_nll.legend(fontsize=8)
     ax_nll.set_ylim(bottom=0)
 
-    ax_mse.plot(epochs, curves["train_mses"], color=C_TRAIN,  label="train",     lw=1.2)
-    ax_mse.plot(epochs, curves["eval_mses"],  color=C_EVAL,   label="eval",      lw=1.2)
+    ax_mse.plot(epochs, curves["train_mses"], color=C_TRAIN, label="train", lw=1.2)
+    ax_mse.plot(epochs, curves["eval_mses"],  color=C_EVAL,  label="eval",  lw=1.2)
     for key, color, label in [
         ("stim_mses",  C_STIM,  "stim gen"),
         ("task_mses",  C_TASK,  "task gen"),
@@ -306,86 +327,44 @@ for results_path in candidates:
     plt.close()
 
     # -------------------------------------------------------------------
-    # Plots 02–05 — per-region scatter
+    # Plots 02–05 — DLBT: separate summary scatter + per-task grid
     # -------------------------------------------------------------------
-    for region_name, cond, color, task_list, nf_key in [
-        ("02_train",     "train", C_TRAIN, train_tasks, "train"),
-        ("02b_eval",     "eval",  C_EVAL,  train_tasks, "eval"),
-        ("03_stim_gen",  "stim",  C_STIM,  train_tasks, "stim_gen"),
-        ("04_task_gen",  "task",  C_TASK,  val_tasks,   "task_gen"),
-        ("05_joint_gen", "joint", C_JOINT, val_tasks,   "joint_gen"),
+    for region_name, cond, color, task_list, nf_key, title in [
+        ("02_train",     "train", C_TRAIN, train_tasks, "train",    "DLBT — Train"),
+        ("02b_eval",     "eval",  C_EVAL,  train_tasks, "eval",     "DLBT — Eval"),
+        ("03_stim_gen",  "stim",  C_STIM,  train_tasks, "stim_gen", "DLBT — Stim Gen"),
+        ("04_task_gen",  "task",  C_TASK,  val_tasks,   "task_gen", "DLBT — Task Gen"),
+        ("05_joint_gen", "joint", C_JOINT, val_tasks,   "joint_gen","DLBT — Joint Gen"),
     ]:
-        _region_figure(
-            pt              = dlbt,
-            region_name     = region_name,
-            task_list       = task_list,
-            cond_color      = (cond, color),
-            color           = color,
-            run_tag         = run_tag,
-            n_seeds         = n_seeds,
-            mc_n            = cfg.N_MC,
-            noise_floor_val = noise_floors.get(nf_key),
+        present = [t for t in task_list if t in dlbt.get(cond, {})]
+        _plot_summary(
+            dlbt, cond, present, color, run_tag, region_name,
+            n_seeds=n_seeds, mc_n=cfg.N_MC,
+            noise_floor_val=noise_floors.get(nf_key),
+            title=title,
         )
+        _plot_task_grid(dlbt, cond, task_list, run_tag, region_name,
+                        n_seeds=n_seeds, mc_n=cfg.N_MC)
 
     # -------------------------------------------------------------------
-    # Plot 06 — SLDA per-task grid
+    # Plot 06 — SLDA: same functions as DLBT (scatter + grid per condition)
     # -------------------------------------------------------------------
     if not slda or not any(slda.get(c) for c in ("train", "stim")):
-        print("  Skipping SLDA plot (no predictions).")
+        print("  Skipping SLDA plots (no predictions).")
         continue
 
-    n_train_tasks = len(train_tasks)
-    n_rows_s = math.ceil(n_train_tasks / N_TASK_COLS)
-
-    fig, axes = plt.subplots(
-        n_rows_s, N_TASK_COLS,
-        figsize=(N_TASK_COLS * 1.8, n_rows_s * 2.0),
-        sharex=True, sharey=True,
-        gridspec_kw={"hspace": 0.65, "wspace": 0.10},
-    )
-    axes_flat = np.atleast_2d(axes).flatten()
-    for ax in axes_flat[n_train_tasks:]:
-        ax.set_visible(False)
-
-    for idx, (ax, task_name) in enumerate(zip(axes_flat, train_tasks)):
-        color = ARITY_COLOR.get(_arity(task_name), "#555")
-        ax.plot([0, 1], [0, 1], ls=":", color="gray", lw=0.7, zorder=0)
-        y_top = 0.93
-        for cond, c in [("train", C_TRAIN), ("stim", C_STIM)]:
-            if task_name not in slda.get(cond, {}):
-                continue
-            d     = slda[cond][task_name]
-            valid = d["totals"] > 0
-            ts    = _true_sem(d["true"][valid], d["totals"][valid])
-            ax.errorbar(d["pred"][valid], d["true"][valid], yerr=ts,
-                        fmt="s", ms=2.5, alpha=0.5, color=c,
-                        elinewidth=0.3, capsize=0, linewidth=0)
-            if valid.sum() >= 2:
-                r, _ = spearmanr(d["pred"][valid], d["true"][valid])
-                ax.text(0.05, y_top, f"ρ={r:.2f}",
-                        transform=ax.transAxes, fontsize=5.5, color=c, va="top")
-                y_top -= 0.15
-
-        ax.set_title(_label(task_name), fontsize=6, pad=2, color=color)
-        row_i, col_i = divmod(idx, N_TASK_COLS)
-        if row_i == n_rows_s - 1 or idx >= n_train_tasks - N_TASK_COLS:
-            ax.set_xlabel("Pred",  fontsize=6)
-        if col_i == 0:
-            ax.set_ylabel("Human", fontsize=6)
-        ax.set(xlim=(-0.05, 1.05), ylim=(-0.05, 1.05))
-        ax.tick_params(labelsize=4.5)
-
-    fig.legend(
-        handles=[Line2D([0],[0], marker="s", color="w",
-                        markerfacecolor=c, markersize=5, label=l)
-                 for c, l in [(C_TRAIN,"train"),(C_STIM,"stim gen")]],
-        loc="lower right", bbox_to_anchor=(1.0, 0.0),
-        fontsize=7, frameon=False,
-    )
-    sns.despine(fig=fig, trim=True)
-    out = plots_dir / f"plot_06_slda_{run_tag}.png"
-    plt.savefig(out, dpi=150, bbox_inches="tight")
-    print(f"  Saved: {out}")
-    plt.close()
+    for slda_cond, slda_region, nf_key, title in [
+        ("train", "06_slda_train", "train",    "SLDA — Train"),
+        ("stim",  "06_slda_stim",  "stim_gen", "SLDA — Stim Gen"),
+    ]:
+        present = [t for t in train_tasks if t in slda.get(slda_cond, {})]
+        _plot_summary(
+            slda, slda_cond, present, C_SLDA, run_tag, slda_region,
+            n_seeds=1, mc_n=None,
+            noise_floor_val=noise_floors.get(nf_key),
+            title=title,
+        )
+        _plot_task_grid(slda, slda_cond, train_tasks, run_tag, slda_region,
+                        n_seeds=1, mc_n=None)
 
 print(f"\nAll plots saved to {plots_dir}")
