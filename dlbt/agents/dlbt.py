@@ -64,13 +64,15 @@ class DlbtAgent(nn.Module, Agent):
         device: torch.device = torch.device("cpu"),
         mapper_hidden: Optional[int] = None,
         feature_dim: int = 1024,
+        normalize_utility: bool = False,
     ):
         super().__init__()
 
-        self.freeze_encoder = freeze_encoder
-        self.n_mc_samples   = n_mc_samples
-        self.device         = device
-        self.feature_dim    = feature_dim
+        self.freeze_encoder    = freeze_encoder
+        self.n_mc_samples      = n_mc_samples
+        self.device            = device
+        self.feature_dim       = feature_dim
+        self.normalize_utility = normalize_utility
 
         # ---- CLIP RN50 encoder --------------------------------------------
         import open_clip
@@ -222,6 +224,24 @@ class DlbtAgent(nn.Module, Agent):
     # Core computation
     # -----------------------------------------------------------------------
 
+    def _delta_u(self, task: Task) -> torch.Tensor:
+        """
+        Return the ΔU vector for *task*, optionally normalised by arity.
+
+        normalize_utility=False (default):
+            ΔU_k = +1 if k ∈ Z⁺,  −1 if k ∈ Z⁻   (original SEU rule)
+
+        normalize_utility=True:
+            ΔU_k = +1/|Z⁺| if k ∈ Z⁺,  −1/|Z⁻| if k ∈ Z⁻
+            → logit = 0 under a flat prior for any arity (removes arity bias).
+        """
+        du = torch.tensor(task.delta_u, dtype=torch.float32, device=self.device)
+        if self.normalize_utility:
+            n_pos = float((du > 0).sum())
+            n_neg = float((du < 0).sum())
+            du = torch.where(du > 0, du / n_pos, du / n_neg)
+        return du
+
     def get_alpha(self, image_refs: List[ImageRef]) -> torch.Tensor:
         """
         Return Dirichlet concentration parameters α for each image.
@@ -274,11 +294,9 @@ class DlbtAgent(nn.Module, Agent):
           4. Straight-through argmax → choice indicator  [N, B, 2]
           5. Average over N samples                      [B, 2]
         """
-        N     = self.n_mc_samples
-        alpha = self.get_alpha(image_refs)                          # [B, K]
-        delta_u = torch.tensor(
-            task.delta_u, dtype=torch.float32, device=self.device
-        )
+        N       = self.n_mc_samples
+        alpha   = self.get_alpha(image_refs)                        # [B, K]
+        delta_u = self._delta_u(task)
 
         # Clamp to a numerically safe minimum before rsample.
         # PyTorch's Dirichlet uses Gamma sampling internally; very small
@@ -311,11 +329,9 @@ class DlbtAgent(nn.Module, Agent):
           4. Hard argmax → {0, 1}                        [N, B]
           5. Average over N samples                      [B, 2]
         """
-        N     = self.n_mc_samples
-        alpha = self.get_alpha(image_refs).clamp(min=0.1)          # [B, K]
-        delta_u = torch.tensor(
-            task.delta_u, dtype=torch.float32, device=self.device
-        )
+        N       = self.n_mc_samples
+        alpha   = self.get_alpha(image_refs).clamp(min=0.1)        # [B, K]
+        delta_u = self._delta_u(task)
 
         b     = Dirichlet(alpha).sample((N,))                      # [N, B, K]
         logit = torch.einsum("nbk,k->nb", b, delta_u)             # [N, B]

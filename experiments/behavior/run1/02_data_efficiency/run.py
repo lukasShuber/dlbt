@@ -250,7 +250,7 @@ def _collect_h_preds(agent, ds, h_tasks):
             continue
         h_val   = _h(task_name)
         task    = get_task(task_name)
-        delta_u = torch.tensor(task.delta_u, dtype=torch.float32, device=agent.device)
+        delta_u = agent._delta_u(task)
         uids    = group["uid"].tolist()
         batch_refs = [refs_dict[uid] for uid in uids]
         true_p  = np.array([emp_p(uid, task_name) for uid in uids])
@@ -328,7 +328,8 @@ for budget in _budgets_ordered:
     # Fresh agent — always start phase 1 with frozen encoder
     torch.manual_seed(cfg.SEEDS[0])
     agent = DlbtAgent(freeze_encoder=True, n_mc_samples=cfg.N_MC,
-                      device=device, mapper_hidden=cfg.MAPPER_HIDDEN)
+                      device=device, mapper_hidden=cfg.MAPPER_HIDDEN,
+                      normalize_utility=cfg.NORMALIZED_UTILITY)
     agent._cache = {uid: feat.clone() for uid, feat in frozen_clip.items()}
 
     # Phase 1: mapper warmup

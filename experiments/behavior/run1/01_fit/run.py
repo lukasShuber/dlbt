@@ -327,8 +327,28 @@ for seed_idx, seed in enumerate(cfg.SEEDS):
     torch.manual_seed(seed)
 
     agent = DlbtAgent(freeze_encoder=True, n_mc_samples=cfg.N_MC,
-                      device=device, mapper_hidden=cfg.MAPPER_HIDDEN)
+                      device=device, mapper_hidden=cfg.MAPPER_HIDDEN,
+                      normalize_utility=cfg.NORMALIZED_UTILITY)
     agent._cache = {uid: feat.clone() for uid, feat in frozen_clip_copy.items()}
+
+    # -- Mapper initialisation --
+    # Get the last Linear layer before Softplus (mapper[0] or mapper[2] with hidden).
+    _linear = agent.mapper[0] if cfg.MAPPER_HIDDEN is None else agent.mapper[2]
+    if cfg.INIT_MODE == "uniform":
+        _bias_val = float(np.log(np.exp(cfg.INIT_ALPHA) - 1.0))  # softplus_inv
+        with torch.no_grad():
+            _linear.bias.fill_(_bias_val)
+    elif cfg.INIT_MODE == "random":
+        _init_rng  = np.random.default_rng(cfg.INIT_SEED)
+        _alpha_rnd = _init_rng.uniform(
+            cfg.INIT_ALPHA_LOW, cfg.INIT_ALPHA_HIGH,
+            size=(_linear.bias.shape[0],),
+        ).astype(np.float32)
+        _bias_init = np.log(np.exp(_alpha_rnd) - 1.0)  # softplus_inv
+        with torch.no_grad():
+            _linear.bias.copy_(torch.from_numpy(_bias_init).to(device))
+    else:
+        raise ValueError(f"Unknown INIT_MODE {cfg.INIT_MODE!r}")
 
     # -- Phase 1: mapper warmup --
     print("  Phase 1 — mapper warmup...")

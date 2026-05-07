@@ -66,8 +66,9 @@ PATIENCE_PHASE2 = 50
 LR              = 1e-2
 LR_ATTNPOOL     = 1e-5
 N_MC            = 100
-FREEZE_ENCODER  = True
-MAPPER_HIDDEN   = None
+FREEZE_ENCODER     = True
+MAPPER_HIDDEN      = None
+NORMALIZED_UTILITY = True
 
 # Run arity-adjusted h_n MC inference after each budget (in addition to h=0).
 THRESHOLD_CORRECTION = False
@@ -90,7 +91,8 @@ MANUAL_VAL_TASKS: list = [
     # "right_and_large", "left_and_glossy",
 ]
 
-RUN_TAG = ("frozen" if FREEZE_ENCODER else "attnpool") + f"_{SPLIT_MODE}"
+_nu_tag = "norm" if NORMALIZED_UTILITY else "raw"
+RUN_TAG = ("frozen" if FREEZE_ENCODER else "attnpool") + f"_{SPLIT_MODE}_{_nu_tag}"
 
 
 def _compute_split():

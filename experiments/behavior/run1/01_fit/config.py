@@ -52,13 +52,28 @@ N_EPOCHS_PHASE1  = 2000
 PATIENCE_PHASE1  = 200
 N_EPOCHS_PHASE2  = 3000
 PATIENCE_PHASE2  = 50
-LR               = 1e-1
+LR               = 0.01
 LR_ATTNPOOL      = 1e-4
-N_MC             = 100
-FREEZE_ENCODER   = True
-MAPPER_HIDDEN    = None
+N_MC             = 10000
+FREEZE_ENCODER     = True
+MAPPER_HIDDEN      = None
+NORMALIZED_UTILITY = True
 
-SPLIT_MODE = "random"   # "arity" | "random" | "manual"
+# ---------------------------------------------------------------------------
+# Mapper initialisation
+# ---------------------------------------------------------------------------
+# INIT_MODE = "uniform" — mapper bias set so softplus output starts at INIT_ALPHA
+# INIT_MODE = "random"  — mapper bias drawn so output ~ U(INIT_ALPHA_LOW, INIT_ALPHA_HIGH)
+INIT_MODE       = "random"
+INIT_ALPHA      = 1.0
+INIT_ALPHA_LOW  = 0.6
+INIT_ALPHA_HIGH = 0.7
+INIT_SEED       = 0
+
+# ---------------------------------------------------------------------------
+# Task split
+# ---------------------------------------------------------------------------
+SPLIT_MODE = "all"      # "all" | "arity" | "random" | "manual"
 SPLIT_SEED = 0         # used only when SPLIT_MODE == "random"
 TRAIN_FRAC = 0.80      # used only when SPLIT_MODE == "random"
 
@@ -101,7 +116,8 @@ MANUAL_VAL_TASKS: list = [
 "small_and_transparent_and_glossy", "small_and_transparent_and_matte",
 ]
 
-RUN_TAG = ("frozen" if FREEZE_ENCODER else "attnpool") + f"_{SPLIT_MODE}"
+_nu_tag = "norm" if NORMALIZED_UTILITY else "raw"
+RUN_TAG = ("frozen" if FREEZE_ENCODER else "attnpool") + f"_{SPLIT_MODE}_{_nu_tag}"
 
 # ---------------------------------------------------------------------------
 # Task split — computed once at import from eligible tasks
@@ -125,7 +141,10 @@ def _compute_split():
     )
     all_eligible = sorted(_run1_cfg.eligible_tasks(df_f, MIN_TASK_ASSIGNMENTS))
 
-    if SPLIT_MODE == "arity":
+    if SPLIT_MODE == "all":
+        return all_eligible, []
+
+    elif SPLIT_MODE == "arity":
         # Train on all 1-way tasks; validate on all conjunctions
         train = sorted(t for t in all_eligible if "_and_" not in t)
         val   = sorted(t for t in all_eligible if "_and_"     in t)
@@ -153,7 +172,8 @@ def _compute_split():
 
     else:
         raise ValueError(
-            f"Unknown SPLIT_MODE {SPLIT_MODE!r}. Choose 'arity', 'random', or 'manual'."
+            f"Unknown SPLIT_MODE {SPLIT_MODE!r}. "
+            f"Choose 'all', 'arity', 'random', or 'manual'."
         )
 
     return train, val

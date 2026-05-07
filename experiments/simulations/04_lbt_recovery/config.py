@@ -39,13 +39,10 @@ GRAD_CLIP     = 1.0
 # ---------------------------------------------------------------------------
 # Decision rule
 # ---------------------------------------------------------------------------
-# Decision rule — choose at most one:
-# NORMALIZED_UTILITY = True  — ΔU[k] = +1/|Z+| or -1/|Z-|  (scales utility vector)
-# USE_PRIOR_TRICK    = True  — applies T_t to belief samples before SEU
-#                              (Bayesian prior swap — preferred, better gradients)
-# Do NOT enable both simultaneously.
-NORMALIZED_UTILITY = False
-USE_PRIOR_TRICK    = True
+# NORMALIZED_UTILITY = True  — use ΔU[k] = +1/|Z+| or -1/|Z-| (Bayes-corrected)
+# NORMALIZED_UTILITY = False — use ΔU[k] = +1 or -1  (original argmax rule)
+# Applied consistently in: GT behavior generation, oracle P(right), LbtAgent training
+NORMALIZED_UTILITY = True
 
 # ---------------------------------------------------------------------------
 # Ground-truth observer
