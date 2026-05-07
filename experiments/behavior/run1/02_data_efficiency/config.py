@@ -5,7 +5,8 @@ Identical task split and model settings as 01_fit.  Training budgets are
 varied from 10 to the full training set.
 
 SPLIT_MODE controls the task split (mirrors run1/01_fit/config.py):
-  "arity"  — TRAIN: all eligible 1-way tasks; VAL: all 2/3/4-way tasks.
+  "all"    — train on all eligible tasks, no val.
+  "arity"  — TRAIN: arities in TRAIN_ARITIES; VAL: remaining (if HOLD_OUT_REST).
   "random" — seeded 80/20 random split over all eligible tasks.
   "manual" — explicit MANUAL_TRAIN_TASKS / MANUAL_VAL_TASKS lists below.
              Both lists are intersected with eligible_tasks() so that
@@ -60,12 +61,12 @@ TRIAL_BUDGETS = [10, 100, 1_000, 10_000, "full"]
 # Training
 # ---------------------------------------------------------------------------
 N_EPOCHS        = 1000
-PATIENCE        = 100
+PATIENCE        = 200
 N_EPOCHS_PHASE2 = 3000
 PATIENCE_PHASE2 = 50
-LR              = 1e-2
+LR              = 0.01
 LR_ATTNPOOL     = 1e-5
-N_MC            = 100
+N_MC            = 1000
 FREEZE_ENCODER     = True
 MAPPER_HIDDEN      = None
 NORMALIZED_UTILITY = True
@@ -74,11 +75,28 @@ NORMALIZED_UTILITY = True
 THRESHOLD_CORRECTION = False
 
 # ---------------------------------------------------------------------------
+# Mapper initialisation
+# ---------------------------------------------------------------------------
+# INIT_MODE = "uniform" — mapper bias set so softplus output starts at INIT_ALPHA
+# INIT_MODE = "random"  — mapper bias drawn so output ~ U(INIT_ALPHA_LOW, INIT_ALPHA_HIGH)
+INIT_MODE       = "random"
+INIT_ALPHA      = 1.0
+INIT_ALPHA_LOW  = 0.6
+INIT_ALPHA_HIGH = 0.7
+INIT_SEED       = 0
+
+# ---------------------------------------------------------------------------
 # Task split
 # ---------------------------------------------------------------------------
-SPLIT_MODE = "random"   # "arity" | "random" | "manual"
-SPLIT_SEED = 0         # used only when SPLIT_MODE == "random"
-TRAIN_FRAC = 0.80      # used only when SPLIT_MODE == "random"
+SPLIT_MODE = "all"    # "all" | "arity" | "random" | "manual"
+
+# Used when SPLIT_MODE == "arity":
+TRAIN_ARITIES = [4]         # arities included in training
+HOLD_OUT_REST = True        # True → remaining arities go to val; False → no val
+
+# Used when SPLIT_MODE == "random":
+SPLIT_SEED = 0
+TRAIN_FRAC = 0.80
 
 # Used only when SPLIT_MODE == "manual".
 # Both lists are intersected with eligible_tasks() at import time.
@@ -113,9 +131,14 @@ def _compute_split():
     )
     all_eligible = sorted(_run1_cfg.eligible_tasks(df_f, MIN_TASK_ASSIGNMENTS))
 
-    if SPLIT_MODE == "arity":
-        train = sorted(t for t in all_eligible if "_and_" not in t)
-        val   = sorted(t for t in all_eligible if "_and_"     in t)
+    if SPLIT_MODE == "all":
+        return all_eligible, []
+
+    elif SPLIT_MODE == "arity":
+        def _arity(name): return name.count("_and_") + 1
+        train = sorted(t for t in all_eligible if _arity(t) in TRAIN_ARITIES)
+        val   = (sorted(t for t in all_eligible if _arity(t) not in TRAIN_ARITIES)
+                 if HOLD_OUT_REST else [])
 
     elif SPLIT_MODE == "random":
         import numpy as np
@@ -140,7 +163,8 @@ def _compute_split():
 
     else:
         raise ValueError(
-            f"Unknown SPLIT_MODE {SPLIT_MODE!r}. Choose 'arity', 'random', or 'manual'."
+            f"Unknown SPLIT_MODE {SPLIT_MODE!r}. "
+            f"Choose 'all', 'arity', 'random', or 'manual'."
         )
 
     return train, val
