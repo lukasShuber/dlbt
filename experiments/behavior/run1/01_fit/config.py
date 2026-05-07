@@ -73,9 +73,15 @@ INIT_SEED       = 0
 # ---------------------------------------------------------------------------
 # Task split
 # ---------------------------------------------------------------------------
-SPLIT_MODE = "all"      # "all" | "arity" | "random" | "manual"
-SPLIT_SEED = 0         # used only when SPLIT_MODE == "random"
-TRAIN_FRAC = 0.80      # used only when SPLIT_MODE == "random"
+SPLIT_MODE = "arity"      # "all" | "arity" | "random" | "manual"
+
+# Used when SPLIT_MODE == "arity":
+TRAIN_ARITIES = [4]         # arities included in training
+HOLD_OUT_REST = True        # True → remaining arities go to val; False → no val
+
+# Used when SPLIT_MODE == "random":
+SPLIT_SEED = 0
+TRAIN_FRAC = 0.80
 
 # Used only when SPLIT_MODE == "manual".
 # Both lists are intersected with eligible_tasks() at import time.
@@ -145,9 +151,10 @@ def _compute_split():
         return all_eligible, []
 
     elif SPLIT_MODE == "arity":
-        # Train on all 1-way tasks; validate on all conjunctions
-        train = sorted(t for t in all_eligible if "_and_" not in t)
-        val   = sorted(t for t in all_eligible if "_and_"     in t)
+        def _arity(name): return name.count("_and_") + 1
+        train = sorted(t for t in all_eligible if _arity(t) in TRAIN_ARITIES)
+        val   = (sorted(t for t in all_eligible if _arity(t) not in TRAIN_ARITIES)
+                 if HOLD_OUT_REST else [])
 
     elif SPLIT_MODE == "random":
         import numpy as np
