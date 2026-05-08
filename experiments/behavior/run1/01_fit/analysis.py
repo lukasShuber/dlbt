@@ -356,11 +356,12 @@ def _plot_probe_matrix(mat: np.ndarray, row_labels: list, col_labels: list,
 # ---------------------------------------------------------------------------
 # One-time setup: load image refs + CLIP feature cache (for α heatmap)
 # ---------------------------------------------------------------------------
-_refs_dict   = load_image_refs(cfg.METADATA)
+_REPO_ROOT   = Path(__file__).parents[4]   # repo root, regardless of CWD
+_refs_dict   = load_image_refs(_REPO_ROOT / cfg.METADATA)
 _refs_by_uid = {r.uid: r for r in image_refs_as_list(_refs_dict)}
 
 _frozen_clip: dict = {}
-_cache_path = Path(cfg.CACHE_PATH)
+_cache_path = _REPO_ROOT / cfg.CACHE_PATH
 if _cache_path.exists():
     _tmp = DlbtAgent(freeze_encoder=True, n_mc_samples=1,
                      device=torch.device("cpu"), mapper_hidden=cfg.MAPPER_HIDDEN)
