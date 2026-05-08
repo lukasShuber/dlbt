@@ -106,6 +106,39 @@ def _make_figure(df: pd.DataFrame, per_task: pd.DataFrame,
     print(f"  Saved → {out_path}")
 
 
+def _make_trial_count_figure(per_task: pd.DataFrame, task_order: list,
+                              title: str, out_path: Path) -> None:
+    """Horizontal bar chart: main-image trial count per task (probe excluded)."""
+    n_tasks = len(task_order)
+    fig, ax = plt.subplots(figsize=(6.5, n_tasks * 0.22 + 0.8))
+
+    # Draw bottom-to-top so arity-1 tasks are at the top of the chart
+    for i, task_name in enumerate(reversed(task_order)):
+        arity = int(per_task.loc[task_name, "arity"])
+        color = ARITY_COLOR.get(arity, "#555")
+        n     = int(per_task.loc[task_name, "n_main_trials"])
+        ax.barh(i, n, color=color, alpha=0.80, height=0.72)
+        ax.text(n + max(per_task["n_main_trials"].max() * 0.01, 5),
+                i, str(n), va="center", fontsize=4.5, color=color)
+
+    ax.set_yticks(range(n_tasks))
+    ax.set_yticklabels([_display(t) for t in reversed(task_order)], fontsize=4.8)
+    ax.set_xlabel("Main-image trials (probe excluded)", fontsize=8)
+    ax.set_title(title, fontsize=9)
+    ax.set_xlim(0, per_task["n_main_trials"].max() * 1.12)
+
+    handles = [Line2D([0], [0], color=c, lw=4, label=f"{a}-way")
+               for a, c in ARITY_COLOR.items()]
+    ax.legend(handles=handles, fontsize=7, frameon=False,
+              loc="lower right", ncol=2)
+    sns.despine(ax=ax, trim=True)
+    plt.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=180, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved → {out_path}")
+
+
 def _prepare_df(df_raw: pd.DataFrame,
                 keep_assignments=None) -> tuple[pd.DataFrame, pd.DataFrame, list]:
     """
@@ -132,6 +165,17 @@ def _prepare_df(df_raw: pd.DataFrame,
                arity    = ("arity", "first"))
           .sort_values(["arity", "accuracy"])
     )
+
+    # Main-trial count per task (probe image trials excluded)
+    n_main = (
+        df[df["trial_kind"] == "main"]
+          .groupby("task_name")
+          .size()
+          .rename("n_main_trials")
+    )
+    per_task = per_task.join(n_main, how="left")
+    per_task["n_main_trials"] = per_task["n_main_trials"].fillna(0).astype(int)
+
     task_order = list(per_task.index)
     return df, per_task, task_order
 
@@ -231,5 +275,12 @@ for label, keep, title, out_path in conditions:
     print(f"  {len(df_c):,} trials  |  {df_c['task_name'].nunique()} tasks  "
           f"|  {df_c['assignment_id'].nunique()} assignments")
     _make_figure(df_c, per_task_c, task_order_c, title, out_path)
+
+    count_path = out_path.with_name(out_path.stem + "_trial_counts.png")
+    _make_trial_count_figure(
+        per_task_c, task_order_c,
+        title=f"Main trials per task  [{label}]",
+        out_path=count_path,
+    )
 
 print("\nDone.")

@@ -51,7 +51,7 @@ EVAL_CELL_FRAC = 0.10
 N_EPOCHS_PHASE1  = 2000
 PATIENCE_PHASE1  = 200
 N_EPOCHS_PHASE2  = 3000
-PATIENCE_PHASE2  = 50
+PATIENCE_PHASE2  = 100
 LR               = 0.01
 LR_ATTNPOOL      = 1e-3
 N_MC             = 1000
@@ -73,7 +73,7 @@ INIT_SEED       = 0
 # ---------------------------------------------------------------------------
 # Task split
 # ---------------------------------------------------------------------------
-SPLIT_MODE = "all"      # "all" | "arity" | "random" | "manual"
+SPLIT_MODE = "arity"      # "all" | "arity" | "random" | "manual"
 
 # Used when SPLIT_MODE == "arity":
 TRAIN_ARITIES = [4]         # arities included in training
