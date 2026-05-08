@@ -27,7 +27,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch
+from scipy.optimize import minimize_scalar
 from scipy.stats import beta as scipy_beta
+from sklearn.linear_model import RidgeCV
+from sklearn.preprocessing import StandardScaler
 from torch.distributions import Dirichlet
 from tqdm import tqdm
 
@@ -411,6 +414,56 @@ for budget in _budgets_ordered:
     result = phase2 if phase2 is not None else phase1
     print(f"  best epoch: {result.best_epoch}  eval_mse: {result.best_val_mse:.4f}")
 
+    # -- Fit SLDA on the subsampled training data --
+    def _clip_feat(uids):
+        return np.array([frozen_clip[uid].cpu().numpy() for uid in uids])
+
+    slda_scalers, slda_models, slda_temps = {}, {}, {}
+    for task_name in cfg.TRAIN_TASKS:
+        group = train_ds_b.df[train_ds_b.df["task_name"] == task_name]
+        if len(group) < 3:
+            continue
+        uids    = group["uid"].tolist()
+        X       = _clip_feat(uids)
+        totals_ = (group["count_0"] + group["count_1"]).values.astype(float)
+        p_right = group["count_1"].values / np.clip(totals_, 1, None)
+        scaler  = StandardScaler()
+        X_sc    = scaler.fit_transform(X)
+        model   = RidgeCV(alphas=[1e1, 1e2, 1e3, 1e4, 1e5])
+        model.fit(X_sc, p_right)
+        p_pred  = np.clip(model.predict(X_sc), 1e-6, 1 - 1e-6)
+        logits  = np.log(p_pred / (1 - p_pred))
+
+        def _nll_tau(log_tau, logits=logits, targets=p_right):
+            p = 1.0 / (1.0 + np.exp(-logits / np.exp(log_tau)))
+            p = np.clip(p, 1e-7, 1 - 1e-7)
+            return -np.mean(targets * np.log(p) + (1 - targets) * np.log(1 - p))
+
+        opt = minimize_scalar(_nll_tau, bounds=(-3.0, 3.0), method="bounded")
+        slda_scalers[task_name] = scaler
+        slda_models[task_name]  = model
+        slda_temps[task_name]   = float(np.exp(opt.x))
+
+    print(f"  SLDA: fitted {len(slda_models)}/{len(cfg.TRAIN_TASKS)} tasks")
+
+    # SLDA stim_gen predictions
+    slda_stim_preds = {}
+    for task_name, group in stim_gen_ds.iter_tasks():
+        if task_name not in slda_models:
+            continue
+        uids    = group["uid"].tolist()
+        X_sc    = slda_scalers[task_name].transform(_clip_feat(uids))
+        p_pred  = np.clip(slda_models[task_name].predict(X_sc), 1e-6, 1 - 1e-6)
+        logits  = np.log(p_pred / (1 - p_pred))
+        tau     = slda_temps[task_name]
+        pred    = 1.0 / (1.0 + np.exp(-logits / tau))
+        slda_stim_preds[task_name] = {
+            "pred":   pred,
+            "true":   np.array([emp_p(uid, task_name) for uid in uids]),
+            "totals": np.array([emp_n(uid, task_name) for uid in uids]),
+            "uids":   uids,
+        }
+
     agent.eval()
     preds = _collect_preds(agent, [
         ("train",     train_ds_b),
@@ -419,6 +472,8 @@ for budget in _budgets_ordered:
         ("task_gen",  task_gen_ds),
         ("joint_gen", joint_gen_ds),
     ])
+
+    preds["slda_stim_gen"] = slda_stim_preds
 
     # Threshold-corrected predictions on val tasks
     if cfg.THRESHOLD_CORRECTION:
@@ -435,6 +490,7 @@ for budget in _budgets_ordered:
         "stim_gen_cmse_net":      _region_cmse_net("stim_gen",  cfg.TRAIN_TASKS, "stim_gen",  preds),
         "task_gen_cmse_net":      _region_cmse_net("task_gen",  cfg.VAL_TASKS,   "task_gen",  preds),
         "joint_gen_cmse_net":     _region_cmse_net("joint_gen", cfg.VAL_TASKS,   "joint_gen", preds),
+        "slda_stim_gen_cmse_net": _region_cmse_net("slda_stim_gen", cfg.TRAIN_TASKS, "stim_gen", preds),
         "preds": preds,
         "curves": dict(
             train_mses  = _concat(phase1.train_mses,

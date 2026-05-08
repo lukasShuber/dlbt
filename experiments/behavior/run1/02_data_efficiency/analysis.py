@@ -246,38 +246,65 @@ for results_path in candidates:
 
     # -------------------------------------------------------------------
     # Plot 01 — cMSE−NF vs trial budget
+    #
+    # Traces: SLDA stim gen | DLBT stim gen | DLBT joint gen
+    # Reference: random guesser (P=0.5), computed once from full-budget preds.
+    # Values pulled directly from stored per-budget metrics (avoids NF mismatch).
     # -------------------------------------------------------------------
-    fig, ax = plt.subplots(figsize=(8, 4.5))
+    C_DLBT = "#C44F52"
+    C_SLDA = "#7D6EAE"
+    C_RAND = "#999999"
 
-    region_cfg = [
-        ("train_cmse_net",    cfg.C_TRAIN, "train"),
-        ("stim_gen_cmse_net", cfg.C_STIM,  "stim gen"),
-        ("task_gen_cmse_net", cfg.C_TASK,  "task gen"),
-        ("joint_gen_cmse_net",cfg.C_JOINT, "joint gen"),
-    ]
-    if has_corr:
-        region_cfg += [
-            ("task_gen_h_cmse_net",  cfg.C_TASK,  "task gen (hₙ)"),
-            ("joint_gen_h_cmse_net", cfg.C_JOINT, "joint gen (hₙ)"),
-        ]
+    x_plot  = x_all[:full_idx + 1]
+    lab_plot = lab_all[:full_idx + 1]
 
-    for key, color, label in region_cfg:
-        y_vals = [p[2].get(key, float("nan")) for p in all_points]
-        ls  = "-"  if "(hₙ)" not in label else "--"
-        lw  = 1.8  if "(hₙ)" not in label else 1.4
-        ms  = 6    if "(hₙ)" not in label else 5
-        mrk = "o"  if "(hₙ)" not in label else "s"
-        ax.plot(x_all[:full_idx + 1], y_vals[:full_idx + 1],
-                f"{mrk}{ls}", color=color, lw=lw, ms=ms, label=label)
+    # Random guesser cMSE-NF — constant across budgets, compute once
+    _full_preds = all_points[full_idx][2].get("preds", {})
+    _stim_p = _full_preds.get("stim_gen", {})
+    if _stim_p:
+        _true   = np.concatenate([_stim_p[t]["true"]   for t in _stim_p])
+        _totals = np.concatenate([_stim_p[t]["totals"] for t in _stim_p])
+        _valid  = _totals > 0
+        _nf     = nfs.get("stim_gen", 0.0)
+        random_stim_cmse = float(np.mean((0.5 - _true[_valid]) ** 2)) - _nf
+    else:
+        random_stim_cmse = float("nan")
 
-    ax.axhline(0, ls=":", color="gray", lw=0.8, alpha=0.6)
+    fig, ax = plt.subplots(figsize=(5, 5))
+
+    # Random guesser — horizontal reference
+    if not np.isnan(random_stim_cmse):
+        ax.axhline(random_stim_cmse, color=C_RAND, lw=1.5,
+                   ls=(0, (4, 3)), label="Random (P=0.5)", zorder=1)
+
+    # SLDA stim gen
+    slda_y = [p[2].get("slda_stim_gen_cmse_net", float("nan"))
+              for p in all_points[:full_idx + 1]]
+    if not all(np.isnan(slda_y)):
+        ax.plot(x_plot, slda_y, "o:", color=C_SLDA, lw=2.2, ms=6,
+                label="SLDA — stim gen", zorder=3)
+
+    # DLBT stim gen
+    dlbt_stim_y = [p[2].get("stim_gen_cmse_net", float("nan"))
+                   for p in all_points[:full_idx + 1]]
+    ax.plot(x_plot, dlbt_stim_y, "o:", color=C_DLBT, lw=2.2, ms=6,
+            label="DLBT — stim gen", zorder=4)
+
+    # DLBT joint gen (only when val tasks exist)
+    if val_tasks:
+        dlbt_joint_y = [p[2].get("joint_gen_cmse_net", float("nan"))
+                        for p in all_points[:full_idx + 1]]
+        ax.plot(x_plot, dlbt_joint_y, "o-", color=C_DLBT, lw=2.2, ms=6,
+                label="DLBT — joint gen", zorder=4)
+
     ax.set_xscale("log")
     ax.set_xlabel("Trial budget", fontsize=11)
     ax.set_ylabel("cMSE − noise floor", fontsize=11)
-    ax.set_title(f"Data efficiency — DLBT  [{run_tag}]", fontsize=11)
-    ax.set_xticks(x_all[:full_idx + 1])
-    ax.set_xticklabels(lab_all[:full_idx + 1], fontsize=9)
-    ax.legend(fontsize=8, frameon=False, ncol=2)
+    ax.set_title(f"Data efficiency  [{run_tag}]", fontsize=10)
+    ax.set_xticks(x_plot)
+    ax.set_xticklabels(lab_plot, fontsize=9)
+    ax.legend(fontsize=9, frameon=False)
+    ax.set_ylim(bottom=0)
     sns.despine(trim=True)
     plt.tight_layout()
     out = plots_dir / f"plot_01_cmse_vs_budget_{run_tag}.png"
