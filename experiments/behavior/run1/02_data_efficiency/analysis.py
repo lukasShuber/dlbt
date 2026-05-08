@@ -124,9 +124,12 @@ def _plot_summary(region_preds, task_names, mc_n, title,
         tv    = d["true"][valid]
         tot   = d["totals"][valid]
         ts    = _true_sem(tv, tot)
-        ax.errorbar(pm, tv, yerr=ts,
-                    fmt="o", ms=4, alpha=0.45, color=color,
-                    elinewidth=0.5, capsize=0, linewidth=0)
+        markers, caps, bars = ax.errorbar(pm, tv, yerr=ts,
+                                           fmt="o", ms=4, color=color,
+                                           elinewidth=0.5, capsize=0, linewidth=0)
+        markers.set_alpha(0.7)
+        for bar in bars:
+            bar.set_alpha(0.15)
     ax.set_title(
         f"{title}\nMSE={raw_mse:.4f}  (−NF)={net_mse:+.4f}   ρ={rho:.3f}",
         fontsize=8, pad=4,
