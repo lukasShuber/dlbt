@@ -96,7 +96,7 @@ HOLD_OUT_REST = True        # True → remaining arities go to val; False → no
 
 # Used when SPLIT_MODE == "random":
 SPLIT_SEED = 0
-TRAIN_FRAC = 0.10
+TRAIN_FRAC = 0.50
 
 # Used only when SPLIT_MODE == "manual".
 # Both lists are intersected with eligible_tasks() at import time.
