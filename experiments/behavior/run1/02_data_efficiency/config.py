@@ -55,7 +55,7 @@ EVAL_CELL_FRAC = 0.10
 # Trial budgets to sweep.  "full" = all trials in the 90% training cells.
 # Each integer B means: uniformly sample B trials (without replacement from
 # the pool of all individual training trials; with replacement if B > pool).
-TRIAL_BUDGETS = [10, 100, 1_000, 10_000, "full"]
+TRIAL_BUDGETS = [0, 10, 100, 1_000, 10_000, "full"]
 
 # ---------------------------------------------------------------------------
 # Training

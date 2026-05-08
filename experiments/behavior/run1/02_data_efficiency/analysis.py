@@ -8,6 +8,9 @@ Figures produced per results pkl:
   plot_03_stim_gen_grid_<tag>_budget<B>.png     — stim gen per-task grid per budget
   plot_04_joint_gen_scatter_<tag>_budget<B>.png — joint gen pooled scatter per budget
   plot_04_joint_gen_grid_<tag>_budget<B>.png    — joint gen per-task grid per budget
+  plot_05a_probe_matrix_true_<tag>.png          — empirical P(yes): probe × all tasks (once)
+  plot_05b_probe_matrix_pred_<tag>_budget<B>.png— DLBT predicted P(yes) per budget
+  plot_06_alpha_<tag>_budget<B>.png             — learned Dirichlet α heatmap per budget
 
 Stim gen is always plotted (relevant for SPLIT_MODE="all").
 Joint gen is plotted only when val_tasks is non-empty.
@@ -25,11 +28,16 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
+import torch
 from matplotlib.lines import Line2D
 from scipy.stats import spearmanr
 
 sys.path.insert(0, str(Path(__file__).parent))
 import config as cfg
+
+from dlbt.agents.dlbt import DlbtAgent
+from dlbt.constants import K as _K, DIM_LEFT_RIGHT, DIM_TRANSP, DIM_GLOSS, DIM_SMALL_LARGE
+from dlbt.data.image_ref import load_image_refs, image_refs_as_list
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -39,6 +47,19 @@ N_TASK_COLS = 8
 
 plots_dir = cfg.RESULTS_DIR / "plots"
 plots_dir.mkdir(exist_ok=True)
+
+
+def _state_label(k: int) -> str:
+    lr = (k >> DIM_LEFT_RIGHT)  & 1
+    tr = (k >> DIM_TRANSP)      & 1
+    gl = (k >> DIM_GLOSS)       & 1
+    sl = (k >> DIM_SMALL_LARGE) & 1
+    return (f"{'R' if lr else 'L'} "
+            f"{'Tr' if tr else 'Op'} "
+            f"{'Gl' if gl else 'Mt'} "
+            f"{'Lg' if sl else 'Sm'}")
+
+STATE_LABELS = [_state_label(k) for k in range(_K)]
 
 
 def _arity(t: str) -> int:
@@ -84,21 +105,28 @@ def _compute_metrics(region_preds: dict, task_names: list, mc_n: int):
     return pred, true, totals, rho, raw_mse, net_mse
 
 
-def _plot_summary(region_preds, task_names, mc_n, color, title,
+def _plot_summary(region_preds, task_names, mc_n, title,
                   noise_floor_val, run_tag, fname):
-    """Standalone pooled scatter figure."""
+    """Standalone pooled scatter figure (arity-coloured dots)."""
     metrics = _compute_metrics(region_preds, task_names, mc_n)
     if metrics is None:
         print(f"  Skipping summary {fname}: no data.")
         return
-    pred, true, totals, rho, raw_mse, net_mse = metrics
-    ts = _true_sem(true, totals)
+    _, _, _, rho, raw_mse, net_mse = metrics
 
     fig, ax = plt.subplots(figsize=(4.5, 4.2))
     ax.plot([0, 1], [0, 1], ls="--", color="gray", lw=1.2, zorder=0)
-    ax.errorbar(pred, true, yerr=ts,
-                fmt="o", ms=4, alpha=0.45, color=color,
-                elinewidth=0.5, capsize=0, linewidth=0)
+    for task_name in [t for t in task_names if t in region_preds]:
+        color = ARITY_COLOR.get(_arity(task_name), "#555")
+        d     = region_preds[task_name]
+        valid = d["totals"] > 0
+        pm    = d["pred"][valid]
+        tv    = d["true"][valid]
+        tot   = d["totals"][valid]
+        ts    = _true_sem(tv, tot)
+        ax.errorbar(pm, tv, yerr=ts,
+                    fmt="o", ms=4, alpha=0.45, color=color,
+                    elinewidth=0.5, capsize=0, linewidth=0)
     ax.set_title(
         f"{title}\nMSE={raw_mse:.4f}  (−NF)={net_mse:+.4f}   ρ={rho:.3f}",
         fontsize=8, pad=4,
@@ -112,6 +140,12 @@ def _plot_summary(region_preds, task_names, mc_n, color, title,
         ax.text(0.97, 0.03, f"NF={noise_floor_val:.4f}",
                 transform=ax.transAxes, fontsize=7,
                 ha="right", va="bottom", color="gray")
+    handles = [Line2D([0], [0], marker="o", color="w",
+                      markerfacecolor=c, markersize=5, label=f"{a}-way")
+               for a, c in ARITY_COLOR.items()
+               if any(_arity(t) == a for t in task_names if t in region_preds)]
+    if handles:
+        ax.legend(handles=handles, fontsize=7, frameon=False, loc="upper left")
     sns.despine(fig=fig, trim=True)
     plt.tight_layout()
     out = plots_dir / fname
@@ -194,6 +228,91 @@ def _plot_task_grid(region_preds, task_names, mc_n, run_tag, fname):
 
 
 # ---------------------------------------------------------------------------
+# Heatmap helpers (shared with 01_fit/analysis.py)
+# ---------------------------------------------------------------------------
+
+def _plot_alpha_heatmap(alpha_mat: np.ndarray, row_labels: list,
+                        title: str, fname: str) -> None:
+    """[n_probe × K] Dirichlet α heatmap."""
+    fig, ax = plt.subplots(figsize=(7, 4))
+    sns.heatmap(alpha_mat, ax=ax,
+                xticklabels=STATE_LABELS, yticklabels=row_labels,
+                cmap="YlOrRd", cbar_kws={"label": "αₖ"},
+                linewidths=0.3, linecolor="white")
+    ax.set_xlabel("Latent state", fontsize=10)
+    ax.set_ylabel("Probe image",  fontsize=10)
+    ax.set_title(title, fontsize=11)
+    ax.tick_params(axis="x", labelsize=7, rotation=45)
+    ax.tick_params(axis="y", labelsize=7, rotation=0)
+    plt.tight_layout()
+    out = plots_dir / fname
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {out}")
+
+
+def _build_probe_matrix(stim_preds: dict, joint_preds: dict,
+                        probe_uids_ordered: list, all_tasks_ordered: list,
+                        key: str = "pred") -> np.ndarray:
+    """Build [n_probe × n_tasks] matrix from per-task prediction dicts."""
+    uid_to_row = {uid: i for i, uid in enumerate(probe_uids_ordered)}
+    mat = np.full((len(probe_uids_ordered), len(all_tasks_ordered)), np.nan)
+    for j, task_name in enumerate(all_tasks_ordered):
+        src = stim_preds.get(task_name) or joint_preds.get(task_name)
+        if src is None:
+            continue
+        vals = src[key]
+        if key == "pred" and np.ndim(vals) == 2:
+            vals = vals.mean(axis=0)
+        for uid, v in zip(src["uids"], vals):
+            if uid in uid_to_row:
+                mat[uid_to_row[uid], j] = float(v)
+    return mat
+
+
+def _plot_probe_matrix(mat: np.ndarray, row_labels: list, col_labels: list,
+                       title: str, fname: str) -> None:
+    """[n_probe × n_tasks] probe matrix heatmap."""
+    n_tasks = len(col_labels)
+    fig_w   = max(9, n_tasks * 0.20)
+    fig, ax = plt.subplots(figsize=(fig_w, 4.5))
+    sns.heatmap(mat, ax=ax,
+                xticklabels=col_labels, yticklabels=row_labels,
+                cmap="RdYlBu_r", vmin=0, vmax=1,
+                cbar_kws={"label": "P(yes)"},
+                linewidths=0.1, linecolor="white")
+    ax.set_xlabel("Task", fontsize=10)
+    ax.set_ylabel("Probe image", fontsize=10)
+    ax.set_title(title, fontsize=11)
+    ax.tick_params(axis="x", labelsize=5, rotation=60)
+    ax.tick_params(axis="y", labelsize=7, rotation=0)
+    plt.tight_layout()
+    out = plots_dir / fname
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {out}")
+
+
+# ---------------------------------------------------------------------------
+# One-time setup: image refs + CLIP feature cache (for α heatmaps)
+# ---------------------------------------------------------------------------
+_refs_dict   = load_image_refs(cfg.METADATA)
+_refs_by_uid = {r.uid: r for r in image_refs_as_list(_refs_dict)}
+
+_frozen_clip: dict = {}
+_cache_path = Path(cfg.CACHE_PATH)
+if _cache_path.exists():
+    _tmp = DlbtAgent(freeze_encoder=True, n_mc_samples=1,
+                     device=torch.device("cpu"), mapper_hidden=cfg.MAPPER_HIDDEN)
+    _tmp.load_cache(str(_cache_path))
+    _frozen_clip = {uid: feat.clone() for uid, feat in _tmp._cache.items()}
+    del _tmp
+    print(f"Loaded CLIP cache ({len(_frozen_clip)} images) for α heatmaps.")
+else:
+    print(f"[warn] CLIP cache not found at {_cache_path} — α heatmaps will be skipped.")
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 parser = argparse.ArgumentParser()
@@ -230,13 +349,34 @@ for results_path in candidates:
     )
     train_tasks_sorted = sorted(train_tasks, key=lambda t: (_arity(t), t))
 
+    # Probe image ordering (used for heatmaps below)
+    _probe_uids_set     = set(summary.get("test_uids", []))
+    _probe_refs_ordered = sorted(
+        [_refs_by_uid[uid] for uid in _probe_uids_set if uid in _refs_by_uid],
+        key=lambda r: r.latent_state,
+    )
+    _probe_uids_ordered = [r.uid for r in _probe_refs_ordered]
+    _image_labels       = [_state_label(r.latent_state) for r in _probe_refs_ordered]
+
+    _all_tasks_ordered = sorted(
+        list(set(train_tasks) | set(val_tasks)),
+        key=lambda t: (_arity(t), t),
+    )
+    _task_col_labels = [t.replace("_and_", "&").replace("_", "/")
+                        for t in _all_tasks_ordered]
+
     # -------------------------------------------------------------------
     # Sort budgets by trial count
+    # budget "0" → x=1 so it sits left of 10 on the log scale
     # -------------------------------------------------------------------
+    def _budget_to_x(label):
+        if label == "0":    return 1
+        if label == "full": return n_pool
+        return int(label)
+
     all_points = []
     for label, res in results.items():
-        x = n_pool if label == "full" else int(label)
-        all_points.append((x, label, res))
+        all_points.append((_budget_to_x(label), label, res))
     all_points.sort(key=lambda p: p[0])
 
     x_all    = [p[0] for p in all_points]
@@ -362,7 +502,6 @@ for results_path in candidates:
         stim_preds = preds_b.get("stim_gen", {})
         _plot_summary(
             stim_preds, train_tasks_sorted, cfg.N_MC,
-            color=cfg.C_STIM,
             title=f"Stim Gen — budget={budget_label}",
             noise_floor_val=nfs.get("stim_gen"),
             run_tag=run_tag,
@@ -380,7 +519,6 @@ for results_path in candidates:
         joint_preds = preds_b.get("joint_gen", {})
         _plot_summary(
             joint_preds, val_tasks, cfg.N_MC,
-            color=cfg.C_JOINT,
             title=f"Joint Gen — budget={budget_label}",
             noise_floor_val=nfs.get("joint_gen"),
             run_tag=run_tag,
@@ -390,6 +528,67 @@ for results_path in candidates:
             joint_preds, val_tasks, cfg.N_MC,
             run_tag=run_tag,
             fname=f"plot_04_joint_gen_grid_{run_tag}_budget{budget_label}.png",
+        )
+
+    # -------------------------------------------------------------------
+    # Plot 05a — True probe matrix (once per pkl, from full-budget preds)
+    # -------------------------------------------------------------------
+    if _probe_refs_ordered:
+        _full_res    = all_points[full_idx][2]
+        _full_preds  = _full_res.get("preds", {})
+        _stim_full   = _full_preds.get("stim_gen",  {})
+        _joint_full  = _full_preds.get("joint_gen", {})
+        if _stim_full or _joint_full:
+            true_mat = _build_probe_matrix(
+                _stim_full, _joint_full,
+                _probe_uids_ordered, _all_tasks_ordered, key="true",
+            )
+            _plot_probe_matrix(
+                true_mat, _image_labels, _task_col_labels,
+                title="Probe matrix — empirical P(yes)",
+                fname=f"plot_05a_probe_matrix_true_{run_tag}.png",
+            )
+
+    # -------------------------------------------------------------------
+    # Plots 05b + 06 — per-budget: predicted probe matrix + α heatmap
+    # -------------------------------------------------------------------
+    for x, budget_label, res in all_points:
+        preds_b = res.get("preds", {})
+        stim_b  = preds_b.get("stim_gen",  {})
+        joint_b = preds_b.get("joint_gen", {})
+
+        # Predicted probe matrix
+        if _probe_refs_ordered and (stim_b or joint_b):
+            pred_mat = _build_probe_matrix(
+                stim_b, joint_b,
+                _probe_uids_ordered, _all_tasks_ordered, key="pred",
+            )
+            _plot_probe_matrix(
+                pred_mat, _image_labels, _task_col_labels,
+                title=f"Probe matrix — DLBT predicted P(yes)  [budget={budget_label}]",
+                fname=f"plot_05b_probe_matrix_pred_{run_tag}_budget{budget_label}.png",
+            )
+
+        # α heatmap
+        if not _frozen_clip or not _probe_refs_ordered:
+            continue
+        ckpt_path = cfg.RESULTS_DIR / f"agent_{run_tag}_budget_{budget_label}.pt"
+        if not ckpt_path.exists():
+            print(f"  Skipping α heatmap budget={budget_label}: checkpoint not found.")
+            continue
+        _agent = DlbtAgent(freeze_encoder=True, n_mc_samples=1,
+                           device=torch.device("cpu"), mapper_hidden=cfg.MAPPER_HIDDEN)
+        _agent._cache = {uid: feat.clone() for uid, feat in _frozen_clip.items()}
+        ckpt = torch.load(ckpt_path, map_location="cpu")
+        _agent.mapper.load_state_dict(ckpt["mapper"])
+        _agent.eval()
+        with torch.no_grad():
+            alpha_mat = _agent.get_alpha(_probe_refs_ordered).cpu().numpy()
+        del _agent
+        _plot_alpha_heatmap(
+            alpha_mat, _image_labels,
+            title=f"Learned α  [budget={budget_label}]",
+            fname=f"plot_06_alpha_{run_tag}_budget{budget_label}.png",
         )
 
 print(f"\nAll plots saved to {plots_dir}")

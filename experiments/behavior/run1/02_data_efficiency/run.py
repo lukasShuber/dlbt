@@ -315,6 +315,65 @@ for budget in _budgets_ordered:
     print(f"\n{'='*60}")
     print(f"Budget: {budget_label}")
 
+    # ----------------------------------------------------------------
+    # Budget 0 — randomly initialised model, no training
+    # ----------------------------------------------------------------
+    if budget == 0:
+        print("  (random init — no training)")
+        torch.manual_seed(cfg.SEEDS[0])
+        agent0 = DlbtAgent(freeze_encoder=True, n_mc_samples=cfg.N_MC,
+                           device=device, mapper_hidden=cfg.MAPPER_HIDDEN,
+                           normalize_utility=cfg.NORMALIZED_UTILITY)
+        agent0._cache = {uid: feat.clone() for uid, feat in frozen_clip.items()}
+
+        _linear0 = agent0.mapper[0] if cfg.MAPPER_HIDDEN is None else agent0.mapper[2]
+        if cfg.INIT_MODE == "uniform":
+            _bv = float(np.log(np.exp(cfg.INIT_ALPHA) - 1.0))
+            with torch.no_grad():
+                _linear0.bias.fill_(_bv)
+        elif cfg.INIT_MODE == "random":
+            _rng0   = np.random.default_rng(cfg.INIT_SEED)
+            _arnd   = _rng0.uniform(cfg.INIT_ALPHA_LOW, cfg.INIT_ALPHA_HIGH,
+                                    size=(_linear0.bias.shape[0],)).astype(np.float32)
+            _binit  = np.log(np.exp(_arnd) - 1.0)
+            with torch.no_grad():
+                _linear0.bias.copy_(torch.from_numpy(_binit).to(device))
+        else:
+            raise ValueError(f"Unknown INIT_MODE {cfg.INIT_MODE!r}")
+
+        agent0.eval()
+        preds0 = _collect_preds(agent0, [
+            ("eval",      eval_ds),
+            ("stim_gen",  stim_gen_ds),
+            ("task_gen",  task_gen_ds),
+            ("joint_gen", joint_gen_ds),
+        ])
+        preds0["slda_stim_gen"] = {}  # no SLDA at budget 0
+
+        metrics0 = {
+            "n_trials":               0,
+            "n_cells":                0,
+            "best_epoch":             0,
+            "eval_mse":               float("nan"),
+            "train_cmse_net":         float("nan"),
+            "stim_gen_cmse_net":      _region_cmse_net("stim_gen",  cfg.TRAIN_TASKS, "stim_gen",  preds0),
+            "task_gen_cmse_net":      _region_cmse_net("task_gen",  cfg.VAL_TASKS,   "task_gen",  preds0),
+            "joint_gen_cmse_net":     _region_cmse_net("joint_gen", cfg.VAL_TASKS,   "joint_gen", preds0),
+            "slda_stim_gen_cmse_net": float("nan"),
+            "preds":  preds0,
+            "curves": None,
+        }
+        for k in ["stim_gen_cmse_net", "task_gen_cmse_net", "joint_gen_cmse_net"]:
+            print(f"  {k}: {metrics0[k]:.4f}")
+
+        ckpt0_path = cfg.RESULTS_DIR / f"agent_{cfg.RUN_TAG}_budget_0.pt"
+        torch.save({"mapper": agent0.mapper.state_dict()}, ckpt0_path)
+        print(f"  Saved checkpoint -> {ckpt0_path}")
+
+        results_per_budget["0"] = metrics0
+        del agent0
+        continue
+
     if budget == "full":
         train_ds_b = BehavioralDataset(all_train_df.copy())
     else:
