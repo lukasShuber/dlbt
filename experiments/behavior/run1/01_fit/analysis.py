@@ -287,7 +287,7 @@ def _plot_task_grid(pt, cond, task_list, run_tag, region_name, n_seeds, mc_n):
 def _plot_alpha_heatmap(alpha_mat: np.ndarray, row_labels: list,
                         title: str, fname: str) -> None:
     """[n_probe × K] Dirichlet α heatmap, rows=probe images, cols=latent states."""
-    fig, ax = plt.subplots(figsize=(7, 4))
+    fig, ax = plt.subplots(figsize=(5, 4))
     sns.heatmap(alpha_mat, ax=ax,
                 xticklabels=STATE_LABELS, yticklabels=row_labels,
                 cmap="YlOrRd", cbar_kws={"label": "αₖ"},
