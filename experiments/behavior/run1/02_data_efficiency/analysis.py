@@ -44,6 +44,7 @@ import config as cfg
 from dlbt.agents.dlbt import DlbtAgent
 from dlbt.constants import K as _K, DIM_LEFT_RIGHT, DIM_TRANSP, DIM_GLOSS, DIM_SMALL_LARGE
 from dlbt.data.image_ref import load_image_refs, image_refs_as_list
+from dlbt.data.task import get_task
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -217,7 +218,40 @@ for results_path in candidates:
     dlbt_res          = summary["dlbt"]
     cov_fracs         = summary["coverage_fracs"]
     probe_noise_floor = summary.get("probe_noise_floor", 0.0)
-    random_cmse_net   = summary.get("random_cmse_net", float("nan"))
+    # Compute random-guesser reference from true_matrix (works even for old pkls)
+    _valid_rg = ~np.isnan(true_matrix)
+    random_cmse_net = (float(np.mean((0.5 - true_matrix[_valid_rg]) ** 2))
+                       - probe_noise_floor)
+
+    # Random-init DLBT — from pkl if available, else compute on the fly
+    random_init_cmse_net = summary.get("random_init_cmse_net", float("nan"))
+    if np.isnan(random_init_cmse_net) and _frozen_clip:
+        print("  Computing random-init DLBT baseline on the fly...")
+        torch.manual_seed(cfg.SEEDS[0])
+        _ri_agent = DlbtAgent(freeze_encoder=True, n_mc_samples=cfg.N_MC,
+                              device=torch.device("cpu"),
+                              mapper_hidden=cfg.MAPPER_HIDDEN,
+                              normalize_utility=cfg.NORMALIZED_UTILITY)
+        _ri_agent._cache = {uid: feat.clone() for uid, feat in _frozen_clip.items()}
+        _lin = _ri_agent.mapper[0] if cfg.MAPPER_HIDDEN is None else _ri_agent.mapper[2]
+        _rng_i = np.random.default_rng(cfg.INIT_SEED)
+        _a = _rng_i.uniform(cfg.INIT_ALPHA_LOW, cfg.INIT_ALPHA_HIGH,
+                             size=(_lin.bias.shape[0],)).astype(np.float32)
+        with torch.no_grad():
+            _lin.bias.copy_(torch.from_numpy(np.log(np.exp(_a) - 1.0)))
+        _ri_agent.eval()
+        _probe_refs_ri = _probe_refs_from_uids(probe_uids)
+        _pred_ri = np.full((len(probe_uids), len(all_tasks)), np.nan)
+        with torch.no_grad():
+            for j, t in enumerate(all_tasks):
+                _pred_ri[:, j] = _ri_agent.choice_probs(
+                    _probe_refs_ri, get_task(t)
+                )[:, 1].cpu().numpy()
+        _valid_ri = ~np.isnan(_pred_ri) & ~np.isnan(true_matrix)
+        random_init_cmse_net = (float(np.mean((_pred_ri[_valid_ri] - true_matrix[_valid_ri]) ** 2))
+                                - probe_noise_floor)
+        del _ri_agent
+        print(f"  Random-init DLBT cMSE−NF: {random_init_cmse_net:.5f}")
 
     n_probe  = len(probe_uids)
     n_tasks  = len(all_tasks)
@@ -279,13 +313,21 @@ for results_path in candidates:
         ax.axhline(random_cmse_net, color="#999999", lw=1.5,
                    ls=(0, (4, 3)), label="Random (P=0.5)", zorder=1)
 
+    # Random-init DLBT reference
+    if not np.isnan(random_init_cmse_net):
+        ax.axhline(random_init_cmse_net, color="#E76F51", lw=1.5,
+                   ls=(0, (4, 3)), label="Random-init DLBT", zorder=1)
+
     ax.set_xscale("log")
+    ax.set_xlim(1, 1.5e5)
+    ax.set_xticks([1, 10, 100, 1_000, 10_000, 100_000])
+    ax.set_xticklabels(["0", r"$10^1$", r"$10^2$", r"$10^3$", r"$10^4$", r"$10^5$"])
     ax.set_xlabel("Total trial budget",        fontsize=11)
     ax.set_ylabel("cMSE − noise floor",        fontsize=11)
     ax.set_title(f"Coverage sweep  [{run_tag}]", fontsize=10)
     ax.legend(fontsize=8, frameon=False, loc="upper right")
     ax.set_ylim(bottom=0)
-    sns.despine(trim=True)
+    sns.despine()
     plt.tight_layout()
     out = plots_dir / f"plot_01_coverage_sweep_{run_tag}.png"
     plt.savefig(out, dpi=150, bbox_inches="tight")

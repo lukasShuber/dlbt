@@ -454,6 +454,16 @@ def _trials_per_task(tasks: list, train_ds: BehavioralDataset) -> dict:
 
 
 # ===========================================================================
+# Random-init DLBT baseline  (no training)
+# ===========================================================================
+print("\nComputing random-init DLBT baseline...")
+_agent_rand          = _init_agent()
+_pred_rand           = _dlbt_probe_matrix(_agent_rand)
+random_init_cmse_net = _probe_cmse_net(_pred_rand)
+del _agent_rand
+print(f"  Random-init DLBT cMSE−NF: {random_init_cmse_net:.5f}")
+
+# ===========================================================================
 # SLDA sweep  (all eligible tasks, varying budget)
 # ===========================================================================
 print("\n" + "=" * 60)
@@ -571,15 +581,18 @@ for seed_i, seed_val in enumerate(cfg.SEEDS):
 # Save
 # ===========================================================================
 summary = {
-    "run_tag":            cfg.RUN_TAG,
-    "coverage_fracs":     cfg.COVERAGE_FRACS,
-    "trial_budgets":      cfg.TRIAL_BUDGETS,
-    "seeds":              cfg.SEEDS,
-    "all_tasks_ordered":  all_tasks_ordered,
-    "probe_uids_ordered": probe_uids_ordered,
-    "true_matrix":        true_matrix,
-    "slda":               slda_results,
-    "dlbt":               dlbt_results,
+    "run_tag":               cfg.RUN_TAG,
+    "coverage_fracs":        cfg.COVERAGE_FRACS,
+    "trial_budgets":         cfg.TRIAL_BUDGETS,
+    "seeds":                 cfg.SEEDS,
+    "all_tasks_ordered":     all_tasks_ordered,
+    "probe_uids_ordered":    probe_uids_ordered,
+    "true_matrix":           true_matrix,
+    "probe_noise_floor":     probe_noise_floor,
+    "random_cmse_net":       random_cmse_net,
+    "random_init_cmse_net":  random_init_cmse_net,
+    "slda":                  slda_results,
+    "dlbt":                  dlbt_results,
 }
 out_path = cfg.RESULTS_DIR / f"coverage_sweep_{cfg.RUN_TAG}.pkl"
 with open(out_path, "wb") as f:

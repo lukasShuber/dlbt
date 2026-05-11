@@ -50,8 +50,8 @@ MIN_TASK_ASSIGNMENTS = _run1_cfg.MIN_TASK_ASSIGNMENTS
 # ---------------------------------------------------------------------------
 COVERAGE_FRACS = [0.10, 0.25, 0.50, 0.75, 1.00]
 
-N_SEEDS = 1       # number of random task orderings; bump for SEM bands
-SEEDS   = [42]    # one seed to start
+N_SEEDS = 5       # number of random task orderings; bump for SEM bands
+SEEDS   = [42, 43, 44, 45, 46]    # one seed to start
 
 # Fixed trial budget series.  Per-trace start/end is computed dynamically.
 TRIAL_BUDGETS = [10, 100, 1_000, 10_000, 100_000]
