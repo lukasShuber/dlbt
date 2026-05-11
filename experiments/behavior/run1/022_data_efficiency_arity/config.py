@@ -49,8 +49,8 @@ ARITIES = [1, 2, 3, 4]
 # None → computed dynamically in run.py as min(n_eligible_tasks per arity).
 N_TASKS_PER_ARITY = None
 
-N_SEEDS = 5
-SEEDS   = [42, 43, 44, 45, 46]
+N_SEEDS = 1
+SEEDS   = [42]
 
 # Fixed trial budget series — same logic as 02_data_efficiency.
 TRIAL_BUDGETS = [10, 100, 1_000, 10_000, 100_000]
