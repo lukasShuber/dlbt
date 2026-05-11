@@ -33,7 +33,6 @@ import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
-import matplotlib.cm as mpl_cm
 import numpy as np
 import seaborn as sns
 import torch
@@ -52,7 +51,7 @@ from dlbt.data.image_ref import load_image_refs, image_refs_as_list
 ARITY_COLOR = {1: "#2a6fb5", 2: "#43AA8B", 3: "#E76F51", 4: "#9B5DE5"}
 
 # Coverage fraction → shade of blue (light to dark)
-_BLUES = mpl_cm.get_cmap("Blues")
+_BLUES = plt.get_cmap("Blues")
 _CMAP_OFFSETS = {
     0.10: 0.30,
     0.25: 0.44,
@@ -211,12 +210,14 @@ for results_path in candidates:
     with open(results_path, "rb") as f:
         summary = pickle.load(f)
 
-    all_tasks     = summary["all_tasks_ordered"]
-    probe_uids    = summary["probe_uids_ordered"]
-    true_matrix   = summary["true_matrix"]    # [n_probe × n_tasks]
-    slda_res      = summary["slda"]
-    dlbt_res      = summary["dlbt"]
-    cov_fracs     = summary["coverage_fracs"]
+    all_tasks         = summary["all_tasks_ordered"]
+    probe_uids        = summary["probe_uids_ordered"]
+    true_matrix       = summary["true_matrix"]    # [n_probe × n_tasks]
+    slda_res          = summary["slda"]
+    dlbt_res          = summary["dlbt"]
+    cov_fracs         = summary["coverage_fracs"]
+    probe_noise_floor = summary.get("probe_noise_floor", 0.0)
+    random_cmse_net   = summary.get("random_cmse_net", float("nan"))
 
     n_probe  = len(probe_uids)
     n_tasks  = len(all_tasks)
@@ -243,7 +244,9 @@ for results_path in candidates:
             cov_data = seed_data["coverage"][frac_key]
             for bstr, bdata in cov_data["budgets"].items():
                 b = int(bstr)
-                dlbt_traces[frac].setdefault(b, []).append(bdata["probe_mse"])
+                dlbt_traces[frac].setdefault(b, []).append(
+                    bdata.get("probe_cmse_net", bdata.get("probe_mse", float("nan")))
+                )
 
     for frac in cov_fracs:
         trace = dlbt_traces[frac]
@@ -265,13 +268,20 @@ for results_path in candidates:
 
     # SLDA reference trace
     slda_budgets = sorted(int(b) for b in slda_res["budgets"])
-    slda_mse     = [slda_res["budgets"][str(b)]["probe_mse"] for b in slda_budgets]
-    ax.plot(slda_budgets, slda_mse, "o--", color=C_SLDA, lw=2.0, ms=5,
+    slda_y       = [slda_res["budgets"][str(b)].get(
+                        "probe_cmse_net", slda_res["budgets"][str(b)].get("probe_mse", float("nan")))
+                    for b in slda_budgets]
+    ax.plot(slda_budgets, slda_y, "o--", color=C_SLDA, lw=2.0, ms=5,
             label=f"SLDA (all {slda_res['n_tasks']} tasks)", zorder=3)
 
+    # Random guesser reference
+    if not np.isnan(random_cmse_net):
+        ax.axhline(random_cmse_net, color="#999999", lw=1.5,
+                   ls=(0, (4, 3)), label="Random (P=0.5)", zorder=1)
+
     ax.set_xscale("log")
-    ax.set_xlabel("Total trial budget",   fontsize=11)
-    ax.set_ylabel("Probe matrix MSE",     fontsize=11)
+    ax.set_xlabel("Total trial budget",        fontsize=11)
+    ax.set_ylabel("cMSE − noise floor",        fontsize=11)
     ax.set_title(f"Coverage sweep  [{run_tag}]", fontsize=10)
     ax.legend(fontsize=8, frameon=False, loc="upper right")
     ax.set_ylim(bottom=0)

@@ -133,14 +133,32 @@ print(f"  Probe images: {n_probe}")
 # ---------------------------------------------------------------------------
 probe_cells_df = full_ds.df[full_ds.df["uid"].isin(probe_uids)].copy()
 true_matrix    = np.full((n_probe, n_all_tasks), np.nan)
+count_matrix   = np.zeros((n_probe, n_all_tasks), dtype=np.int32)
 for row in probe_cells_df.itertuples(index=False):
     i     = uid_to_row.get(row.uid)
     j     = task_to_col.get(row.task_name)
     total = row.count_0 + row.count_1
     if i is not None and j is not None and total > 0:
-        true_matrix[i, j] = row.count_1 / total
+        true_matrix[i, j]  = row.count_1 / total
+        count_matrix[i, j] = total
 n_filled = int((~np.isnan(true_matrix)).sum())
 print(f"  Ground truth probe matrix: {n_filled}/{n_probe * n_all_tasks} cells filled.")
+
+# Probe noise floor: mean binomial sampling variance over cells with n > 1
+_nf_mask = count_matrix > 1
+if _nf_mask.any():
+    _p = true_matrix[_nf_mask]
+    _n = count_matrix[_nf_mask].astype(float)
+    probe_noise_floor = float(np.mean(_p * (1 - _p) / (_n - 1)))
+else:
+    probe_noise_floor = 0.0
+
+# Random-guesser cMSE−NF (constant reference)
+_valid_rg = ~np.isnan(true_matrix)
+random_cmse_net = (float(np.mean((0.5 - true_matrix[_valid_rg]) ** 2))
+                   - probe_noise_floor)
+print(f"  Probe noise floor: {probe_noise_floor:.5f}  "
+      f"random-guesser cMSE−NF: {random_cmse_net:.5f}")
 
 # ---------------------------------------------------------------------------
 # Fixed 10 % eval split of main cells (for DLBT early stopping)
@@ -348,12 +366,13 @@ def _dlbt_probe_matrix(agent: DlbtAgent) -> np.ndarray:
     return pred
 
 
-def _probe_mse(pred_mat: np.ndarray) -> float:
-    """MSE between pred_mat and true_matrix over cells with empirical data."""
+def _probe_cmse_net(pred_mat: np.ndarray) -> float:
+    """cMSE − probe noise floor over cells with empirical data."""
     valid = ~np.isnan(pred_mat) & ~np.isnan(true_matrix)
     if not valid.any():
         return float("nan")
-    return float(np.mean((pred_mat[valid] - true_matrix[valid]) ** 2))
+    raw_mse = float(np.mean((pred_mat[valid] - true_matrix[valid]) ** 2))
+    return raw_mse - probe_noise_floor
 
 
 def _save_ckpt(agent: DlbtAgent, tag: str) -> Path:
@@ -376,14 +395,17 @@ def _fit_slda(tasks: list,
     for task_name in tasks:
         group = train_ds.df[train_ds.df["task_name"] == task_name]
         uids  = [uid for uid in group["uid"].tolist() if uid in frozen_clip]
-        if len(uids) < 3:
+        if len(uids) < 1:
             continue
         X = np.array([frozen_clip[uid].cpu().numpy() for uid in uids])
         g_sub   = group[group["uid"].isin(uids)]
         totals  = (g_sub["count_0"] + g_sub["count_1"]).values.astype(float)
         p_right = g_sub["count_1"].values / np.clip(totals, 1, None)
 
-        scaler = StandardScaler()
+        # With very few samples, centering kills all signal (X - X = 0).
+        # Use raw features below n=5; standard scaling above.
+        scaler = StandardScaler(with_mean=(len(uids) >= 5),
+                                with_std=(len(uids) >= 5))
         X_sc   = scaler.fit_transform(X)
         model  = RidgeCV(alphas=[1e1, 1e2, 1e3, 1e4, 1e5])
         model.fit(X_sc, p_right)
@@ -454,13 +476,13 @@ for budget in slda_budgets:
     train_ds_b         = _uniform_sample(all_tasks_ordered, budget, rng_slda)
     scalers_b, mods_b, temps_b = _fit_slda(all_tasks_ordered, train_ds_b)
     pred_mat_b         = _slda_probe_matrix(scalers_b, mods_b, temps_b)
-    mse_b              = _probe_mse(pred_mat_b)
-    print(f"  Fitted {len(mods_b)}/{n_all_tasks} tasks  probe_mse={mse_b:.5f}")
+    mse_b              = _probe_cmse_net(pred_mat_b)
+    print(f"  Fitted {len(mods_b)}/{n_all_tasks} tasks  probe_cmse_net={mse_b:.5f}")
     slda_results["budgets"][str(budget)] = {
         "n_trials":        budget,
         "trials_per_task": _trials_per_task(all_tasks_ordered, train_ds_b),
         "n_fitted":        len(mods_b),
-        "probe_mse":       mse_b,
+        "probe_cmse_net":       mse_b,
         "pred_matrix":     pred_mat_b,
     }
     del train_ds_b, scalers_b, mods_b, temps_b
@@ -521,8 +543,8 @@ for seed_i, seed_val in enumerate(cfg.SEEDS):
                   f"eval_mse={result.best_val_mse:.5f}")
 
             pred_mat = _dlbt_probe_matrix(agent)
-            mse      = _probe_mse(pred_mat)
-            print(f"  probe_mse={mse:.5f}")
+            mse      = _probe_cmse_net(pred_mat)
+            print(f"  probe_cmse_net={mse:.5f}")
 
             ckpt_tag  = f"cov{frac:.2f}_seed{seed_i}_budget{budget}"
             ckpt_path = _save_ckpt(agent, ckpt_tag)
@@ -532,7 +554,7 @@ for seed_i, seed_val in enumerate(cfg.SEEDS):
                 "n_trials":        n_trials,
                 "n_cells":         n_cells,
                 "trials_per_task": _trials_per_task(task_subset, train_ds_b),
-                "probe_mse":       mse,
+                "probe_cmse_net":       mse,
                 "pred_matrix":     pred_mat,
                 "best_epoch":      result.best_epoch,
                 "best_val_mse":    result.best_val_mse,

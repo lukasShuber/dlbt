@@ -32,7 +32,7 @@ USE_TRIAL_KINDS    = ("main", "probe")
 # Minimum number of filtered assignments a task must have to be included.
 # Tasks below this threshold are dropped from both TRAIN and VAL.
 # Set to 0 to include all tasks.
-MIN_TASK_ASSIGNMENTS = 0
+MIN_TASK_ASSIGNMENTS = 5
 
 # ---------------------------------------------------------------------------
 # Full BEH_ID_TO_TASK mapping — all 80 tasks across run0 + run1
