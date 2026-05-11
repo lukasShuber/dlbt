@@ -1,19 +1,14 @@
 """
-Configuration for behavior run1 / 02_data_efficiency — coverage sweep.
+Configuration for behavior run1 / 022_data_efficiency_arity — arity sweep.
 
-DLBT is trained on cumulative-nested random task subsets of varying coverage;
-SLDA is trained on all tasks as a reference baseline.  Both are evaluated on
-the full 80-task probe matrix (16 probe images × 80 tasks).
+DLBT is trained on N_TASKS_PER_ARITY randomly selected tasks from each arity
+class [1, 2, 3, 4] and evaluated on the full 80-task probe matrix.
 
-COVERAGE_FRACS : fractions of all eligible tasks used for DLBT training.
-                 Subsets are cumulative-nested per seed:
-                 10 % ⊂ 25 % ⊂ 50 % ⊂ 75 % ⊂ 100 %.
-N_SEEDS        : random task orderings → enables SEM shading in plots.
-                 Start with 1; bump up when results are ready.
-TRIAL_BUDGETS  : fixed series [10, 100, …, 100_000].  Each trace starts at
-                 min_budget = n_train_tasks (q=1) and ends at
-                 max_budget = min_pool_size × n_train_tasks (no repeats).
-                 Budget points outside [min, max] are dropped automatically.
+N_TASKS_PER_ARITY is fixed to the number of eligible 1-way tasks (the minimum
+across arities), so training volume (n_tasks × trials/task) is identical across
+arities. Randomness in which tasks are selected is averaged over N_SEEDS.
+
+SLDA is trained on all tasks as a reference baseline.
 """
 
 from pathlib import Path
@@ -32,9 +27,9 @@ _spec     = _ilu.spec_from_file_location("_run1_cfg", _RUN1_DIR / "config.py")
 _run1_cfg = _ilu.module_from_spec(_spec)
 _spec.loader.exec_module(_run1_cfg)
 
-BEHAVIOR_CSV_RUN0    = _run1_cfg.BEHAVIOR_CSV_RUN0
-BEHAVIOR_CSV_RUN1    = _run1_cfg.BEHAVIOR_CSV_RUN1
-BEH_ID_TO_TASK       = _run1_cfg.BEH_ID_TO_TASK
+BEHAVIOR_CSV_RUN0 = _run1_cfg.BEHAVIOR_CSV_RUN0
+BEHAVIOR_CSV_RUN1 = _run1_cfg.BEHAVIOR_CSV_RUN1
+BEH_ID_TO_TASK    = _run1_cfg.BEH_ID_TO_TASK
 
 # ---------------------------------------------------------------------------
 # Data handling
@@ -46,21 +41,22 @@ MAIN_PERF_QUANTILE   = _run1_cfg.MAIN_PERF_QUANTILE
 MIN_TASK_ASSIGNMENTS = _run1_cfg.MIN_TASK_ASSIGNMENTS
 
 # ---------------------------------------------------------------------------
-# Coverage sweep
+# Arity sweep
 # ---------------------------------------------------------------------------
-COVERAGE_FRACS = [0.10, 0.25, 0.50, 0.75, 1.00]
+ARITIES = [1, 2, 3, 4]
 
-# N_SEEDS = 5       # number of random task orderings; bump for SEM bands
-# SEEDS   = [42, 43, 44, 45, 46]    # one seed to start
+# Number of tasks to train on per arity.
+# None → computed dynamically in run.py as min(n_eligible_tasks per arity).
+N_TASKS_PER_ARITY = None
 
-N_SEEDS = 1       # number of random task orderings; bump for SEM bands
-SEEDS   = [42]    # one seed to start
+N_SEEDS = 5
+SEEDS   = [42, 43, 44, 45, 46]
 
-# Fixed trial budget series.  Per-trace start/end is computed dynamically.
+# Fixed trial budget series — same logic as 02_data_efficiency.
 TRIAL_BUDGETS = [10, 100, 1_000, 10_000, 100_000]
 
 # ---------------------------------------------------------------------------
-# Training
+# Training  (mirrors 02_data_efficiency)
 # ---------------------------------------------------------------------------
 N_EPOCHS        = 1000
 PATIENCE        = 200
@@ -82,13 +78,15 @@ INIT_ALPHA_LOW  = 0.6
 INIT_ALPHA_HIGH = 0.7
 INIT_SEED       = 0
 
-RUN_TAG = ("frozen" if FREEZE_ENCODER else "attnpool") + "_coverage_norm"
+RUN_TAG = ("frozen" if FREEZE_ENCODER else "attnpool") + "_arity_norm"
 
 # ---------------------------------------------------------------------------
-# Plot colours (used in learning-curve plots)
+# Plot colours
 # ---------------------------------------------------------------------------
-C_TRAIN = "#E76F51"
-C_EVAL  = "#F4A261"
+ARITY_COLOR = {1: "#2a6fb5", 2: "#43AA8B", 3: "#E76F51", 4: "#9B5DE5"}
+C_SLDA      = "#7D3C98"
+C_TRAIN     = "#E76F51"
+C_EVAL      = "#F4A261"
 
 
 # ---------------------------------------------------------------------------
@@ -98,3 +96,17 @@ def eligible_tasks(df_filtered):
     """Return list of DLBT task names sorted by (arity, name) with sufficient data."""
     tasks = _run1_cfg.eligible_tasks(df_filtered, MIN_TASK_ASSIGNMENTS)
     return sorted(tasks, key=lambda t: (t.count("_and_"), t))
+
+
+def arity_of(task_name: str) -> int:
+    return task_name.count("_and_") + 1
+
+
+def tasks_by_arity(task_list: list) -> dict[int, list]:
+    """Split a task list into {arity: [tasks]} dict."""
+    result = {a: [] for a in ARITIES}
+    for t in task_list:
+        a = arity_of(t)
+        if a in result:
+            result[a].append(t)
+    return result
