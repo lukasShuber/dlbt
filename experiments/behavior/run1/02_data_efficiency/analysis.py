@@ -34,12 +34,16 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import seaborn as sns
 import torch
 from matplotlib.lines import Line2D
 
 sys.path.insert(0, str(Path(__file__).parent))
 import config as cfg
+
+sys.path.insert(0, str(Path(__file__).parents[2] / "run0"))
+from preprocess import filter_assignments, aggregate_counts
 
 from dlbt.agents.dlbt import DlbtAgent
 from dlbt.constants import K as _K, DIM_LEFT_RIGHT, DIM_TRANSP, DIM_GLOSS, DIM_SMALL_LARGE
@@ -109,6 +113,94 @@ if _cache_path.exists():
     print(f"Loaded CLIP cache ({len(_frozen_clip)} images) for α heatmaps.")
 else:
     print(f"[warn] CLIP cache not found at {_cache_path} — α heatmaps will be skipped.")
+
+
+# ---------------------------------------------------------------------------
+# Canonical baselines — computed once from the full behavioral dataset.
+# These are stable across all result pkls regardless of when they were run.
+# ---------------------------------------------------------------------------
+_df_raw_can = pd.concat(
+    [pd.read_csv(cfg.BEHAVIOR_CSV_RUN0),
+     pd.read_csv(cfg.BEHAVIOR_CSV_RUN1)],
+    ignore_index=True,
+)
+_df_filt_can, _ = filter_assignments(
+    _df_raw_can,
+    min_catch_perf=cfg.MIN_CATCH_PERF,
+    main_perf_quantile=cfg.MAIN_PERF_QUANTILE,
+    seed=cfg.SEED,
+)
+_tasks_can    = cfg.eligible_tasks(_df_filt_can)
+_beh_id_can   = {k: v for k, v in cfg.BEH_ID_TO_TASK.items() if v in set(_tasks_can)}
+_ds_can, _probe_uids_can, _ = aggregate_counts(
+    _df_filt_can, _beh_id_can, use_trial_kinds=cfg.USE_TRIAL_KINDS,
+)
+
+# Canonical probe matrix [n_probe_can × n_tasks_can]
+_probe_refs_can = sorted(
+    [_refs_by_uid[uid] for uid in _probe_uids_can if uid in _refs_by_uid],
+    key=lambda r: r.latent_state,
+)
+_probe_uids_ord_can = [r.uid for r in _probe_refs_can]
+_uid_row_can  = {uid: i for i, uid in enumerate(_probe_uids_ord_can)}
+_task_col_can = {t:   j for j, t   in enumerate(_tasks_can)}
+_probe_cells_can = _ds_can.df[_ds_can.df["uid"].isin(_probe_uids_can)].copy()
+
+_n_p_can = len(_probe_uids_ord_can)
+_n_t_can = len(_tasks_can)
+_true_mat_can = np.full((_n_p_can, _n_t_can), np.nan)
+_cnt_mat_can  = np.zeros((_n_p_can, _n_t_can), dtype=np.int32)
+for _rc in _probe_cells_can.itertuples(index=False):
+    _i = _uid_row_can.get(_rc.uid)
+    _j = _task_col_can.get(_rc.task_name)
+    _tot = _rc.count_0 + _rc.count_1
+    if _i is not None and _j is not None and _tot > 0:
+        _true_mat_can[_i, _j] = _rc.count_1 / _tot
+        _cnt_mat_can[_i, _j]  = _tot
+
+_nf_mask_can = _cnt_mat_can > 1
+_probe_nf_can = (
+    float(np.mean(
+        _true_mat_can[_nf_mask_can] * (1 - _true_mat_can[_nf_mask_can])
+        / (_cnt_mat_can[_nf_mask_can].astype(float) - 1)
+    )) if _nf_mask_can.any() else 0.0
+)
+_valid_rg_can = ~np.isnan(_true_mat_can)
+CANONICAL_RANDOM_CMSE_NET = (
+    float(np.mean((0.5 - _true_mat_can[_valid_rg_can]) ** 2)) - _probe_nf_can
+)
+
+# Random-init DLBT baseline (canonical)
+CANONICAL_RAND_INIT_CMSE_NET = float("nan")
+if _frozen_clip:
+    torch.manual_seed(cfg.SEEDS[0])
+    _ri_can = DlbtAgent(freeze_encoder=True, n_mc_samples=cfg.N_MC,
+                        device=torch.device("cpu"), mapper_hidden=cfg.MAPPER_HIDDEN,
+                        normalize_utility=cfg.NORMALIZED_UTILITY)
+    _ri_can._cache = {uid: feat.clone() for uid, feat in _frozen_clip.items()}
+    _lin_can = _ri_can.mapper[0] if cfg.MAPPER_HIDDEN is None else _ri_can.mapper[2]
+    _rng_can = np.random.default_rng(cfg.INIT_SEED)
+    _a_can   = _rng_can.uniform(cfg.INIT_ALPHA_LOW, cfg.INIT_ALPHA_HIGH,
+                                size=(_lin_can.bias.shape[0],)).astype(np.float32)
+    with torch.no_grad():
+        _lin_can.bias.copy_(torch.from_numpy(np.log(np.exp(_a_can) - 1.0)))
+    _ri_can.eval()
+    _pred_ri_can = np.full((_n_p_can, _n_t_can), np.nan)
+    with torch.no_grad():
+        for _j_can, _t_can in enumerate(_tasks_can):
+            _pred_ri_can[:, _j_can] = _ri_can.choice_probs(
+                _probe_refs_can, get_task(_t_can)
+            )[:, 1].cpu().numpy()
+    _valid_ri_can = ~np.isnan(_pred_ri_can) & ~np.isnan(_true_mat_can)
+    CANONICAL_RAND_INIT_CMSE_NET = (
+        float(np.mean((_pred_ri_can[_valid_ri_can] - _true_mat_can[_valid_ri_can]) ** 2))
+        - _probe_nf_can
+    )
+    del _ri_can
+
+print(f"Canonical baselines — NF={_probe_nf_can:.5f}  "
+      f"P(0.5)={CANONICAL_RANDOM_CMSE_NET:.5f}  "
+      f"rand-init DLBT={CANONICAL_RAND_INIT_CMSE_NET:.5f}")
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +279,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--tag", default=None,
                     help="Filter results pkl by tag substring "
                          "(default: cfg.RUN_TAG).")
+parser.add_argument("--log-y", action="store_true", default=False,
+                    help="Use log scale on the y-axis of the coverage sweep plot.")
 args = parser.parse_args()
 
 candidates = sorted(cfg.RESULTS_DIR.glob("coverage_sweep_*.pkl"))
@@ -217,41 +311,10 @@ for results_path in candidates:
     slda_res          = summary["slda"]
     dlbt_res          = summary["dlbt"]
     cov_fracs         = summary["coverage_fracs"]
-    probe_noise_floor = summary.get("probe_noise_floor", 0.0)
-    # Compute random-guesser reference from true_matrix (works even for old pkls)
-    _valid_rg = ~np.isnan(true_matrix)
-    random_cmse_net = (float(np.mean((0.5 - true_matrix[_valid_rg]) ** 2))
-                       - probe_noise_floor)
 
-    # Random-init DLBT — from pkl if available, else compute on the fly
-    random_init_cmse_net = summary.get("random_init_cmse_net", float("nan"))
-    if np.isnan(random_init_cmse_net) and _frozen_clip:
-        print("  Computing random-init DLBT baseline on the fly...")
-        torch.manual_seed(cfg.SEEDS[0])
-        _ri_agent = DlbtAgent(freeze_encoder=True, n_mc_samples=cfg.N_MC,
-                              device=torch.device("cpu"),
-                              mapper_hidden=cfg.MAPPER_HIDDEN,
-                              normalize_utility=cfg.NORMALIZED_UTILITY)
-        _ri_agent._cache = {uid: feat.clone() for uid, feat in _frozen_clip.items()}
-        _lin = _ri_agent.mapper[0] if cfg.MAPPER_HIDDEN is None else _ri_agent.mapper[2]
-        _rng_i = np.random.default_rng(cfg.INIT_SEED)
-        _a = _rng_i.uniform(cfg.INIT_ALPHA_LOW, cfg.INIT_ALPHA_HIGH,
-                             size=(_lin.bias.shape[0],)).astype(np.float32)
-        with torch.no_grad():
-            _lin.bias.copy_(torch.from_numpy(np.log(np.exp(_a) - 1.0)))
-        _ri_agent.eval()
-        _probe_refs_ri = _probe_refs_from_uids(probe_uids)
-        _pred_ri = np.full((len(probe_uids), len(all_tasks)), np.nan)
-        with torch.no_grad():
-            for j, t in enumerate(all_tasks):
-                _pred_ri[:, j] = _ri_agent.choice_probs(
-                    _probe_refs_ri, get_task(t)
-                )[:, 1].cpu().numpy()
-        _valid_ri = ~np.isnan(_pred_ri) & ~np.isnan(true_matrix)
-        random_init_cmse_net = (float(np.mean((_pred_ri[_valid_ri] - true_matrix[_valid_ri]) ** 2))
-                                - probe_noise_floor)
-        del _ri_agent
-        print(f"  Random-init DLBT cMSE−NF: {random_init_cmse_net:.5f}")
+    # Canonical baselines — stable across all pkls (computed from full data above)
+    random_cmse_net      = CANONICAL_RANDOM_CMSE_NET
+    random_init_cmse_net = CANONICAL_RAND_INIT_CMSE_NET
 
     n_probe  = len(probe_uids)
     n_tasks  = len(all_tasks)
@@ -264,7 +327,7 @@ for results_path in candidates:
     # -----------------------------------------------------------------------
     # Plot 01 — coverage sweep: probe MSE vs trial budget
     # -----------------------------------------------------------------------
-    fig, ax = plt.subplots(figsize=(6.5, 4.5))
+    fig, ax = plt.subplots(figsize=(5.0, 4.5))
 
     # Collect DLBT traces across seeds for each coverage fraction
     # Structure: {frac: {budget_int: [mse_seed0, mse_seed1, ...]}}
@@ -287,18 +350,23 @@ for results_path in candidates:
         if not trace:
             continue
         budgets_sorted = sorted(trace.keys())
+        n_seeds_per_b  = [len(trace[b]) for b in budgets_sorted]
         means = [float(np.mean(trace[b])) for b in budgets_sorted]
         sems  = [float(np.std(trace[b]) / np.sqrt(len(trace[b])))
                  if len(trace[b]) > 1 else 0.0
                  for b in budgets_sorted]
+        max_sem = max(sems)
+        print(f"  cov={frac:.0%}  n_seeds={n_seeds_per_b}  "
+              f"max_SEM={max_sem:.5f}  "
+              f"{'SEM shading ON' if max_sem > 0 else 'SEM=0 — single seed or identical values'}")
         color = _cov_color(frac)
         ax.plot(budgets_sorted, means, "o-", color=color, lw=2.0, ms=5,
                 label=f"DLBT {frac:.0%} coverage", zorder=4)
         if any(s > 0 for s in sems):
-            lo = [m - s for m, s in zip(means, sems)]
-            hi = [m + s for m, s in zip(means, sems)]
+            lo = [max(m - s, 1e-4) for m, s in zip(means, sems)]  # clip for log axis
+            hi = [m + s            for m, s in zip(means, sems)]
             ax.fill_between(budgets_sorted, lo, hi,
-                            color=color, alpha=0.18, linewidth=0)
+                            color=color, alpha=0.40, linewidth=0)
 
     # SLDA reference trace
     slda_budgets = sorted(int(b) for b in slda_res["budgets"])
@@ -319,15 +387,20 @@ for results_path in candidates:
                    ls=(0, (4, 3)), label="Random-init DLBT", zorder=1)
 
     ax.set_xscale("log")
-    ax.set_xlim(1, 1.5e5)
+    ax.set_xlim(1, 1.0e5)
     ax.set_xticks([1, 10, 100, 1_000, 10_000, 100_000])
     ax.set_xticklabels(["0", r"$10^1$", r"$10^2$", r"$10^3$", r"$10^4$", r"$10^5$"])
-    ax.set_xlabel("Total trial budget",        fontsize=11)
-    ax.set_ylabel("cMSE − noise floor",        fontsize=11)
-    ax.set_title(f"Coverage sweep  [{run_tag}]", fontsize=10)
+    ax.set_xlabel("Total trial budget", fontsize=11)
+    ax.set_ylabel("cMSE − noise floor", fontsize=11)
     ax.legend(fontsize=8, frameon=False, loc="upper right")
-    ax.set_ylim(bottom=0)
-    sns.despine()
+    if args.log_y:
+        ax.set_yscale("log")
+        ax.set_ylim(0.01, 1.0)
+        ax.set_yticks([0.01, 0.1, 1])
+        ax.set_yticklabels([r"$10^{-2}$", r"$10^{-1}$", r"$10^{0}$"])
+    else:
+        ax.set_ylim(0, 0.30)
+    sns.despine(top=True, right=True, left=False, bottom=False)
     plt.tight_layout()
     out = plots_dir / f"plot_01_coverage_sweep_{run_tag}.png"
     plt.savefig(out, dpi=150, bbox_inches="tight")

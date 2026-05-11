@@ -190,8 +190,9 @@ for row in pool_df.itertuples(index=False):
     for _ in range(int(row.count_1)):
         pool.append((row.uid, 1))
 
-pool_sizes = {t: len(task_trial_pools[t]) for t in all_tasks_ordered}
-print(f"\n  Trial pool sizes — min: {min(pool_sizes.values())}, "
+pool_sizes      = {t: len(task_trial_pools[t]) for t in all_tasks_ordered}
+global_min_pool = min(pool_sizes.values())
+print(f"\n  Trial pool sizes — global_min: {global_min_pool}, "
       f"max: {max(pool_sizes.values())}, "
       f"total: {sum(pool_sizes.values()):,}")
 
@@ -218,16 +219,19 @@ def _budget_series(tasks: list) -> list[int]:
     """
     Valid budget points for a trace over `tasks`.
 
-    min_budget = n_tasks          (q=1 for every task)
-    max_budget = min_pool × n     (q=min_pool, r=0; no task exceeds its pool)
+    min_budget = n_tasks               (q=1 for every task)
+    max_budget = global_min_pool × n   (global cap so all seeds share the same
+                                        endpoint at each coverage fraction;
+                                        global_min_pool ≤ min_pool(subset)
+                                        for any subset, so this is always
+                                        achievable without replacement)
 
     The fixed TRIAL_BUDGETS series is intersected with [min, max];
     both endpoints are always included.
     """
-    n        = len(tasks)
-    min_pool = min(pool_sizes[t] for t in tasks)
-    min_b    = n
-    max_b    = min_pool * n
+    n     = len(tasks)
+    min_b = n
+    max_b = global_min_pool * n
     if max_b < min_b:
         return []
     pts = {min_b, max_b}
