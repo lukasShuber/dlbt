@@ -1,19 +1,19 @@
 """
-Configuration for behavior run1 / 02_data_efficiency.
+Configuration for behavior run1 / 02_data_efficiency — coverage sweep.
 
-Identical task split and model settings as 01_fit.  Training budgets are
-varied from 10 to the full training set.
+DLBT is trained on cumulative-nested random task subsets of varying coverage;
+SLDA is trained on all tasks as a reference baseline.  Both are evaluated on
+the full 80-task probe matrix (16 probe images × 80 tasks).
 
-SPLIT_MODE controls the task split (mirrors run1/01_fit/config.py):
-  "all"    — train on all eligible tasks, no val.
-  "arity"  — TRAIN: arities in TRAIN_ARITIES; VAL: remaining (if HOLD_OUT_REST).
-  "random" — seeded 80/20 random split over all eligible tasks.
-  "manual" — explicit MANUAL_TRAIN_TASKS / MANUAL_VAL_TASKS lists below.
-             Both lists are intersected with eligible_tasks() so that
-             MIN_TASK_ASSIGNMENTS is still respected.
-
-THRESHOLD_CORRECTION = True runs arity-adjusted h_n MC inference after
-each budget (in addition to the standard h=0 predictions).
+COVERAGE_FRACS : fractions of all eligible tasks used for DLBT training.
+                 Subsets are cumulative-nested per seed:
+                 10 % ⊂ 25 % ⊂ 50 % ⊂ 75 % ⊂ 100 %.
+N_SEEDS        : random task orderings → enables SEM shading in plots.
+                 Start with 1; bump up when results are ready.
+TRIAL_BUDGETS  : fixed series [10, 100, …, 100_000].  Each trace starts at
+                 min_budget = n_train_tasks (q=1) and ends at
+                 max_budget = min_pool_size × n_train_tasks (no repeats).
+                 Budget points outside [min, max] are dropped automatically.
 """
 
 from pathlib import Path
@@ -32,30 +32,29 @@ _spec     = _ilu.spec_from_file_location("_run1_cfg", _RUN1_DIR / "config.py")
 _run1_cfg = _ilu.module_from_spec(_spec)
 _spec.loader.exec_module(_run1_cfg)
 
-BEHAVIOR_CSV_RUN0 = _run1_cfg.BEHAVIOR_CSV_RUN0
-BEHAVIOR_CSV_RUN1 = _run1_cfg.BEHAVIOR_CSV_RUN1
-BEH_ID_TO_TASK    = _run1_cfg.BEH_ID_TO_TASK
+BEHAVIOR_CSV_RUN0    = _run1_cfg.BEHAVIOR_CSV_RUN0
+BEHAVIOR_CSV_RUN1    = _run1_cfg.BEHAVIOR_CSV_RUN1
+BEH_ID_TO_TASK       = _run1_cfg.BEH_ID_TO_TASK
 
 # ---------------------------------------------------------------------------
 # Data handling
 # ---------------------------------------------------------------------------
-SEED               = _run1_cfg.SEED
-N_SEEDS            = 1
-SEEDS              = [42]
-
+SEED                 = _run1_cfg.SEED
 USE_TRIAL_KINDS      = _run1_cfg.USE_TRIAL_KINDS
 MIN_CATCH_PERF       = _run1_cfg.MIN_CATCH_PERF
 MAIN_PERF_QUANTILE   = _run1_cfg.MAIN_PERF_QUANTILE
 MIN_TASK_ASSIGNMENTS = _run1_cfg.MIN_TASK_ASSIGNMENTS
 
-# 10% of (main × TRAIN_TASKS) cells held out as in-distribution eval set.
-# Must match the split fraction used in 01_fit to keep the eval set identical.
-EVAL_CELL_FRAC = 0.10
+# ---------------------------------------------------------------------------
+# Coverage sweep
+# ---------------------------------------------------------------------------
+COVERAGE_FRACS = [0.10, 0.25, 0.50, 0.75, 1.00]
 
-# Trial budgets to sweep.  "full" = all trials in the 90% training cells.
-# Each integer B means: uniformly sample B trials (without replacement from
-# the pool of all individual training trials; with replacement if B > pool).
-TRIAL_BUDGETS = [0, 10, 100, 1_000, 10_000, "full"]
+N_SEEDS = 1       # number of random task orderings; bump for SEM bands
+SEEDS   = [42]    # one seed to start
+
+# Fixed trial budget series.  Per-trace start/end is computed dynamically.
+TRIAL_BUDGETS = [10, 100, 1_000, 10_000, 100_000]
 
 # ---------------------------------------------------------------------------
 # Training
@@ -71,112 +70,28 @@ FREEZE_ENCODER     = False
 MAPPER_HIDDEN      = None
 NORMALIZED_UTILITY = True
 
-# Run arity-adjusted h_n MC inference after each budget (in addition to h=0).
-THRESHOLD_CORRECTION = False
-
 # ---------------------------------------------------------------------------
 # Mapper initialisation
 # ---------------------------------------------------------------------------
-# INIT_MODE = "uniform" — mapper bias set so softplus output starts at INIT_ALPHA
-# INIT_MODE = "random"  — mapper bias drawn so output ~ U(INIT_ALPHA_LOW, INIT_ALPHA_HIGH)
 INIT_MODE       = "random"
 INIT_ALPHA      = 1.0
 INIT_ALPHA_LOW  = 0.6
 INIT_ALPHA_HIGH = 0.7
 INIT_SEED       = 0
 
-# ---------------------------------------------------------------------------
-# Task split
-# ---------------------------------------------------------------------------
-SPLIT_MODE = "arity"    # "all" | "arity" | "random" | "manual"
-
-# Used when SPLIT_MODE == "arity":
-TRAIN_ARITIES = [1]         # arities included in training
-HOLD_OUT_REST = True        # True → remaining arities go to val; False → no val
-
-# Used when SPLIT_MODE == "random":
-SPLIT_SEED = 0
-TRAIN_FRAC = 0.50
-
-# Used only when SPLIT_MODE == "manual".
-# Both lists are intersected with eligible_tasks() at import time.
-MANUAL_TRAIN_TASKS: list = [
-    # example — replace with your desired training tasks:
-    # "right", "small", "transparent", "matte",
-]
-MANUAL_VAL_TASKS: list = [
-    # example — replace with your desired held-out tasks:
-    # "right_and_large", "left_and_glossy",
-]
-
-_nu_tag = "norm" if NORMALIZED_UTILITY else "raw"
-RUN_TAG = ("frozen" if FREEZE_ENCODER else "attnpool") + f"_{SPLIT_MODE}_{_nu_tag}"
-
-
-def _compute_split():
-    import pandas as pd
-    sys.path.insert(0, str(_RUN1_DIR.parent / "run0"))
-    from preprocess import filter_assignments
-
-    df_raw = pd.concat(
-        [pd.read_csv(BEHAVIOR_CSV_RUN0),
-         pd.read_csv(BEHAVIOR_CSV_RUN1)],
-        ignore_index=True,
-    )
-    df_f, _ = filter_assignments(
-        df_raw,
-        min_catch_perf     = MIN_CATCH_PERF,
-        main_perf_quantile = MAIN_PERF_QUANTILE,
-        seed               = SEED,
-    )
-    all_eligible = sorted(_run1_cfg.eligible_tasks(df_f, MIN_TASK_ASSIGNMENTS))
-
-    if SPLIT_MODE == "all":
-        return all_eligible, []
-
-    elif SPLIT_MODE == "arity":
-        def _arity(name): return name.count("_and_") + 1
-        train = sorted(t for t in all_eligible if _arity(t) in TRAIN_ARITIES)
-        val   = (sorted(t for t in all_eligible if _arity(t) not in TRAIN_ARITIES)
-                 if HOLD_OUT_REST else [])
-
-    elif SPLIT_MODE == "random":
-        import numpy as np
-        rng     = np.random.default_rng(SPLIT_SEED)
-        idx     = rng.permutation(len(all_eligible))
-        n_train = int(round(len(all_eligible) * TRAIN_FRAC))
-        train   = sorted(all_eligible[i] for i in idx[:n_train])
-        val     = sorted(all_eligible[i] for i in idx[n_train:])
-
-    elif SPLIT_MODE == "manual":
-        eligible_set = set(all_eligible)
-        train = sorted(t for t in MANUAL_TRAIN_TASKS if t in eligible_set)
-        val   = sorted(t for t in MANUAL_VAL_TASKS   if t in eligible_set)
-        dropped_train = [t for t in MANUAL_TRAIN_TASKS if t not in eligible_set]
-        dropped_val   = [t for t in MANUAL_VAL_TASKS   if t not in eligible_set]
-        if dropped_train:
-            print(f"[config] manual split: dropped {len(dropped_train)} train tasks "
-                  f"below MIN_TASK_ASSIGNMENTS: {dropped_train}")
-        if dropped_val:
-            print(f"[config] manual split: dropped {len(dropped_val)} val tasks "
-                  f"below MIN_TASK_ASSIGNMENTS: {dropped_val}")
-
-    else:
-        raise ValueError(
-            f"Unknown SPLIT_MODE {SPLIT_MODE!r}. "
-            f"Choose 'all', 'arity', 'random', or 'manual'."
-        )
-
-    return train, val
-
-
-TRAIN_TASKS, VAL_TASKS = _compute_split()
+RUN_TAG = ("frozen" if FREEZE_ENCODER else "attnpool") + "_coverage_norm"
 
 # ---------------------------------------------------------------------------
-# Plot colours
+# Plot colours (used in learning-curve plots)
 # ---------------------------------------------------------------------------
 C_TRAIN = "#E76F51"
 C_EVAL  = "#F4A261"
-C_STIM  = "#457B9D"
-C_TASK  = "#9B5DE5"
-C_JOINT = "#43AA8B"
+
+
+# ---------------------------------------------------------------------------
+# Helper: eligible tasks
+# ---------------------------------------------------------------------------
+def eligible_tasks(df_filtered):
+    """Return list of DLBT task names sorted by (arity, name) with sufficient data."""
+    tasks = _run1_cfg.eligible_tasks(df_filtered, MIN_TASK_ASSIGNMENTS)
+    return sorted(tasks, key=lambda t: (t.count("_and_"), t))
