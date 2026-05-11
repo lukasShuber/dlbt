@@ -66,7 +66,7 @@ PATIENCE_PHASE2 = 50
 LR              = 0.01
 LR_ATTNPOOL     = 1e-5
 N_MC            = 1000
-FREEZE_ENCODER     = False
+FREEZE_ENCODER     = True
 MAPPER_HIDDEN      = None
 NORMALIZED_UTILITY = True
 
