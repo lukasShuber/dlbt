@@ -26,6 +26,7 @@ import pandas as pd
 import seaborn as sns
 import torch
 from matplotlib.lines import Line2D
+from scipy.stats import spearmanr
 
 sys.path.insert(0, str(Path(__file__).parent))
 import config as cfg
@@ -136,6 +137,7 @@ CANONICAL_RANDOM_CMSE_NET = (
 )
 
 CANONICAL_RAND_INIT_CMSE_NET = float("nan")
+CANONICAL_RAND_INIT_RHO      = float("nan")
 if _frozen_clip:
     torch.manual_seed(cfg.SEEDS[0])
     _ri_can = DlbtAgent(freeze_encoder=True, n_mc_samples=cfg.N_MC,
@@ -160,6 +162,8 @@ if _frozen_clip:
         float(np.mean((_pred_ri_can[_valid_ri_can] - _true_mat_can[_valid_ri_can]) ** 2))
         - _probe_nf_can
     )
+    _r, _ = spearmanr(_pred_ri_can[_valid_ri_can], _true_mat_can[_valid_ri_can])
+    CANONICAL_RAND_INIT_RHO = float(_r)
     del _ri_can
 
 print(f"Canonical baselines — NF={_probe_nf_can:.5f}  "
@@ -167,8 +171,17 @@ print(f"Canonical baselines — NF={_probe_nf_can:.5f}  "
       f"rand-init DLBT={CANONICAL_RAND_INIT_CMSE_NET:.5f}")
 
 # ---------------------------------------------------------------------------
-# Probe matrix heatmap helper
+# Helpers
 # ---------------------------------------------------------------------------
+def _rho(pred_mat: np.ndarray, true_mat: np.ndarray) -> float:
+    """Spearman ρ between predicted and true P(yes) over all valid cells."""
+    valid = ~np.isnan(pred_mat) & ~np.isnan(true_mat)
+    if valid.sum() < 2:
+        return float("nan")
+    r, _ = spearmanr(pred_mat[valid], true_mat[valid])
+    return float(r)
+
+
 def _plot_probe_matrix(mat, row_labels, col_labels, title, fname):
     n_tasks = len(col_labels)
     fig_w   = max(9, n_tasks * 0.20)
@@ -243,11 +256,12 @@ for results_path in candidates:
     # -----------------------------------------------------------------------
     # Plot 01 — arity sweep: cMSE−NF vs trial budget
     # -----------------------------------------------------------------------
-    fig, ax = plt.subplots(figsize=(6.5, 4.5))
+    fig, ax = plt.subplots(figsize=(5.0, 4.5))
 
     # Collect DLBT traces across seeds for each arity
-    # {arity_int: {budget_int: [cmse_seed0, ...]}}
-    dlbt_traces: dict[int, dict[int, list[float]]] = {a: {} for a in arities}
+    # {arity_int: {budget_int: [value_seed0, ...]}}
+    dlbt_traces:     dict[int, dict[int, list[float]]] = {a: {} for a in arities}
+    dlbt_rho_traces: dict[int, dict[int, list[float]]] = {a: {} for a in arities}
 
     for seed_key, seed_data in dlbt_res.items():
         for arity in arities:
@@ -258,6 +272,10 @@ for results_path in candidates:
                 b = int(bstr)
                 dlbt_traces[arity].setdefault(b, []).append(
                     bdata.get("probe_cmse_net", float("nan"))
+                )
+                pred_mat_b = bdata.get("pred_matrix")
+                dlbt_rho_traces[arity].setdefault(b, []).append(
+                    _rho(pred_mat_b, true_matrix) if pred_mat_b is not None else float("nan")
                 )
 
     for arity in arities:
@@ -292,14 +310,14 @@ for results_path in candidates:
         ax.axhline(random_cmse_net, color="#999999", lw=1.5,
                    ls=(0, (4, 3)), label="Random (P=0.5)", zorder=1)
     if not np.isnan(random_init_cmse_net):
-        ax.axhline(random_init_cmse_net, color="#E76F51", lw=1.5,
-                   ls=(0, (4, 3)), label="Random-init DLBT", zorder=1)
+        ax.axhline(random_init_cmse_net, color="#999999", lw=1.5,
+               ls=":", label="Random-init DLBT", zorder=1)
 
     ax.set_xscale("log")
     ax.set_xlim(1, 1.0e5)
     ax.set_xticks([1, 10, 100, 1_000, 10_000, 100_000])
     ax.set_xticklabels(["0", r"$10^1$", r"$10^2$", r"$10^3$", r"$10^4$", r"$10^5$"])
-    ax.set_xlabel(f"Total trial budget  ({n_tasks_per_arity} tasks/arity)", fontsize=11)
+    ax.set_xlabel(f"Total trial budget", fontsize=11)
     ax.set_ylabel("cMSE − noise floor", fontsize=11)
     ax.legend(fontsize=8, frameon=False, loc="upper right")
 
@@ -314,6 +332,55 @@ for results_path in candidates:
     sns.despine(top=True, right=True, left=False, bottom=False)
     plt.tight_layout()
     out = plots_dir / f"plot_01_arity_sweep_{run_tag}.png"
+    plt.savefig(out, dpi=150, bbox_inches="tight")
+    print(f"  Saved: {out}")
+    plt.close()
+
+    # -----------------------------------------------------------------------
+    # Plot 01b — same sweep but Spearman ρ on y-axis
+    # -----------------------------------------------------------------------
+    fig, ax = plt.subplots(figsize=(5.0, 4.5))
+
+    for arity in arities:
+        trace = dlbt_rho_traces[arity]
+        if not trace:
+            continue
+        budgets_sorted = sorted(trace.keys())
+        means = [float(np.nanmean(trace[b])) for b in budgets_sorted]
+        sems  = [float(np.nanstd(trace[b]) / np.sqrt(len(trace[b])))
+                 if len(trace[b]) > 1 else 0.0
+                 for b in budgets_sorted]
+        color = cfg.ARITY_COLOR[arity]
+        ax.plot(budgets_sorted, means, "o-", color=color, lw=2.0, ms=5,
+                label=f"{arity}-way tasks", zorder=4)
+        if any(s > 0 for s in sems):
+            lo = [m - s for m, s in zip(means, sems)]
+            hi = [m + s for m, s in zip(means, sems)]
+            ax.fill_between(budgets_sorted, lo, hi,
+                            color=color, alpha=0.40, linewidth=0)
+
+    slda_rho_y = [_rho(slda_res["budgets"][str(b)].get("pred_matrix"), true_matrix)
+                  for b in slda_budgets]
+    ax.plot(slda_budgets, slda_rho_y, "o--", color=cfg.C_SLDA, lw=2.0, ms=5,
+            label=f"SLDA (all {slda_res['n_tasks']} tasks)", zorder=3)
+
+    ax.axhline(0, color="#999999", lw=1.5, ls=(0, (4, 3)),
+               label="Random (P=0.5)", zorder=1)
+    if not np.isnan(CANONICAL_RAND_INIT_RHO):
+        ax.axhline(CANONICAL_RAND_INIT_RHO, color="#999999", lw=1.5,
+                   ls=":", label="Random-init DLBT", zorder=1)
+
+    ax.set_xscale("log")
+    ax.set_xlim(1, 1.0e5)
+    ax.set_xticks([1, 10, 100, 1_000, 10_000, 100_000])
+    ax.set_xticklabels(["0", r"$10^1$", r"$10^2$", r"$10^3$", r"$10^4$", r"$10^5$"])
+    ax.set_xlabel(f"Total trial budget  ({n_tasks_per_arity} tasks/arity)", fontsize=11)
+    ax.set_ylabel(r"Spearman $\rho$", fontsize=11)
+    ax.legend(fontsize=8, frameon=False, loc="lower right")
+    ax.set_ylim(0, 1)
+    sns.despine(top=True, right=True, left=False, bottom=False)
+    plt.tight_layout()
+    out = plots_dir / f"plot_01b_arity_sweep_rho_{run_tag}.png"
     plt.savefig(out, dpi=150, bbox_inches="tight")
     print(f"  Saved: {out}")
     plt.close()

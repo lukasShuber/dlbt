@@ -38,6 +38,7 @@ import pandas as pd
 import seaborn as sns
 import torch
 from matplotlib.lines import Line2D
+from scipy.stats import spearmanr
 
 sys.path.insert(0, str(Path(__file__).parent))
 import config as cfg
@@ -172,6 +173,7 @@ CANONICAL_RANDOM_CMSE_NET = (
 
 # Random-init DLBT baseline (canonical)
 CANONICAL_RAND_INIT_CMSE_NET = float("nan")
+CANONICAL_RAND_INIT_RHO      = float("nan")
 if _frozen_clip:
     torch.manual_seed(cfg.SEEDS[0])
     _ri_can = DlbtAgent(freeze_encoder=True, n_mc_samples=cfg.N_MC,
@@ -196,6 +198,8 @@ if _frozen_clip:
         float(np.mean((_pred_ri_can[_valid_ri_can] - _true_mat_can[_valid_ri_can]) ** 2))
         - _probe_nf_can
     )
+    _r, _ = spearmanr(_pred_ri_can[_valid_ri_can], _true_mat_can[_valid_ri_can])
+    CANONICAL_RAND_INIT_RHO = float(_r)
     del _ri_can
 
 print(f"Canonical baselines — NF={_probe_nf_can:.5f}  "
@@ -206,6 +210,15 @@ print(f"Canonical baselines — NF={_probe_nf_can:.5f}  "
 # ---------------------------------------------------------------------------
 # Plotting helpers
 # ---------------------------------------------------------------------------
+
+def _rho(pred_mat: np.ndarray, true_mat: np.ndarray) -> float:
+    """Spearman ρ between predicted and true P(yes) over all valid cells."""
+    valid = ~np.isnan(pred_mat) & ~np.isnan(true_mat)
+    if valid.sum() < 2:
+        return float("nan")
+    r, _ = spearmanr(pred_mat[valid], true_mat[valid])
+    return float(r)
+
 
 def _plot_probe_matrix(mat: np.ndarray, row_labels: list, col_labels: list,
                        title: str, fname: str) -> None:
@@ -330,8 +343,9 @@ for results_path in candidates:
     fig, ax = plt.subplots(figsize=(5.0, 4.5))
 
     # Collect DLBT traces across seeds for each coverage fraction
-    # Structure: {frac: {budget_int: [mse_seed0, mse_seed1, ...]}}
-    dlbt_traces: dict[float, dict[int, list[float]]] = {f: {} for f in cov_fracs}
+    # {frac: {budget_int: [value_seed0, value_seed1, ...]}}
+    dlbt_traces:     dict[float, dict[int, list[float]]] = {f: {} for f in cov_fracs}
+    dlbt_rho_traces: dict[float, dict[int, list[float]]] = {f: {} for f in cov_fracs}
 
     for seed_key, seed_data in dlbt_res.items():
         for frac in cov_fracs:
@@ -343,6 +357,10 @@ for results_path in candidates:
                 b = int(bstr)
                 dlbt_traces[frac].setdefault(b, []).append(
                     bdata.get("probe_cmse_net", bdata.get("probe_mse", float("nan")))
+                )
+                pred_mat_b = bdata.get("pred_matrix")
+                dlbt_rho_traces[frac].setdefault(b, []).append(
+                    _rho(pred_mat_b, true_matrix) if pred_mat_b is not None else float("nan")
                 )
 
     for frac in cov_fracs:
@@ -383,8 +401,8 @@ for results_path in candidates:
 
     # Random-init DLBT reference
     if not np.isnan(random_init_cmse_net):
-        ax.axhline(random_init_cmse_net, color="#E76F51", lw=1.5,
-                   ls=(0, (4, 3)), label="Random-init DLBT", zorder=1)
+        ax.axhline(random_init_cmse_net, color="#999999", lw=1.5,
+                   ls=":", label="Random-init DLBT", zorder=1)
 
     ax.set_xscale("log")
     ax.set_xlim(1, 1.0e5)
@@ -403,6 +421,56 @@ for results_path in candidates:
     sns.despine(top=True, right=True, left=False, bottom=False)
     plt.tight_layout()
     out = plots_dir / f"plot_01_coverage_sweep_{run_tag}.png"
+    plt.savefig(out, dpi=150, bbox_inches="tight")
+    print(f"  Saved: {out}")
+    plt.close()
+
+    # -----------------------------------------------------------------------
+    # Plot 01b — same sweep but Spearman ρ on y-axis
+    # -----------------------------------------------------------------------
+    fig, ax = plt.subplots(figsize=(5.0, 4.5))
+
+    for frac in cov_fracs:
+        trace = dlbt_rho_traces[frac]
+        if not trace:
+            continue
+        budgets_sorted = sorted(trace.keys())
+        means = [float(np.nanmean(trace[b])) for b in budgets_sorted]
+        sems  = [float(np.nanstd(trace[b]) / np.sqrt(len(trace[b])))
+                 if len(trace[b]) > 1 else 0.0
+                 for b in budgets_sorted]
+        color = _cov_color(frac)
+        ax.plot(budgets_sorted, means, "o-", color=color, lw=2.0, ms=5,
+                label=f"DLBT {frac:.0%} coverage", zorder=4)
+        if any(s > 0 for s in sems):
+            lo = [m - s for m, s in zip(means, sems)]
+            hi = [m + s for m, s in zip(means, sems)]
+            ax.fill_between(budgets_sorted, lo, hi,
+                            color=color, alpha=0.40, linewidth=0)
+
+    slda_rho_y = [_rho(slda_res["budgets"][str(b)].get("pred_matrix"), true_matrix)
+                  for b in slda_budgets]
+    ax.plot(slda_budgets, slda_rho_y, "o--", color=C_SLDA, lw=2.0, ms=5,
+            label=f"SLDA (all {slda_res['n_tasks']} tasks)", zorder=3)
+
+    # ρ = 0 for random guesser (all predictions tied at 0.5)
+    ax.axhline(0, color="#999999", lw=1.5, ls=(0, (4, 3)),
+               label="Random (P=0.5)", zorder=1)
+    if not np.isnan(CANONICAL_RAND_INIT_RHO):
+        ax.axhline(CANONICAL_RAND_INIT_RHO, color="#999999", lw=1.5,
+                   ls=":", label="Random-init DLBT", zorder=1)
+
+    ax.set_xscale("log")
+    ax.set_xlim(1, 1.0e5)
+    ax.set_xticks([1, 10, 100, 1_000, 10_000, 100_000])
+    ax.set_xticklabels(["0", r"$10^1$", r"$10^2$", r"$10^3$", r"$10^4$", r"$10^5$"])
+    ax.set_xlabel("Total trial budget", fontsize=11)
+    ax.set_ylabel(r"Spearman $\rho$", fontsize=11)
+    ax.legend(fontsize=8, frameon=False, loc="lower right")
+    ax.set_ylim(0, 1)
+    sns.despine(top=True, right=True, left=False, bottom=False)
+    plt.tight_layout()
+    out = plots_dir / f"plot_01b_coverage_sweep_rho_{run_tag}.png"
     plt.savefig(out, dpi=150, bbox_inches="tight")
     print(f"  Saved: {out}")
     plt.close()
