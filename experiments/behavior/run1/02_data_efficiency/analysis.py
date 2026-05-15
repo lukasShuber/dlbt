@@ -263,6 +263,60 @@ def _plot_alpha_heatmap(alpha_mat: np.ndarray, row_labels: list,
     print(f"  Saved: {out}")
 
 
+def _add_delta_inset(ax, keys, dlbt_traces, slda_dict, colors,
+                     inset_bounds=(0.03, 0.65, 0.30, 0.22)):
+    """
+    Small inset: grouped bars of Δ cMSE-NF = DLBT − SLDA (mean over seeds).
+    Negative bar → DLBT beats SLDA.  Positive bar → SLDA beats DLBT.
+    """
+    all_dlbt_budgets: set[int] = set()
+    for k in keys:
+        all_dlbt_budgets |= set(dlbt_traces[k].keys())
+    bar_budgets = sorted(
+        b for b in slda_dict
+        if not np.isnan(slda_dict.get(b, np.nan)) and b in all_dlbt_budgets
+        and b >= 10 and np.log10(b) % 1 == 0
+    )
+    if not bar_budgets:
+        return
+
+    n_groups = len(bar_budgets)
+    n_bars   = len(keys)
+    group_w  = 0.80
+    bar_w    = group_w / n_bars
+
+    axins = ax.inset_axes(inset_bounds)
+    axins.set_facecolor("none")
+
+    for bar_i, key in enumerate(keys):
+        trace = dlbt_traces[key]
+        xs, ys = [], []
+        for g_i, b in enumerate(bar_budgets):
+            if b not in trace:
+                continue
+            dlbt_mean = float(np.nanmean(trace[b]))
+            slda_val  = slda_dict[b]
+            if np.isnan(dlbt_mean) or np.isnan(slda_val):
+                continue
+            xs.append(g_i - group_w / 2 + (bar_i + 0.5) * bar_w)
+            ys.append(dlbt_mean - slda_val)
+        if xs:
+            axins.bar(xs, ys, width=bar_w * 0.85, color=colors[key], alpha=0.85)
+
+    axins.axhline(0, color="black", lw=0.7, zorder=5)
+    axins.set_xticks(range(n_groups))
+    axins.set_xticklabels(
+        [r"$10^{" + str(int(np.log10(b))) + r"}$" if b >= 10 and np.log10(b) % 1 == 0
+         else str(b) for b in bar_budgets],
+        fontsize=7,
+    )
+    axins.set_xlim(-0.5, n_groups - 0.5)
+    axins.yaxis.set_major_locator(plt.MaxNLocator(nbins=2, symmetric=True))
+    axins.tick_params(axis="y", labelsize=7, labelrotation=90)
+    axins.set_ylabel(r"$\Delta$ cMSE$-$NF", fontsize=8, labelpad=2)
+    sns.despine(ax=axins, top=True, right=True)
+
+
 def _load_agent(ckpt_path: str) -> DlbtAgent | None:
     p = Path(ckpt_path)
     if not p.exists():
@@ -394,6 +448,15 @@ for results_path in candidates:
     ax.plot(slda_budgets, slda_y, "o--", color=C_SLDA, lw=2.0, ms=5,
             label=f"SLDA (all {slda_res['n_tasks']} tasks)", zorder=3)
 
+    # Delta inset: Δ cMSE-NF = DLBT − SLDA, grouped bars per coverage fraction
+    slda_dict    = {b: slda_y[i] for i, b in enumerate(slda_budgets)}
+    _inset_bounds = [0.13, 0.09, 0.30, 0.22] if args.log_y else [0.13, 0.42, 0.30, 0.22]
+    _add_delta_inset(
+        ax, cov_fracs, dlbt_traces, slda_dict,
+        colors={f: _cov_color(f) for f in cov_fracs},
+        inset_bounds=_inset_bounds,
+    )
+
     # Random guesser reference
     if not np.isnan(random_cmse_net):
         ax.axhline(random_cmse_net, color="#999999", lw=1.5,
@@ -417,11 +480,11 @@ for results_path in candidates:
         ax.set_yticks([0.01, 0.1, 1])
         ax.set_yticklabels([r"$10^{-2}$", r"$10^{-1}$", r"$10^{0}$"])
     else:
-        ax.set_ylim(0, 0.30)
+        ax.set_ylim(0, 0.34)
     sns.despine(top=True, right=True, left=False, bottom=False)
     plt.tight_layout()
     out = plots_dir / f"plot_01_coverage_sweep_{run_tag}.png"
-    plt.savefig(out, dpi=150, bbox_inches="tight")
+    plt.savefig(out, dpi=300, bbox_inches="tight")
     print(f"  Saved: {out}")
     plt.close()
 
@@ -466,12 +529,11 @@ for results_path in candidates:
     ax.set_xticklabels(["0", r"$10^1$", r"$10^2$", r"$10^3$", r"$10^4$", r"$10^5$"])
     ax.set_xlabel("Total trial budget", fontsize=11)
     ax.set_ylabel(r"Spearman $\rho$", fontsize=11)
-    ax.legend(fontsize=8, frameon=False, loc="lower right")
     ax.set_ylim(0, 1)
     sns.despine(top=True, right=True, left=False, bottom=False)
     plt.tight_layout()
     out = plots_dir / f"plot_01b_coverage_sweep_rho_{run_tag}.png"
-    plt.savefig(out, dpi=150, bbox_inches="tight")
+    plt.savefig(out, dpi=300, bbox_inches="tight")
     print(f"  Saved: {out}")
     plt.close()
 

@@ -1,19 +1,17 @@
 """
-Configuration for behavior run1 / 02_data_efficiency — coverage sweep.
+Configuration for behavior run1 / 05_determ_beliefs — deterministic-belief ablation.
 
-DLBT is trained on cumulative-nested random task subsets of varying coverage;
-SLDA is trained on all tasks as a reference baseline.  Both are evaluated on
-the full 80-task probe matrix (16 probe images × 80 tasks).
+DetBTAgent replaces the Monte Carlo Dirichlet integration of DlbtAgent with a
+deterministic forward pass through the Dirichlet mean:
 
-COVERAGE_FRACS : fractions of all eligible tasks used for DLBT training.
-                 Subsets are cumulative-nested per seed:
-                 10 % ⊂ 25 % ⊂ 50 % ⊂ 75 % ⊂ 100 %.
-N_SEEDS        : random task orderings → enables SEM shading in plots.
-                 Start with 1; bump up when results are ready.
-TRIAL_BUDGETS  : fixed series [10, 100, …, 100_000].  Each trace starts at
-                 min_budget = n_train_tasks (q=1) and ends at
-                 max_budget = min_pool_size × n_train_tasks (no repeats).
-                 Budget points outside [min, max] are dropped automatically.
+    μ_x  = α_x / Σ_k α_xk        (point mass at Dirichlet mean)
+    p̃_xt = σ(μ_x · ΔU_t)
+
+The same two sweep axes as 02 and 022 are covered in one run:
+  - Coverage sweep  (coverage fracs [10 %, 25 %, 50 %, 75 %, 100 %])
+  - Arity sweep     (arities [1, 2, 3, 4] with equal n_tasks)
+
+SLDA is always trained on all eligible tasks as a fixed reference baseline.
 """
 
 from pathlib import Path
@@ -50,22 +48,32 @@ MIN_TASK_ASSIGNMENTS = _run1_cfg.MIN_TASK_ASSIGNMENTS
 # ---------------------------------------------------------------------------
 COVERAGE_FRACS = [0.10, 0.25, 0.50, 0.75, 1.00]
 
-N_SEEDS = 5       # number of random task orderings; bump for SEM bands
-SEEDS   = [42, 43, 44, 45, 46]    # one seed to start
+# ---------------------------------------------------------------------------
+# Arity sweep
+# ---------------------------------------------------------------------------
+ARITIES = [1, 2, 3, 4]
 
-# Fixed trial budget series.  Per-trace start/end is computed dynamically.
+# Number of tasks to train on per arity.
+# None → computed dynamically in run.py as min(n_eligible_tasks per arity).
+N_TASKS_PER_ARITY = None
+
+# ---------------------------------------------------------------------------
+# Shared sweep settings
+# ---------------------------------------------------------------------------
+N_SEEDS = 1
+SEEDS   = [42]
+
+# Fixed trial budget series.  Per-trace start/end computed dynamically.
 TRIAL_BUDGETS = [10, 100, 1_000, 10_000, 100_000]
 
 # ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
-N_EPOCHS        = 1000
-PATIENCE        = 200
-N_EPOCHS_PHASE2 = 3000
-PATIENCE_PHASE2 = 50
-LR              = 0.01
-LR_ATTNPOOL     = 1e-5
-N_MC            = 1000
+N_EPOCHS    = 1000
+PATIENCE    = 200
+LR          = 0.01
+
+# DetBTAgent is always trained with frozen encoder (no attnpool phase 2).
 FREEZE_ENCODER     = True
 MAPPER_HIDDEN      = None
 NORMALIZED_UTILITY = True
@@ -79,19 +87,41 @@ INIT_ALPHA_LOW  = 0.6
 INIT_ALPHA_HIGH = 0.7
 INIT_SEED       = 0
 
-RUN_TAG = ("frozen" if FREEZE_ENCODER else "attnpool") + "_coverage_norm"
+RUN_TAG = "det_beliefs_norm"
 
 # ---------------------------------------------------------------------------
-# Plot colours (used in learning-curve plots)
+# Plot colours  (mirror 02 and 022 conventions)
 # ---------------------------------------------------------------------------
-C_TRAIN = "#E76F51"
-C_EVAL  = "#F4A261"
+import matplotlib.pyplot as _plt
+_BLUES = _plt.get_cmap("Blues")
+_CMAP_OFFSETS = {0.10: 0.30, 0.25: 0.44, 0.50: 0.58, 0.75: 0.72, 1.00: 0.88}
+def cov_color(frac: float):
+    return _BLUES(_CMAP_OFFSETS.get(frac, 0.6))
+
+ARITY_COLOR = {1: "#2a6fb5", 2: "#43AA8B", 3: "#E76F51", 4: "#9B5DE5"}
+C_SLDA      = "#7D3C98"
+C_TRAIN     = "#E76F51"
+C_EVAL      = "#F4A261"
 
 
 # ---------------------------------------------------------------------------
-# Helper: eligible tasks
+# Helpers: eligible tasks, arity utilities
 # ---------------------------------------------------------------------------
 def eligible_tasks(df_filtered):
     """Return list of DLBT task names sorted by (arity, name) with sufficient data."""
     tasks = _run1_cfg.eligible_tasks(df_filtered, MIN_TASK_ASSIGNMENTS)
     return sorted(tasks, key=lambda t: (t.count("_and_"), t))
+
+
+def arity_of(task_name: str) -> int:
+    return task_name.count("_and_") + 1
+
+
+def tasks_by_arity(task_list: list) -> dict[int, list]:
+    """Split a task list into {arity: [tasks]} dict."""
+    result = {a: [] for a in ARITIES}
+    for t in task_list:
+        a = arity_of(t)
+        if a in result:
+            result[a].append(t)
+    return result
