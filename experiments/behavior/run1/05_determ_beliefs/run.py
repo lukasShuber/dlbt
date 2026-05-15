@@ -21,7 +21,15 @@ import argparse
 import gc
 import pickle
 import sys
+import warnings
 from pathlib import Path
+
+# Suppress benign third-party warnings that flood the log.
+# open_clip: architectural mismatch between model config and pretrained tag.
+warnings.filterwarnings("ignore", message="QuickGELU mismatch")
+# sklearn RidgeCV: degenerate gram matrix at tiny budgets (1–2 samples / task).
+warnings.filterwarnings("ignore", message="invalid value encountered in divide",
+                        category=RuntimeWarning)
 
 import numpy as np
 import pandas as pd

@@ -60,8 +60,8 @@ N_TASKS_PER_ARITY = None
 # ---------------------------------------------------------------------------
 # Shared sweep settings
 # ---------------------------------------------------------------------------
-N_SEEDS = 1
-SEEDS   = [42]
+N_SEEDS = 5
+SEEDS   = [42, 43, 44, 45, 46]
 
 # Fixed trial budget series.  Per-trace start/end computed dynamically.
 TRIAL_BUDGETS = [10, 100, 1_000, 10_000, 100_000]

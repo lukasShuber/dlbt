@@ -22,7 +22,12 @@ Run from repo root:
 import gc
 import pickle
 import sys
+import warnings
 from pathlib import Path
+
+warnings.filterwarnings("ignore", message="QuickGELU mismatch")
+warnings.filterwarnings("ignore", message="invalid value encountered in divide",
+                        category=RuntimeWarning)
 
 import numpy as np
 import pandas as pd
