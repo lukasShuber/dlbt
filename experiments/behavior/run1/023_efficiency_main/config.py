@@ -66,7 +66,7 @@ SEEDS   = [42, 43, 44, 45, 46]
 # Set FAST_PASS = True to run only the smallest budget grid point, skipping
 # all others.  The all-data section always runs and serves as the "max" case.
 # Useful for a quick end-to-end sanity check before committing to a full sweep.
-FAST_PASS = True
+FAST_PASS = False
 
 # ---------------------------------------------------------------------------
 # Training
