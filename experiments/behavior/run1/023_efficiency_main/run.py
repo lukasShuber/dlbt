@@ -167,6 +167,16 @@ eval_mask[eval_idx] = True
 eval_df  = main_cells_df[eval_mask].reset_index(drop=True)
 pool_df  = main_cells_df[~eval_mask].reset_index(drop=True)
 eval_ds  = BehavioralDataset(eval_df)
+
+# Flipped eval set for anti-human early stopping:
+# the anti-human model learns p → 1-p, so its validation loss must also be
+# measured on flipped labels — otherwise early stopping fires immediately.
+eval_df_anti          = eval_df.copy()
+eval_df_anti["count_0"], eval_df_anti["count_1"] = (
+    eval_df["count_1"].copy(), eval_df["count_0"].copy()
+)
+eval_ds_anti = BehavioralDataset(eval_df_anti)
+
 print(f"\n  Eval cells (early stopping): {len(eval_df)}")
 print(f"  Train pool cells (90 %%):    {len(pool_df)}")
 
@@ -302,9 +312,12 @@ def _init_agent(seed: int) -> DlbtAgent:
     return agent
 
 
-def _train_one(agent: DlbtAgent, train_ds: BehavioralDataset):
+def _train_one(agent: DlbtAgent, train_ds: BehavioralDataset,
+               val_ds: BehavioralDataset | None = None):
+    """Train agent.  val_ds defaults to the standard eval set; pass
+    eval_ds_anti for anti-human runs so early stopping uses flipped labels."""
     return train_dlbt(
-        agent, train_ds, eval_ds, refs_dict,
+        agent, train_ds, val_ds if val_ds is not None else eval_ds, refs_dict,
         n_epochs = cfg.N_EPOCHS,
         lr       = cfg.LR,
         patience = cfg.PATIENCE,
@@ -455,10 +468,10 @@ for s_i, seed_val in enumerate(cfg.SEEDS):
         print(f"    SLDA   cMSE−NF={slda_cmse[s_i,b_i]:+.5f}  ρ={slda_rho[s_i,b_i]:.3f}")
         del train_ds_s, sca, mod, tmp, pred_s
 
-        # Anti-human DLBT (label-flipped)
+        # Anti-human DLBT (label-flipped, early stopping on flipped val set)
         train_ds_a = _bootstrap_sample(all_tasks_ordered, budget, rng_anti, flip=True)
         agent_a    = _init_agent(seed_val)
-        _train_one(agent_a, train_ds_a)
+        _train_one(agent_a, train_ds_a, val_ds=eval_ds_anti)
         pred_a     = _dlbt_probe_matrix(agent_a)
         anti_cmse[s_i, b_i], anti_rho[s_i, b_i] = _probe_stats(pred_a)
         print(f"    Anti   cMSE−NF={anti_cmse[s_i,b_i]:+.5f}  ρ={anti_rho[s_i,b_i]:.3f}")
@@ -486,7 +499,7 @@ for s_i, seed_val in enumerate(cfg.SEEDS):
 
     anti_all_ds = _all_data_ds(all_tasks_ordered, flip=True)
     agent_anti_all = _init_agent(seed_val)
-    _train_one(agent_anti_all, anti_all_ds)
+    _train_one(agent_anti_all, anti_all_ds, val_ds=eval_ds_anti)
     pred_aa = _dlbt_probe_matrix(agent_anti_all)
     anti_all_cmse[s_i], anti_all_rho[s_i] = _probe_stats(pred_aa)
     print(f"    Anti all  cMSE−NF={anti_all_cmse[s_i]:+.5f}  ρ={anti_all_rho[s_i]:.3f}")
