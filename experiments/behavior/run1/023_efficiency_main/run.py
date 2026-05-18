@@ -57,6 +57,7 @@ from dlbt.data.dataset import BehavioralDataset
 from dlbt.data.image_ref import load_image_refs, image_refs_as_list
 from dlbt.data.task import get_task
 from dlbt.training.train_dlbt import train_dlbt
+from dlbt.training.train_slda_attnpool import finetune_slda_attnpool
 
 sys.path.insert(0, str(Path(__file__).parent))
 import config as cfg
@@ -199,6 +200,16 @@ total_pool_size = sum(pool_sizes.values())
 print(f"\n  Trial pool — min: {min(pool_sizes.values())}  "
       f"max: {max(pool_sizes.values())}  "
       f"total: {total_pool_size:,}")
+
+# Cap budget grid at the total pool size — budgets exceeding the pool would
+# require bootstrapping every task, making them meaningless upper-budget points.
+trial_budgets = [b for b in cfg.TRIAL_BUDGETS if b <= total_pool_size]
+if not trial_budgets:
+    trial_budgets = cfg.TRIAL_BUDGETS[:1]   # always keep at least one point
+if cfg.FAST_PASS and len(trial_budgets) > 2:
+    trial_budgets = [trial_budgets[0], trial_budgets[-1]]
+    print("  FAST_PASS=True → min + max budget only")
+print(f"  Budget grid ({len(trial_budgets)} points, capped at pool): {trial_budgets}")
 
 # ---------------------------------------------------------------------------
 # CLIP feature cache
@@ -368,11 +379,18 @@ def _fit_slda(tasks: list, train_ds: BehavioralDataset):
     return scalers, models, temps
 
 
-def _slda_probe_matrix(scalers, models, temps) -> np.ndarray:
+def _slda_probe_matrix(scalers, models, temps,
+                       probe_features: dict | None = None) -> np.ndarray:
+    """
+    probe_features: uid → np.array override (used after SLDA Stage 2 so the
+    fresh attnpool features are used instead of the frozen_clip cache).
+    """
     pred            = np.full((n_probe, n_all_tasks), np.nan)
-    probe_uids_clip = [uid for uid in probe_uids_ordered if uid in frozen_clip]
-    probe_X         = np.array([frozen_clip[uid].cpu().numpy()
-                                 for uid in probe_uids_clip])
+    feat_src        = probe_features if probe_features is not None else {
+        uid: frozen_clip[uid].cpu().numpy() for uid in frozen_clip
+    }
+    probe_uids_clip = [uid for uid in probe_uids_ordered if uid in feat_src]
+    probe_X         = np.array([feat_src[uid] for uid in probe_uids_clip])
     for j, task_name in enumerate(all_tasks_ordered):
         if task_name not in models:
             continue
@@ -385,6 +403,55 @@ def _slda_probe_matrix(scalers, models, temps) -> np.ndarray:
             if row_i is not None:
                 pred[row_i, j] = float(p_cal[i_clip])
     return pred
+
+
+def _init_slda_attnpool_agent() -> DlbtAgent:
+    """Fresh DlbtAgent used only for SLDA Stage 2 attnpool fine-tuning.
+    Backbone cache is pre-populated so each training step only runs attnpool."""
+    ag = DlbtAgent(freeze_encoder=False, n_mc_samples=1,
+                   device=device, mapper_hidden=cfg.MAPPER_HIDDEN)
+    ag.precompute_backbone_features(all_refs)
+    return ag
+
+
+@torch.no_grad()
+def _slda_probe_features(agent_slda: DlbtAgent) -> dict:
+    """Extract probe features from a (fine-tuned) attnpool agent."""
+    agent_slda.eval()
+    return {
+        uid: agent_slda._encode([refs_by_uid[uid]])[0].cpu().numpy()
+        for uid in probe_uids_ordered if uid in refs_by_uid
+    }
+
+
+def _run_slda(tasks: list, train_ds: BehavioralDataset,
+              eval_ds_slda: BehavioralDataset):
+    """
+    Full SLDA pipeline:
+      Stage 1 (always)        — fit per-task ridge decoders on frozen CLIP.
+      Stage 2 (if not frozen) — fine-tune attnpool through fixed decoders.
+
+    Returns (pred_matrix, scalers, models, temps).
+    """
+    scalers, models, temps = _fit_slda(tasks, train_ds)
+
+    if not cfg.FREEZE_ENCODER:
+        agent_slda = _init_slda_attnpool_agent()
+        finetune_slda_attnpool(
+            agent_slda, scalers, models, temps,
+            train_ds, eval_ds_slda, refs_dict,
+            n_epochs  = cfg.N_EPOCHS_PHASE2,
+            patience  = cfg.PATIENCE_PHASE2,
+            lr        = cfg.LR_ATTNPOOL,
+        )
+        pred = _slda_probe_matrix(scalers, models, temps,
+                                  probe_features=_slda_probe_features(agent_slda))
+        del agent_slda
+        gc.collect(); torch.cuda.empty_cache()
+    else:
+        pred = _slda_probe_matrix(scalers, models, temps)
+
+    return pred, scalers, models, temps
 
 
 def _probe_stats(pred_mat: np.ndarray) -> tuple[float, float]:
@@ -417,7 +484,7 @@ print(f"  Random-init DLBT cMSE−NF : {random_init_cmse_nf:.5f}")
 # ---------------------------------------------------------------------------
 # Main sweep
 # ---------------------------------------------------------------------------
-n_budgets = len(cfg.TRIAL_BUDGETS)
+n_budgets = len(trial_budgets)
 n_seeds   = len(cfg.SEEDS)
 
 # [n_seeds × n_budgets] result matrices
@@ -447,7 +514,7 @@ for s_i, seed_val in enumerate(cfg.SEEDS):
     rng_anti = np.random.default_rng(seed_val + 200_000)
 
     # ---- Budget grid -------------------------------------------------------
-    for b_i, budget in enumerate(cfg.TRIAL_BUDGETS):
+    for b_i, budget in enumerate(trial_budgets):
         print(f"\n  Budget {budget:>7,}  [{b_i+1}/{n_budgets}]")
 
         # DLBT
@@ -462,8 +529,7 @@ for s_i, seed_val in enumerate(cfg.SEEDS):
 
         # SLDA
         train_ds_s = _bootstrap_sample(all_tasks_ordered, budget, rng_slda)
-        sca, mod, tmp = _fit_slda(all_tasks_ordered, train_ds_s)
-        pred_s     = _slda_probe_matrix(sca, mod, tmp)
+        pred_s, sca, mod, tmp = _run_slda(all_tasks_ordered, train_ds_s, eval_ds)
         slda_cmse[s_i, b_i], slda_rho[s_i, b_i] = _probe_stats(pred_s)
         print(f"    SLDA   cMSE−NF={slda_cmse[s_i,b_i]:+.5f}  ρ={slda_rho[s_i,b_i]:.3f}")
         del train_ds_s, sca, mod, tmp, pred_s
@@ -491,8 +557,7 @@ for s_i, seed_val in enumerate(cfg.SEEDS):
     del agent_all, pred_all
     gc.collect(); torch.cuda.empty_cache()
 
-    sca, mod, tmp = _fit_slda(all_tasks_ordered, all_ds)
-    pred_sa       = _slda_probe_matrix(sca, mod, tmp)
+    pred_sa, sca, mod, tmp = _run_slda(all_tasks_ordered, all_ds, eval_ds)
     slda_all_cmse[s_i], slda_all_rho[s_i] = _probe_stats(pred_sa)
     print(f"    SLDA all  cMSE−NF={slda_all_cmse[s_i]:+.5f}  ρ={slda_all_rho[s_i]:.3f}")
     del sca, mod, tmp, pred_sa
@@ -511,7 +576,7 @@ for s_i, seed_val in enumerate(cfg.SEEDS):
 # ---------------------------------------------------------------------------
 summary = {
     "run_tag":             cfg.RUN_TAG,
-    "trial_budgets":       cfg.TRIAL_BUDGETS,
+    "trial_budgets":       trial_budgets,
     "total_pool_size":     total_pool_size,
     "seeds":               cfg.SEEDS,
     "all_tasks_ordered":   all_tasks_ordered,

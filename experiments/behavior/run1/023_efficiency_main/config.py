@@ -61,6 +61,14 @@ N_SEEDS = 1
 SEEDS   = [42]
 
 # ---------------------------------------------------------------------------
+# Fast-pass mode  (quick smoke-test: min + max budget only)
+# ---------------------------------------------------------------------------
+# Set FAST_PASS = True to run only the smallest and largest budget grid points,
+# skipping all intermediate budgets.  The all-data point is always run.
+# Useful for a quick sanity check before committing to a full sweep.
+FAST_PASS = True
+
+# ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
 N_EPOCHS        = 1000
@@ -92,12 +100,17 @@ NEUTRAL_ALPHA     = (INIT_ALPHA_LOW + INIT_ALPHA_HIGH) / 2   # 0.65
 RUN_TAG = "efficiency_main"
 
 # ---------------------------------------------------------------------------
+# Plot options
+# ---------------------------------------------------------------------------
+LOG_Y = False   # log-scale y-axis on the cMSE figure (also overridable via --log-y)
+
+# ---------------------------------------------------------------------------
 # Plot colours
 # ---------------------------------------------------------------------------
-C_DLBT   = "#2a6fb5"
-C_SLDA   = "#7D3C98"
-C_ANTI   = "#C0392B"   # anti-human DLBT — saturated red
-C_RNDINI = "#888888"   # random-init DLBT
+C_DLBT   = "#C0392B"   # DLBT — saturated red
+C_SLDA   = "#7D3C98"   # SLDA — purple
+C_ANTI   = "#777777"   # anti-human DLBT — medium gray (solid; distinct from ref lines)
+C_RNDINI = "#999999"   # reference lines (random guesser / random-init DLBT)
 
 ARITY_COLOR = {1: "#2a6fb5", 2: "#43AA8B", 3: "#E76F51", 4: "#9B5DE5"}
 

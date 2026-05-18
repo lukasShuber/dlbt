@@ -56,6 +56,7 @@ from dlbt.data.dataset import BehavioralDataset
 from dlbt.data.image_ref import load_image_refs, image_refs_as_list
 from dlbt.data.task import get_task
 from dlbt.training.train_dlbt import train_dlbt
+from dlbt.training.train_slda_attnpool import finetune_slda_attnpool
 
 sys.path.insert(0, str(Path(__file__).parent))
 import config as cfg
@@ -436,12 +437,16 @@ def _fit_slda(tasks: list,
     return scalers, models, temps
 
 
-def _slda_probe_matrix(scalers: dict, models: dict, temps: dict) -> np.ndarray:
-    """[n_probe × n_tasks] SLDA predicted P(yes) for all probe images × all tasks."""
+def _slda_probe_matrix(scalers: dict, models: dict, temps: dict,
+                       probe_features: dict | None = None) -> np.ndarray:
+    """[n_probe × n_tasks] SLDA predicted P(yes) for all probe images × all tasks.
+    probe_features: uid → np.array override; used after SLDA Stage 2."""
     pred            = np.full((n_probe, n_all_tasks), np.nan)
-    probe_uids_clip = [uid for uid in probe_uids_ordered if uid in frozen_clip]
-    probe_X         = np.array([frozen_clip[uid].cpu().numpy()
-                                 for uid in probe_uids_clip])
+    feat_src        = probe_features if probe_features is not None else {
+        uid: frozen_clip[uid].cpu().numpy() for uid in frozen_clip
+    }
+    probe_uids_clip = [uid for uid in probe_uids_ordered if uid in feat_src]
+    probe_X         = np.array([feat_src[uid] for uid in probe_uids_clip])
     for j, task_name in enumerate(all_tasks_ordered):
         if task_name not in models:
             continue
@@ -454,6 +459,42 @@ def _slda_probe_matrix(scalers: dict, models: dict, temps: dict) -> np.ndarray:
             if row_i is not None:
                 pred[row_i, j] = float(p_cal[i_clip])
     return pred
+
+
+def _init_slda_attnpool_agent() -> DlbtAgent:
+    ag = DlbtAgent(freeze_encoder=False, n_mc_samples=1,
+                   device=device, mapper_hidden=cfg.MAPPER_HIDDEN)
+    ag.precompute_backbone_features(all_refs)
+    return ag
+
+
+@torch.no_grad()
+def _slda_probe_features(agent_slda: DlbtAgent) -> dict:
+    agent_slda.eval()
+    return {uid: agent_slda._encode([refs_by_uid[uid]])[0].cpu().numpy()
+            for uid in probe_uids_ordered if uid in refs_by_uid}
+
+
+def _run_slda(tasks: list, train_ds: BehavioralDataset,
+              eval_ds_slda: BehavioralDataset):
+    """Stage 1 always; Stage 2 attnpool fine-tuning when FREEZE_ENCODER=False."""
+    scalers, models, temps = _fit_slda(tasks, train_ds)
+    if not cfg.FREEZE_ENCODER:
+        agent_slda = _init_slda_attnpool_agent()
+        finetune_slda_attnpool(
+            agent_slda, scalers, models, temps,
+            train_ds, eval_ds_slda, refs_dict,
+            n_epochs = cfg.N_EPOCHS_PHASE2,
+            patience = cfg.PATIENCE_PHASE2,
+            lr       = cfg.LR_ATTNPOOL,
+        )
+        pred = _slda_probe_matrix(scalers, models, temps,
+                                  probe_features=_slda_probe_features(agent_slda))
+        del agent_slda
+        gc.collect(); torch.cuda.empty_cache()
+    else:
+        pred = _slda_probe_matrix(scalers, models, temps)
+    return pred, scalers, models, temps
 
 
 def _trials_per_task(tasks: list, train_ds: BehavioralDataset) -> dict:
@@ -494,9 +535,10 @@ slda_results: dict = {
 rng_slda = np.random.default_rng(cfg.SEED + 100)
 for budget in slda_budgets:
     print(f"\n  SLDA  budget={budget}")
-    train_ds_b         = _uniform_sample(all_tasks_ordered, budget, rng_slda)
-    scalers_b, mods_b, temps_b = _fit_slda(all_tasks_ordered, train_ds_b)
-    pred_mat_b         = _slda_probe_matrix(scalers_b, mods_b, temps_b)
+    train_ds_b                      = _uniform_sample(all_tasks_ordered, budget, rng_slda)
+    eval_ds_slda_b                  = _eval_ds_for_tasks(all_tasks_ordered)
+    pred_mat_b, scalers_b, mods_b, temps_b = _run_slda(
+        all_tasks_ordered, train_ds_b, eval_ds_slda_b)
     mse_b              = _probe_cmse_net(pred_mat_b)
     print(f"  Fitted {len(mods_b)}/{n_all_tasks} tasks  probe_cmse_net={mse_b:.5f}")
     slda_results["budgets"][str(budget)] = {
