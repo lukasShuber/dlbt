@@ -63,9 +63,8 @@ SEEDS   = [42]
 # ---------------------------------------------------------------------------
 # Fast-pass mode  (quick smoke-test: min + max budget only)
 # ---------------------------------------------------------------------------
-# Set FAST_PASS = True to run only two budget points: the smallest grid point
-# and total_pool_size (the complete training dataset).  Intermediate grid
-# points are skipped.  The separate all-data section always runs regardless.
+# Set FAST_PASS = True to run only the smallest budget grid point, skipping
+# all others.  The all-data section always runs and serves as the "max" case.
 # Useful for a quick end-to-end sanity check before committing to a full sweep.
 FAST_PASS = True
 
@@ -95,7 +94,7 @@ INIT_SEED       = 0
 # ---------------------------------------------------------------------------
 # Median threshold correction (off by default; set True to enable)
 # ---------------------------------------------------------------------------
-MEDIAN_CORRECTION = False
+MEDIAN_CORRECTION = True
 NEUTRAL_ALPHA     = (INIT_ALPHA_LOW + INIT_ALPHA_HIGH) / 2   # 0.65
 
 RUN_TAG = "efficiency_main"
