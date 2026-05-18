@@ -31,7 +31,6 @@ warnings.filterwarnings("ignore")
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
-from matplotlib.ticker import NullFormatter, LogLocator
 
 sys.path.insert(0, str(Path(__file__).parent))
 import config as cfg
@@ -129,21 +128,13 @@ def _plot_all_data_marker(ax, x, mu, sem, color, zorder=5):
                 elinewidth=1.2, zorder=zorder)
 
 
-def _xaxis_setup(ax, budgets, total_pool_size):
-    """Log x-axis starting at 10^2; no ticks below that."""
-    x_right = max(total_pool_size, budgets[-1]) * 2.5
+def _xaxis_setup(ax):
+    """Log x-axis from 10^2 to 10^5 — same style as 02/022, no ticks below 10^2."""
     ax.set_xscale("log")
-    ax.set_xlim(70, x_right)
-
-    # Only show decade ticks ≥ 10^2
-    decade_ticks = [10**e for e in range(2, 7) if 10**e <= x_right]
-    tick_labels  = [r"$10^{" + str(e) + r"}$"
-                    for e in range(2, 7) if 10**e <= x_right]
-    ax.set_xticks(decade_ticks)
-    ax.set_xticklabels(tick_labels)
-    # Suppress minor-tick labels so nothing appears below 10^2
-    ax.xaxis.set_minor_formatter(NullFormatter())
-    ax.set_xlabel("Trial budget", fontsize=11)
+    ax.set_xlim(70, 1.5e5)
+    ax.set_xticks([100, 1_000, 10_000, 100_000])
+    ax.set_xticklabels([r"$10^2$", r"$10^3$", r"$10^4$", r"$10^5$"])
+    ax.set_xlabel("Total trial budget", fontsize=11)
 
 
 # ---------------------------------------------------------------------------
@@ -194,12 +185,17 @@ def _make_figure(metric: str):
                           slda_all_mu, slda_all_sem, cfg.C_SLDA, zorder=5)
 
     # ---- Axes ----
-    _xaxis_setup(ax, budgets, total_pool_size)
+    _xaxis_setup(ax)
 
     if is_cmse:
+        ax.set_ylabel("cMSE − noise floor", fontsize=11)
         if _log_y:
             ax.set_yscale("log")
-        ax.set_ylabel("cMSE − noise floor", fontsize=11)
+            ax.set_ylim(0.01, 1.0)
+            ax.set_yticks([0.01, 0.1, 1])
+            ax.set_yticklabels([r"$10^{-2}$", r"$10^{-1}$", r"$10^{0}$"])
+        else:
+            ax.set_ylim(0, 0.34)
         legend_loc = "upper right"
     else:
         ax.set_ylabel(r"Spearman $\rho$", fontsize=11)
@@ -207,7 +203,7 @@ def _make_figure(metric: str):
         legend_loc = "lower right"
 
     ax.legend(fontsize=8, frameon=False, loc=legend_loc)
-    sns.despine(ax=ax, top=True, right=True)
+    sns.despine(top=True, right=True, left=False, bottom=False)
     plt.tight_layout()
 
     tag = "cmse" if is_cmse else "rho"

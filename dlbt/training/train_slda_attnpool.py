@@ -37,6 +37,7 @@ from typing import Dict
 import numpy as np
 import torch
 import torch.optim as optim
+from tqdm import tqdm
 
 from dlbt.agents.dlbt import DlbtAgent
 from dlbt.data.dataset import BehavioralDataset
@@ -203,7 +204,8 @@ def finetune_slda_attnpool(
     train_nll_log = []
     val_nll_log   = []
 
-    for epoch in range(n_epochs):
+    pbar = tqdm(range(n_epochs), desc="slda-attnpool", unit="epoch")
+    for epoch in pbar:
         agent.train()
         rng  = np.random.default_rng(epoch)
         idx  = rng.permutation(len(train_cells))
@@ -261,6 +263,12 @@ def finetune_slda_attnpool(
         val_nll = _nll_on_dataset(agent, eval_ds, dec, refs_map, device)
         val_nll_log.append(val_nll)
 
+        pbar.set_postfix(
+            train_nll=f"{epoch_nll:.3f}",
+            val_nll  =f"{val_nll:.3f}",
+            lr       =f"{lr:.2e}",
+        )
+
         if val_nll < best_val_nll:
             best_val_nll = val_nll
             best_epoch   = epoch
@@ -270,6 +278,7 @@ def finetune_slda_attnpool(
         else:
             no_improve += 1
             if no_improve >= patience:
+                print(f"Early stop at epoch {epoch}. Best epoch: {best_epoch}.")
                 break
 
     # Restore best weights
