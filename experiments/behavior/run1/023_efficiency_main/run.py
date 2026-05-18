@@ -206,9 +206,9 @@ print(f"\n  Trial pool — min: {min(pool_sizes.values())}  "
 trial_budgets = [b for b in cfg.TRIAL_BUDGETS if b <= total_pool_size]
 if not trial_budgets:
     trial_budgets = cfg.TRIAL_BUDGETS[:1]   # always keep at least one point
-if cfg.FAST_PASS and len(trial_budgets) > 2:
-    trial_budgets = [trial_budgets[0], trial_budgets[-1]]
-    print("  FAST_PASS=True → min + max budget only")
+if cfg.FAST_PASS:
+    trial_budgets = [trial_budgets[0], total_pool_size]
+    print("  FAST_PASS=True → min budget + complete dataset")
 print(f"  Budget grid ({len(trial_budgets)} points, capped at pool): {trial_budgets}")
 
 # ---------------------------------------------------------------------------
