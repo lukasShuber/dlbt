@@ -87,6 +87,7 @@ anti_all_rho  = d["anti_all_rho"]
 random_cmse_nf      = d["random_cmse_nf"]
 random_init_cmse_nf = d["random_init_cmse_nf"]
 probe_noise_floor   = d["probe_noise_floor"]
+rho_noise_ceiling   = d.get("rho_noise_ceiling", float("nan"))
 
 plots_dir = cfg.RESULTS_DIR / "plots"
 plots_dir.mkdir(exist_ok=True)
@@ -200,6 +201,9 @@ def _make_figure(metric: str):
     else:
         ax.set_ylabel(r"Spearman $\rho$", fontsize=11)
         ax.set_ylim(0, 1)
+        if not np.isnan(rho_noise_ceiling):
+            ax.axhline(rho_noise_ceiling, color="#555555", lw=1.5,
+                       ls=(0, (2, 2)), label="Noise ceiling", zorder=2)
         legend_loc = "lower right"
 
     ax.legend(fontsize=8, frameon=False, loc=legend_loc)

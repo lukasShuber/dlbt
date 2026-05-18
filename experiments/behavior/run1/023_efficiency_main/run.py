@@ -48,6 +48,7 @@ import numpy as np
 import pandas as pd
 import torch
 from scipy.optimize import minimize_scalar
+from scipy.special import expit as _sigmoid
 from scipy.stats import spearmanr
 from sklearn.linear_model import RidgeCV
 from sklearn.preprocessing import StandardScaler
@@ -153,6 +154,62 @@ else:
 _valid_rg       = ~np.isnan(true_matrix)
 random_cmse_net = float(np.mean((0.5 - true_matrix[_valid_rg]) ** 2)) - probe_noise_floor
 print(f"  Probe NF: {probe_noise_floor:.5f}  random-guesser cMSE−NF: {random_cmse_net:.5f}")
+
+# ---------------------------------------------------------------------------
+# Spearman rank-correlation noise ceiling  (split-half + Spearman-Brown)
+# ---------------------------------------------------------------------------
+def _rho_noise_ceiling(cells_df: pd.DataFrame,
+                       n_splits: int = 200,
+                       seed: int = 0) -> float:
+    """
+    Split-half Spearman ρ noise ceiling with Spearman-Brown correction.
+
+    For each of n_splits random splits:
+      1. For each (uid, task) cell with total ≥ 2 observations, draw the
+         number of successes in half-1 via Hypergeometric(total, count_1, n1).
+      2. Compute p_right for half-1 and half-2 across all splittable cells.
+      3. Spearman ρ between the two p_right vectors.
+      4. Spearman-Brown correction: ρ_full = 2ρ_half / (1 + ρ_half).
+
+    Returns the mean ρ_full over all splits.
+    """
+    df = cells_df.copy()
+    df["total"] = df["count_0"] + df["count_1"]
+    df = df[df["total"] >= 2].reset_index(drop=True)
+    if len(df) < 2:
+        return float("nan")
+
+    totals  = df["total"].values.astype(int)
+    count1s = df["count_1"].values.astype(int)
+    n1s     = totals // 2
+    n2s     = totals - n1s
+
+    rng = np.random.default_rng(seed)
+    rho_full_values = []
+    for _ in range(n_splits):
+        k1 = np.array([
+            rng.hypergeometric(c1, t - c1, n1)
+            for c1, t, n1 in zip(count1s, totals, n1s)
+        ], dtype=float)
+        k2 = count1s - k1
+
+        p1 = k1 / n1s
+        p2 = k2 / n2s
+
+        valid = (n1s > 0) & (n2s > 0)
+        if valid.sum() < 2:
+            continue
+        rho_half, _ = spearmanr(p1[valid], p2[valid])
+        if np.isnan(rho_half) or rho_half <= -1:
+            continue
+        rho_full = (2 * rho_half) / (1 + rho_half)
+        rho_full_values.append(rho_full)
+
+    return float(np.mean(rho_full_values)) if rho_full_values else float("nan")
+
+
+rho_noise_ceiling = _rho_noise_ceiling(probe_cells_df)
+print(f"  Spearman ρ noise ceiling (split-half): {rho_noise_ceiling:.4f}")
 
 # ---------------------------------------------------------------------------
 # 10 % eval split of main cells (DLBT early stopping)
@@ -325,14 +382,52 @@ def _init_agent(seed: int) -> DlbtAgent:
 
 def _train_one(agent: DlbtAgent, train_ds: BehavioralDataset,
                val_ds: BehavioralDataset | None = None):
-    """Train agent.  val_ds defaults to the standard eval set; pass
-    eval_ds_anti for anti-human runs so early stopping uses flipped labels."""
-    return train_dlbt(
-        agent, train_ds, val_ds if val_ds is not None else eval_ds, refs_dict,
+    """
+    Phase 1 — train mapper with frozen CLIP encoder.
+    Phase 2 — fine-tune attnpool jointly (only when FREEZE_ENCODER=False).
+
+    val_ds defaults to the standard eval set; pass eval_ds_anti for
+    anti-human runs so early stopping uses flipped labels.
+    """
+    _val = val_ds if val_ds is not None else eval_ds
+    phase1 = train_dlbt(
+        agent, train_ds, _val, refs_dict,
         n_epochs = cfg.N_EPOCHS,
         lr       = cfg.LR,
         patience = cfg.PATIENCE,
     )
+    if not cfg.FREEZE_ENCODER:
+        gc.collect()
+        torch.cuda.empty_cache()
+        # Freeze mapper, unfreeze attnpool
+        for p in agent.mapper.parameters():
+            p.requires_grad_(False)
+        for p in agent.encoder.attnpool.parameters():
+            p.requires_grad_(True)
+        agent.freeze_encoder = False
+        agent._cache.clear()
+        opt2 = torch.optim.Adam(agent.encoder.attnpool.parameters(),
+                                lr=cfg.LR_ATTNPOOL)
+        phase2 = train_dlbt(
+            agent, train_ds, _val, refs_dict,
+            n_epochs  = cfg.N_EPOCHS_PHASE2,
+            patience  = cfg.PATIENCE_PHASE2,
+            optimizer = opt2,
+        )
+        # Repopulate CLIP cache with fine-tuned attnpool features
+        agent.eval()
+        agent.precompute_backbone_features(all_refs)
+        with torch.no_grad():
+            for i in range(0, len(all_refs), 16):
+                batch   = all_refs[i : i + 16]
+                spatial = torch.stack(
+                    [agent._backbone_cache[r.uid] for r in batch]
+                ).to(agent.device)
+                feats = agent.encoder.attnpool(spatial).float()
+                for ref, feat in zip(batch, feats):
+                    agent._cache[ref.uid] = feat.cpu()
+        return phase2
+    return phase1
 
 
 def _dlbt_probe_matrix(agent: DlbtAgent) -> np.ndarray:
@@ -368,7 +463,7 @@ def _fit_slda(tasks: list, train_ds: BehavioralDataset):
         logits = np.log(p_pred / (1 - p_pred))
 
         def _nll(log_tau, logits=logits, y=p_right):
-            p = 1 / (1 + np.exp(-logits / np.exp(log_tau)))
+            p = _sigmoid(logits / np.exp(log_tau))
             p = np.clip(p, 1e-7, 1 - 1e-7)
             return -np.mean(y * np.log(p) + (1 - y) * np.log(1 - p))
 
@@ -397,7 +492,7 @@ def _slda_probe_matrix(scalers, models, temps,
         X_sc   = scalers[task_name].transform(probe_X)
         p_pred = np.clip(models[task_name].predict(X_sc), 1e-6, 1 - 1e-6)
         logits = np.log(p_pred / (1 - p_pred))
-        p_cal  = 1 / (1 + np.exp(-logits / temps[task_name]))
+        p_cal  = _sigmoid(logits / temps[task_name])
         for i_clip, uid in enumerate(probe_uids_clip):
             row_i = uid_to_row.get(uid)
             if row_i is not None:
@@ -435,7 +530,7 @@ def _run_slda(tasks: list, train_ds: BehavioralDataset,
     """
     scalers, models, temps = _fit_slda(tasks, train_ds)
 
-    if not cfg.FREEZE_ENCODER:
+    if not cfg.FREEZE_ENCODER_SLDA:
         agent_slda = _init_slda_attnpool_agent()
         finetune_slda_attnpool(
             agent_slda, scalers, models, temps,
@@ -585,6 +680,7 @@ summary = {
     "probe_noise_floor":   probe_noise_floor,
     "random_cmse_nf":      random_cmse_nf,
     "random_init_cmse_nf": random_init_cmse_nf,
+    "rho_noise_ceiling":   rho_noise_ceiling,
     # Budget sweep [n_seeds × n_budgets]
     "dlbt_cmse":           dlbt_cmse,
     "dlbt_rho":            dlbt_rho,

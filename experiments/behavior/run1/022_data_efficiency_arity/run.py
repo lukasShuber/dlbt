@@ -33,6 +33,7 @@ import numpy as np
 import pandas as pd
 import torch
 from scipy.optimize import minimize_scalar
+from scipy.special import expit as _sigmoid
 from sklearn.linear_model import RidgeCV
 from sklearn.preprocessing import StandardScaler
 
@@ -352,7 +353,7 @@ def _fit_slda(tasks, train_ds):
         logits  = np.log(p_pred / (1 - p_pred))
 
         def _nll(log_tau, logits=logits, y=p_right):
-            p = 1 / (1 + np.exp(-logits / np.exp(log_tau)))
+            p = _sigmoid(logits / np.exp(log_tau))
             p = np.clip(p, 1e-7, 1 - 1e-7)
             return -np.mean(y * np.log(p) + (1 - y) * np.log(1 - p))
 
@@ -379,7 +380,7 @@ def _slda_probe_matrix(scalers, models, temps,
         X_sc   = scalers[task_name].transform(probe_X)
         p_pred = np.clip(models[task_name].predict(X_sc), 1e-6, 1 - 1e-6)
         logits = np.log(p_pred / (1 - p_pred))
-        p_cal  = 1 / (1 + np.exp(-logits / temps[task_name]))
+        p_cal  = _sigmoid(logits / temps[task_name])
         for i_clip, uid in enumerate(probe_uids_clip):
             row_i = uid_to_row.get(uid)
             if row_i is not None:
@@ -405,7 +406,7 @@ def _run_slda(tasks: list, train_ds: BehavioralDataset,
               eval_ds_slda: BehavioralDataset):
     """Stage 1 always; Stage 2 attnpool fine-tuning when FREEZE_ENCODER=False."""
     scalers, models, temps = _fit_slda(tasks, train_ds)
-    if not cfg.FREEZE_ENCODER:
+    if not cfg.FREEZE_ENCODER_SLDA:
         agent_slda = _init_slda_attnpool_agent()
         finetune_slda_attnpool(
             agent_slda, scalers, models, temps,
