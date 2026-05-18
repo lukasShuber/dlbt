@@ -270,6 +270,8 @@ def _init_agent() -> DlbtAgent:
         device            = device,
         mapper_hidden     = cfg.MAPPER_HIDDEN,
         normalize_utility = cfg.NORMALIZED_UTILITY,
+        median_correction = cfg.MEDIAN_CORRECTION,
+        neutral_alpha     = cfg.NEUTRAL_ALPHA,
     )
     agent._cache = {uid: feat.clone() for uid, feat in frozen_clip.items()}
     _linear = agent.mapper[0] if cfg.MAPPER_HIDDEN is None else agent.mapper[2]

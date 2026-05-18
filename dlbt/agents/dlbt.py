@@ -65,6 +65,9 @@ class DlbtAgent(nn.Module, Agent):
         mapper_hidden: Optional[int] = None,
         feature_dim: int = 1024,
         normalize_utility: bool = False,
+        median_correction: bool = False,
+        neutral_alpha: float = 1.0,
+        n_median_samples: int = 10_000,
     ):
         super().__init__()
 
@@ -73,6 +76,11 @@ class DlbtAgent(nn.Module, Agent):
         self.device            = device
         self.feature_dim       = feature_dim
         self.normalize_utility = normalize_utility
+        self.median_correction = median_correction
+        self.neutral_alpha     = neutral_alpha
+        self.n_median_samples  = n_median_samples
+        # Cache for per-task median offsets (populated lazily on first call)
+        self._median_offsets: Dict[tuple, float] = {}
 
         # ---- CLIP RN50 encoder --------------------------------------------
         import open_clip
@@ -242,6 +250,32 @@ class DlbtAgent(nn.Module, Agent):
             du = torch.where(du > 0, du / n_pos, du / n_neg)
         return du
 
+    def _get_median_offset(self, task: Task) -> float:
+        """
+        Return the median SEU score under a neutral uniform Dirichlet prior,
+        computed once and cached per task.
+
+        With median_correction=True a neutral agent predicts P(yes)=0.5 for
+        every task/arity by shifting the decision threshold from 0 to m_t:
+
+            s_t(b) − m_t > 0   instead of   s_t(b) > 0
+
+        where  m_t = median_{b ~ Dir(neutral_alpha·1)} [b · ΔU_t].
+
+        Returns 0.0 when median_correction=False (no-op).
+        """
+        if not self.median_correction:
+            return 0.0
+        key = tuple(task.delta_u)   # unique per task; normalization is agent-level
+        if key not in self._median_offsets:
+            alpha0   = torch.full((K,), self.neutral_alpha, device=self.device)
+            delta_u  = self._delta_u(task)                          # [K], normalized
+            with torch.no_grad():
+                samples = Dirichlet(alpha0).sample((self.n_median_samples,))  # [N, K]
+                seu     = samples @ delta_u                                    # [N]
+                self._median_offsets[key] = float(seu.median())
+        return self._median_offsets[key]
+
     def get_alpha(self, image_refs: List[ImageRef]) -> torch.Tensor:
         """
         Return Dirichlet concentration parameters α for each image.
@@ -305,6 +339,7 @@ class DlbtAgent(nn.Module, Agent):
         alpha  = alpha.clamp(min=0.1)
         b      = Dirichlet(alpha).rsample((N,))                     # [N, B, K]
         logit  = torch.einsum("nbk,k->nb", b, delta_u)             # [N, B]
+        logit  = logit - self._get_median_offset(task)             # threshold shift
 
         logits_2d  = torch.stack([-logit, logit], dim=-1)          # [N, B, 2]
         probs_soft = F.softmax(logits_2d, dim=-1)
@@ -335,6 +370,7 @@ class DlbtAgent(nn.Module, Agent):
 
         b     = Dirichlet(alpha).sample((N,))                      # [N, B, K]
         logit = torch.einsum("nbk,k->nb", b, delta_u)             # [N, B]
+        logit = logit - self._get_median_offset(task)             # threshold shift
         hard  = (logit > 0).float()                                # [N, B]
 
         p_right = hard.mean(dim=0)                                 # [B]

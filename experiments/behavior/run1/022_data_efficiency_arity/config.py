@@ -78,6 +78,12 @@ INIT_ALPHA_LOW  = 0.6
 INIT_ALPHA_HIGH = 0.7
 INIT_SEED       = 0
 
+# ---------------------------------------------------------------------------
+# Median threshold correction
+# ---------------------------------------------------------------------------
+MEDIAN_CORRECTION = False
+NEUTRAL_ALPHA     = (INIT_ALPHA_LOW + INIT_ALPHA_HIGH) / 2   # 0.65
+
 RUN_TAG = ("frozen" if FREEZE_ENCODER else "attnpool") + "_arity_norm"
 
 # ---------------------------------------------------------------------------

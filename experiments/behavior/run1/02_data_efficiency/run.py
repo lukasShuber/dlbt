@@ -296,11 +296,13 @@ def _init_agent() -> DlbtAgent:
     """Fresh DlbtAgent with frozen CLIP cache and initialised mapper bias."""
     torch.manual_seed(cfg.SEEDS[0])
     agent = DlbtAgent(
-        freeze_encoder   = True,
-        n_mc_samples     = cfg.N_MC,
-        device           = device,
-        mapper_hidden    = cfg.MAPPER_HIDDEN,
-        normalize_utility= cfg.NORMALIZED_UTILITY,
+        freeze_encoder    = True,
+        n_mc_samples      = cfg.N_MC,
+        device            = device,
+        mapper_hidden     = cfg.MAPPER_HIDDEN,
+        normalize_utility = cfg.NORMALIZED_UTILITY,
+        median_correction = cfg.MEDIAN_CORRECTION,
+        neutral_alpha     = cfg.NEUTRAL_ALPHA,
     )
     agent._cache = {uid: feat.clone() for uid, feat in frozen_clip.items()}
     _linear = agent.mapper[0] if cfg.MAPPER_HIDDEN is None else agent.mapper[2]
