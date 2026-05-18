@@ -1,37 +1,17 @@
 """
-run1/023_efficiency_main/run.py — full-coverage budget sweep with bootstrap
-sampling and anti-human reference.
+run1/05_ablations/run.py — belief-representation ablation budget sweep.
 
-Protocol
---------
-1.  Load + filter run0+run1 data; identify all eligible tasks.
-2.  Separate probe images (held-out evaluation) from main images (training).
-3.  10 % of main cells held out for DLBT early stopping.
-4.  Build per-task individual trial pools from the remaining 90 %.
-5.  Build ground-truth probe matrix; compute noise floor.
-6.  Pre-compute frozen CLIP features.
+Models compared at each trial budget:
+  DLBT    full model: MC Dirichlet integration, mapper trained on behaviour
+  DetBT   deterministic ablation: Dirichlet mean instead of MC samples
+  SLDA    ridge decoder baseline (all tasks, frozen CLIP)
+  Oracle  fixed beliefs from metadata latent state (no training, evaluated once)
 
-7.  For each seed (N_SEEDS total):
-      - Both DLBT init weights AND trial sampling change per seed, giving
-        genuine variance for SEM error bands.
-      a. Budget grid points (TRIAL_BUDGETS):
-           For each budget B:
-             i.  Sample training data: per task t, allocate B//n_tasks trials.
-                 If the pool for t is large enough → sample without replacement.
-                 If not → bootstrap (sample with replacement) up to the target.
-             ii. Train DLBT on sampled data.          → probe cMSE-NF, ρ
-            iii. Train SLDA on sampled data.          → probe cMSE-NF, ρ
-             iv. Train anti-human DLBT on label-
-                 flipped version of the same sample.  → probe cMSE-NF, ρ
-      b. All-data point (every trial in the pool, no sampling):
-           Train DLBT, SLDA, anti-human DLBT on the full pool.
-
-8.  Compute random-guesser and random-init DLBT baselines (no seeds).
-
-9.  Save summary dict as results/efficiency_main.pkl.
+Protocol mirrors 023_efficiency_main (bootstrap sampling, same budget grid,
+all-data point, per-seed weight + data variation for genuine SEM).
 
 Run from repo root:
-    python experiments/behavior/run1/023_efficiency_main/run.py
+    python experiments/behavior/run1/05_ablations/run.py
 """
 
 import gc
@@ -54,6 +34,9 @@ from sklearn.linear_model import RidgeCV
 from sklearn.preprocessing import StandardScaler
 
 from dlbt.agents.dlbt import DlbtAgent
+from dlbt.agents.detbt import DetBTAgent
+from dlbt.agents.oracle_bt import OracleBTAgent
+from dlbt.agents.rand_ont_bt import RandOntBTAgent, make_rand_ontology
 from dlbt.data.dataset import BehavioralDataset
 from dlbt.data.image_ref import load_image_refs, image_refs_as_list
 from dlbt.data.task import get_task
@@ -93,9 +76,6 @@ df_raw = pd.concat(
      pd.read_csv(cfg.BEHAVIOR_CSV_RUN1)],
     ignore_index=True,
 )
-print(f"  Raw trials: {len(df_raw):,}  "
-      f"({df_raw['assignment_id'].nunique()} assignments)")
-
 df_filtered, _ = filter_assignments(
     df_raw,
     min_catch_perf     = cfg.MIN_CATCH_PERF,
@@ -115,9 +95,6 @@ full_ds, probe_uids, main_uids = aggregate_counts(
     beh_id_to_task  = _beh_id_eligible,
     use_trial_kinds = cfg.USE_TRIAL_KINDS,
 )
-print(f"  Aggregated: {len(full_ds):,} cells  "
-      f"({full_ds.df['task_name'].nunique()} tasks, "
-      f"{full_ds.df['uid'].nunique()} images)")
 
 # ---------------------------------------------------------------------------
 # Probe matrix
@@ -130,7 +107,6 @@ probe_uids_ordered = [r.uid for r in probe_refs_ordered]
 n_probe            = len(probe_uids_ordered)
 uid_to_row         = {uid: i for i, uid in enumerate(probe_uids_ordered)}
 task_to_col        = {t: j for j, t in enumerate(all_tasks_ordered)}
-print(f"  Probe images: {n_probe}")
 
 probe_cells_df = full_ds.df[full_ds.df["uid"].isin(probe_uids)].copy()
 true_matrix    = np.full((n_probe, n_all_tasks), np.nan)
@@ -144,102 +120,63 @@ for row in probe_cells_df.itertuples(index=False):
         count_matrix[i, j] = total
 
 _nf_mask = count_matrix > 1
-if _nf_mask.any():
-    _p = true_matrix[_nf_mask]
-    _n = count_matrix[_nf_mask].astype(float)
-    probe_noise_floor = float(np.mean(_p * (1 - _p) / (_n - 1)))
-else:
-    probe_noise_floor = 0.0
-
+probe_noise_floor = (
+    float(np.mean(true_matrix[_nf_mask] * (1 - true_matrix[_nf_mask])
+                  / (count_matrix[_nf_mask].astype(float) - 1)))
+    if _nf_mask.any() else 0.0
+)
 _valid_rg       = ~np.isnan(true_matrix)
 random_cmse_net = float(np.mean((0.5 - true_matrix[_valid_rg]) ** 2)) - probe_noise_floor
 print(f"  Probe NF: {probe_noise_floor:.5f}  random-guesser cMSE−NF: {random_cmse_net:.5f}")
 
 # ---------------------------------------------------------------------------
-# Spearman rank-correlation noise ceiling  (split-half + Spearman-Brown)
+# Spearman ρ noise ceiling  (split-half + Spearman-Brown)
 # ---------------------------------------------------------------------------
 def _rho_noise_ceiling(cells_df: pd.DataFrame,
-                       n_splits: int = 200,
-                       seed: int = 0) -> float:
-    """
-    Split-half Spearman ρ noise ceiling with Spearman-Brown correction.
-
-    For each of n_splits random splits:
-      1. For each (uid, task) cell with total ≥ 2 observations, draw the
-         number of successes in half-1 via Hypergeometric(total, count_1, n1).
-      2. Compute p_right for half-1 and half-2 across all splittable cells.
-      3. Spearman ρ between the two p_right vectors.
-      4. Spearman-Brown correction: ρ_full = 2ρ_half / (1 + ρ_half).
-
-    Returns the mean ρ_full over all splits.
-    """
+                       n_splits: int = 200, seed: int = 0) -> float:
     df = cells_df.copy()
     df["total"] = df["count_0"] + df["count_1"]
     df = df[df["total"] >= 2].reset_index(drop=True)
     if len(df) < 2:
         return float("nan")
-
     totals  = df["total"].values.astype(int)
     count1s = df["count_1"].values.astype(int)
     n1s     = totals // 2
     n2s     = totals - n1s
-
     rng = np.random.default_rng(seed)
-    rho_full_values = []
+    vals = []
     for _ in range(n_splits):
-        k1 = np.array([
-            rng.hypergeometric(c1, t - c1, n1)
-            for c1, t, n1 in zip(count1s, totals, n1s)
-        ], dtype=float)
-        k2 = count1s - k1
-
+        k1 = np.array([rng.hypergeometric(c1, t - c1, n1)
+                       for c1, t, n1 in zip(count1s, totals, n1s)], dtype=float)
         p1 = k1 / n1s
-        p2 = k2 / n2s
-
-        valid = (n1s > 0) & (n2s > 0)
-        if valid.sum() < 2:
-            continue
-        rho_half, _ = spearmanr(p1[valid], p2[valid])
-        if np.isnan(rho_half) or rho_half <= -1:
-            continue
-        rho_full = (2 * rho_half) / (1 + rho_half)
-        rho_full_values.append(rho_full)
-
-    return float(np.mean(rho_full_values)) if rho_full_values else float("nan")
-
+        p2 = (count1s - k1) / n2s
+        rh, _ = spearmanr(p1, p2)
+        if not np.isnan(rh) and rh > -1:
+            vals.append((2 * rh) / (1 + rh))
+    return float(np.mean(vals)) if vals else float("nan")
 
 rho_noise_ceiling = _rho_noise_ceiling(probe_cells_df)
-print(f"  Spearman ρ noise ceiling (split-half): {rho_noise_ceiling:.4f}")
+print(f"  Spearman ρ noise ceiling: {rho_noise_ceiling:.4f}")
 
 # ---------------------------------------------------------------------------
-# 10 % eval split of main cells (DLBT early stopping)
+# 10 % eval split of main cells (early stopping)
 # ---------------------------------------------------------------------------
 main_cells_df = (full_ds.df[full_ds.df["uid"].isin(main_uids)]
                  .copy().reset_index(drop=True))
-rng_split     = np.random.default_rng(cfg.SEED)
-n_eval_cells  = max(1, int(len(main_cells_df) * 0.10))
-eval_idx      = rng_split.choice(len(main_cells_df), size=n_eval_cells, replace=False)
-eval_mask     = np.zeros(len(main_cells_df), dtype=bool)
+rng_split    = np.random.default_rng(cfg.SEED)
+n_eval_cells = max(1, int(len(main_cells_df) * 0.10))
+eval_idx     = rng_split.choice(len(main_cells_df), size=n_eval_cells, replace=False)
+eval_mask    = np.zeros(len(main_cells_df), dtype=bool)
 eval_mask[eval_idx] = True
 
-eval_df  = main_cells_df[eval_mask].reset_index(drop=True)
-pool_df  = main_cells_df[~eval_mask].reset_index(drop=True)
-eval_ds  = BehavioralDataset(eval_df)
-
-# Flipped eval set for anti-human early stopping:
-# the anti-human model learns p → 1-p, so its validation loss must also be
-# measured on flipped labels — otherwise early stopping fires immediately.
-eval_df_anti          = eval_df.copy()
-eval_df_anti["count_0"], eval_df_anti["count_1"] = (
-    eval_df["count_1"].copy(), eval_df["count_0"].copy()
-)
-eval_ds_anti = BehavioralDataset(eval_df_anti)
-
+eval_df = main_cells_df[eval_mask].reset_index(drop=True)
+pool_df = main_cells_df[~eval_mask].reset_index(drop=True)
+eval_ds = BehavioralDataset(eval_df)
 print(f"\n  Eval cells (early stopping): {len(eval_df)}")
 print(f"  Train pool cells (90 %%):    {len(pool_df)}")
 
 # ---------------------------------------------------------------------------
-# Per-task individual trial pools  task_name -> [(uid, outcome), ...]
+# Per-task trial pools
 # ---------------------------------------------------------------------------
 task_trial_pools: dict[str, list] = {t: [] for t in all_tasks_ordered}
 for row in pool_df.itertuples(index=False):
@@ -255,18 +192,15 @@ for row in pool_df.itertuples(index=False):
 pool_sizes      = {t: len(task_trial_pools[t]) for t in all_tasks_ordered}
 total_pool_size = sum(pool_sizes.values())
 print(f"\n  Trial pool — min: {min(pool_sizes.values())}  "
-      f"max: {max(pool_sizes.values())}  "
-      f"total: {total_pool_size:,}")
+      f"max: {max(pool_sizes.values())}  total: {total_pool_size:,}")
 
-# Cap budget grid at the total pool size — budgets exceeding the pool would
-# require bootstrapping every task, making them meaningless upper-budget points.
 trial_budgets = [b for b in cfg.TRIAL_BUDGETS if b <= total_pool_size]
 if not trial_budgets:
-    trial_budgets = cfg.TRIAL_BUDGETS[:1]   # always keep at least one point
+    trial_budgets = cfg.TRIAL_BUDGETS[:1]
 if cfg.FAST_PASS:
     trial_budgets = [trial_budgets[0]]
     print("  FAST_PASS=True → min budget only (all-data point covers the max)")
-print(f"  Budget grid ({len(trial_budgets)} points, capped at pool): {trial_budgets}")
+print(f"  Budget grid ({len(trial_budgets)} points): {trial_budgets}")
 
 # ---------------------------------------------------------------------------
 # CLIP feature cache
@@ -288,18 +222,7 @@ print(f"CLIP cache ready ({len(frozen_clip)} images).")
 # ---------------------------------------------------------------------------
 
 def _bootstrap_sample(tasks: list, budget: int,
-                       rng: np.random.Generator,
-                       flip: bool = False) -> BehavioralDataset:
-    """
-    Allocate `budget` trials uniformly across `tasks`.
-
-    Per-task target k = floor(budget / n_tasks), with remainder distributed
-    randomly.  Sampling is:
-      - Without replacement if pool_size >= k  (standard)
-      - With replacement    if pool_size <  k  (bootstrap fallback)
-
-    If flip=True, all trial outcomes are inverted (0↔1) — anti-human condition.
-    """
+                       rng: np.random.Generator) -> BehavioralDataset:
     n     = len(tasks)
     q     = budget // n
     r     = budget % n
@@ -314,8 +237,6 @@ def _bootstrap_sample(tasks: list, budget: int,
         chosen  = rng.choice(len(pool), size=k, replace=replace)
         for idx in chosen:
             uid, outcome = pool[int(idx)]
-            if flip:
-                outcome = 1 - outcome
             rows.append({"uid": uid, "task_name": task_name,
                          "count_0": 1 - outcome, "count_1": outcome})
     if not rows:
@@ -327,13 +248,10 @@ def _bootstrap_sample(tasks: list, budget: int,
     return BehavioralDataset(agg)
 
 
-def _all_data_ds(tasks: list, flip: bool = False) -> BehavioralDataset:
-    """Use every trial in the pool — no sampling, no budget cap."""
+def _all_data_ds(tasks: list) -> BehavioralDataset:
     rows = []
     for task_name in tasks:
         for uid, outcome in task_trial_pools[task_name]:
-            if flip:
-                outcome = 1 - outcome
             rows.append({"uid": uid, "task_name": task_name,
                          "count_0": 1 - outcome, "count_1": outcome})
     if not rows:
@@ -345,13 +263,25 @@ def _all_data_ds(tasks: list, flip: bool = False) -> BehavioralDataset:
     return BehavioralDataset(agg)
 
 
-def _init_agent(seed: int) -> DlbtAgent:
-    """
-    Fresh DlbtAgent with frozen CLIP cache and initialised mapper bias.
-    Uses `seed` for both torch weight init and bias sampling, so different
-    seeds give genuinely different starting points — producing meaningful
-    variance across the seed loop for SEM computation.
-    """
+def _set_mapper_bias(agent, seed: int):
+    """Shared mapper bias initialisation for DLBT and DetBT."""
+    _linear = agent.mapper[0] if cfg.MAPPER_HIDDEN is None else agent.mapper[2]
+    if cfg.INIT_MODE == "random":
+        rng_init  = np.random.default_rng(seed)
+        alpha_rnd = rng_init.uniform(cfg.INIT_ALPHA_LOW, cfg.INIT_ALPHA_HIGH,
+                                     size=(_linear.bias.shape[0],)).astype(np.float32)
+        with torch.no_grad():
+            _linear.bias.copy_(
+                torch.from_numpy(np.log(np.exp(alpha_rnd) - 1.0)).to(device))
+    elif cfg.INIT_MODE == "uniform":
+        bv = float(np.log(np.exp(cfg.INIT_ALPHA) - 1.0))
+        with torch.no_grad():
+            _linear.bias.fill_(bv)
+    else:
+        raise ValueError(f"Unknown INIT_MODE {cfg.INIT_MODE!r}")
+
+
+def _init_dlbt(seed: int) -> DlbtAgent:
     torch.manual_seed(seed)
     agent = DlbtAgent(
         freeze_encoder    = True,
@@ -363,43 +293,33 @@ def _init_agent(seed: int) -> DlbtAgent:
         neutral_alpha     = cfg.NEUTRAL_ALPHA,
     )
     agent._cache = {uid: feat.clone() for uid, feat in frozen_clip.items()}
-    _linear = agent.mapper[0] if cfg.MAPPER_HIDDEN is None else agent.mapper[2]
-    if cfg.INIT_MODE == "uniform":
-        bv = float(np.log(np.exp(cfg.INIT_ALPHA) - 1.0))
-        with torch.no_grad():
-            _linear.bias.fill_(bv)
-    elif cfg.INIT_MODE == "random":
-        rng_init  = np.random.default_rng(seed)   # tied to outer seed
-        alpha_rnd = rng_init.uniform(cfg.INIT_ALPHA_LOW, cfg.INIT_ALPHA_HIGH,
-                                     size=(_linear.bias.shape[0],)).astype(np.float32)
-        b_init    = np.log(np.exp(alpha_rnd) - 1.0)
-        with torch.no_grad():
-            _linear.bias.copy_(torch.from_numpy(b_init).to(device))
-    else:
-        raise ValueError(f"Unknown INIT_MODE {cfg.INIT_MODE!r}")
+    _set_mapper_bias(agent, seed)
     return agent
 
 
-def _train_one(agent: DlbtAgent, train_ds: BehavioralDataset,
-               val_ds: BehavioralDataset | None = None):
-    """
-    Phase 1 — train mapper with frozen CLIP encoder.
-    Phase 2 — fine-tune attnpool jointly (only when FREEZE_ENCODER=False).
+def _init_detbt(seed: int) -> DetBTAgent:
+    torch.manual_seed(seed)
+    agent = DetBTAgent(
+        freeze_encoder    = True,
+        device            = device,
+        mapper_hidden     = cfg.MAPPER_HIDDEN,
+        normalize_utility = cfg.NORMALIZED_UTILITY,
+    )
+    agent._cache = {uid: feat.clone() for uid, feat in frozen_clip.items()}
+    _set_mapper_bias(agent, seed)
+    return agent
 
-    val_ds defaults to the standard eval set; pass eval_ds_anti for
-    anti-human runs so early stopping uses flipped labels.
-    """
-    _val = val_ds if val_ds is not None else eval_ds
+
+def _train_dlbt(agent: DlbtAgent, train_ds: BehavioralDataset) -> None:
+    """Phase 1 + optional Phase 2 for DLBT."""
     phase1 = train_dlbt(
-        agent, train_ds, _val, refs_dict,
+        agent, train_ds, eval_ds, refs_dict,
         n_epochs = cfg.N_EPOCHS,
         lr       = cfg.LR,
         patience = cfg.PATIENCE,
     )
     if not cfg.FREEZE_ENCODER:
-        gc.collect()
-        torch.cuda.empty_cache()
-        # Freeze mapper, unfreeze attnpool
+        gc.collect(); torch.cuda.empty_cache()
         for p in agent.mapper.parameters():
             p.requires_grad_(False)
         for p in agent.encoder.attnpool.parameters():
@@ -408,13 +328,12 @@ def _train_one(agent: DlbtAgent, train_ds: BehavioralDataset,
         agent._cache.clear()
         opt2 = torch.optim.Adam(agent.encoder.attnpool.parameters(),
                                 lr=cfg.LR_ATTNPOOL)
-        phase2 = train_dlbt(
-            agent, train_ds, _val, refs_dict,
+        train_dlbt(
+            agent, train_ds, eval_ds, refs_dict,
             n_epochs  = cfg.N_EPOCHS_PHASE2,
             patience  = cfg.PATIENCE_PHASE2,
             optimizer = opt2,
         )
-        # Repopulate CLIP cache with fine-tuned attnpool features
         agent.eval()
         agent.precompute_backbone_features(all_refs)
         with torch.no_grad():
@@ -426,20 +345,67 @@ def _train_one(agent: DlbtAgent, train_ds: BehavioralDataset,
                 feats = agent.encoder.attnpool(spatial).float()
                 for ref, feat in zip(batch, feats):
                     agent._cache[ref.uid] = feat.cpu()
-        return phase2
-    return phase1
 
 
-def _dlbt_probe_matrix(agent: DlbtAgent) -> np.ndarray:
+def _train_detbt(agent: DetBTAgent, train_ds: BehavioralDataset) -> None:
+    """Phase 1 only — DetBT always uses frozen encoder."""
+    train_dlbt(
+        agent, train_ds, eval_ds, refs_dict,
+        n_epochs = cfg.N_EPOCHS,
+        lr       = cfg.LR,
+        patience = cfg.PATIENCE,
+    )
+
+
+def _init_randont(seed: int, rand_du: dict) -> RandOntBTAgent:
+    """Initialise a RandOntBTAgent with the given pre-computed random utility map."""
+    torch.manual_seed(seed)
+    agent = RandOntBTAgent(
+        rand_delta_u      = rand_du,
+        freeze_encoder    = True,
+        n_mc_samples      = cfg.N_MC,
+        device            = device,
+        mapper_hidden     = cfg.MAPPER_HIDDEN,
+        normalize_utility = cfg.NORMALIZED_UTILITY,
+        median_correction = cfg.MEDIAN_CORRECTION,
+        neutral_alpha     = cfg.NEUTRAL_ALPHA,
+    )
+    agent._cache = {uid: feat.clone() for uid, feat in frozen_clip.items()}
+    _set_mapper_bias(agent, seed)
+    return agent
+
+
+def _train_randont(agent: RandOntBTAgent, train_ds: BehavioralDataset) -> None:
+    """Phase 1 only — same as DLBT frozen encoder."""
+    train_dlbt(
+        agent, train_ds, eval_ds, refs_dict,
+        n_epochs = cfg.N_EPOCHS,
+        lr       = cfg.LR,
+        patience = cfg.PATIENCE,
+    )
+
+
+@torch.no_grad()
+def _probe_matrix(agent) -> np.ndarray:
     pred = np.full((n_probe, n_all_tasks), np.nan)
     agent.eval()
-    with torch.no_grad():
-        for j, task_name in enumerate(all_tasks_ordered):
-            task  = get_task(task_name)
-            probs = agent.choice_probs(probe_refs_ordered, task)[:, 1].cpu().numpy()
-            pred[:, j] = probs
+    for j, task_name in enumerate(all_tasks_ordered):
+        task  = get_task(task_name)
+        probs = agent.choice_probs(probe_refs_ordered, task)[:, 1].cpu().numpy()
+        pred[:, j] = probs
     return pred
 
+
+def _probe_stats(pred_mat: np.ndarray) -> tuple[float, float]:
+    valid   = ~np.isnan(pred_mat) & ~np.isnan(true_matrix)
+    cmse_nf = float(np.mean((pred_mat[valid] - true_matrix[valid]) ** 2)) - probe_noise_floor
+    rho, _  = spearmanr(pred_mat[valid], true_matrix[valid])
+    return cmse_nf, float(rho)
+
+
+# ---------------------------------------------------------------------------
+# SLDA helpers
+# ---------------------------------------------------------------------------
 
 def _fit_slda(tasks: list, train_ds: BehavioralDataset):
     scalers, models, temps = {}, {}, {}
@@ -452,15 +418,13 @@ def _fit_slda(tasks: list, train_ds: BehavioralDataset):
         g_sub   = group[group["uid"].isin(uids)]
         totals  = (g_sub["count_0"] + g_sub["count_1"]).values.astype(float)
         p_right = g_sub["count_1"].values / np.clip(totals, 1, None)
-
-        scaler = StandardScaler(with_mean=(len(uids) >= 5),
-                                with_std=(len(uids) >= 5))
-        X_sc   = scaler.fit_transform(X)
-        model  = RidgeCV(alphas=[1e1, 1e2, 1e3, 1e4, 1e5])
+        scaler  = StandardScaler(with_mean=(len(uids) >= 5),
+                                 with_std=(len(uids) >= 5))
+        X_sc    = scaler.fit_transform(X)
+        model   = RidgeCV(alphas=[1e1, 1e2, 1e3, 1e4, 1e5])
         model.fit(X_sc, p_right)
-
-        p_pred = np.clip(model.predict(X_sc), 1e-6, 1 - 1e-6)
-        logits = np.log(p_pred / (1 - p_pred))
+        p_pred  = np.clip(model.predict(X_sc), 1e-6, 1 - 1e-6)
+        logits  = np.log(p_pred / (1 - p_pred))
 
         def _nll(log_tau, logits=logits, y=p_right):
             p = _sigmoid(logits / np.exp(log_tau))
@@ -476,10 +440,6 @@ def _fit_slda(tasks: list, train_ds: BehavioralDataset):
 
 def _slda_probe_matrix(scalers, models, temps,
                        probe_features: dict | None = None) -> np.ndarray:
-    """
-    probe_features: uid → np.array override (used after SLDA Stage 2 so the
-    fresh attnpool features are used instead of the frozen_clip cache).
-    """
     pred            = np.full((n_probe, n_all_tasks), np.nan)
     feat_src        = probe_features if probe_features is not None else {
         uid: frozen_clip[uid].cpu().numpy() for uid in frozen_clip
@@ -501,8 +461,6 @@ def _slda_probe_matrix(scalers, models, temps,
 
 
 def _init_slda_attnpool_agent() -> DlbtAgent:
-    """Fresh DlbtAgent used only for SLDA Stage 2 attnpool fine-tuning.
-    Backbone cache is pre-populated so each training step only runs attnpool."""
     ag = DlbtAgent(freeze_encoder=False, n_mc_samples=1,
                    device=device, mapper_hidden=cfg.MAPPER_HIDDEN)
     ag.precompute_backbone_features(all_refs)
@@ -511,33 +469,21 @@ def _init_slda_attnpool_agent() -> DlbtAgent:
 
 @torch.no_grad()
 def _slda_probe_features(agent_slda: DlbtAgent) -> dict:
-    """Extract probe features from a (fine-tuned) attnpool agent."""
     agent_slda.eval()
-    return {
-        uid: agent_slda._encode([refs_by_uid[uid]])[0].cpu().numpy()
-        for uid in probe_uids_ordered if uid in refs_by_uid
-    }
+    return {uid: agent_slda._encode([refs_by_uid[uid]])[0].cpu().numpy()
+            for uid in probe_uids_ordered if uid in refs_by_uid}
 
 
-def _run_slda(tasks: list, train_ds: BehavioralDataset,
-              eval_ds_slda: BehavioralDataset):
-    """
-    Full SLDA pipeline:
-      Stage 1 (always)        — fit per-task ridge decoders on frozen CLIP.
-      Stage 2 (if not frozen) — fine-tune attnpool through fixed decoders.
-
-    Returns (pred_matrix, scalers, models, temps).
-    """
+def _run_slda(tasks: list, train_ds: BehavioralDataset):
     scalers, models, temps = _fit_slda(tasks, train_ds)
-
     if not cfg.FREEZE_ENCODER_SLDA:
         agent_slda = _init_slda_attnpool_agent()
         finetune_slda_attnpool(
             agent_slda, scalers, models, temps,
-            train_ds, eval_ds_slda, refs_dict,
-            n_epochs  = cfg.N_EPOCHS_PHASE2,
-            patience  = cfg.PATIENCE_PHASE2,
-            lr        = cfg.LR_ATTNPOOL,
+            train_ds, eval_ds, refs_dict,
+            n_epochs = cfg.N_EPOCHS_PHASE2,
+            patience = cfg.PATIENCE_PHASE2,
+            lr       = cfg.LR_ATTNPOOL,
         )
         pred = _slda_probe_matrix(scalers, models, temps,
                                   probe_features=_slda_probe_features(agent_slda))
@@ -545,68 +491,61 @@ def _run_slda(tasks: list, train_ds: BehavioralDataset,
         gc.collect(); torch.cuda.empty_cache()
     else:
         pred = _slda_probe_matrix(scalers, models, temps)
-
-    return pred, scalers, models, temps
-
-
-def _probe_stats(pred_mat: np.ndarray) -> tuple[float, float]:
-    """Return (cMSE−NF, Spearman ρ) for a predicted probe matrix."""
-    valid    = ~np.isnan(pred_mat) & ~np.isnan(true_matrix)
-    cmse_nf  = float(np.mean((pred_mat[valid] - true_matrix[valid]) ** 2)) - probe_noise_floor
-    rho, _   = spearmanr(pred_mat[valid], true_matrix[valid])
-    return cmse_nf, float(rho)
+    return pred
 
 
-# ---------------------------------------------------------------------------
-# Random-guesser and random-init DLBT baselines
-# ---------------------------------------------------------------------------
-print("\nComputing baselines...")
-pred_random          = np.full((n_probe, n_all_tasks), 0.5)
-random_cmse_nf, _    = _probe_stats(pred_random)
+# ===========================================================================
+# Oracle agent  (no training — evaluated once)
+# ===========================================================================
+print("\nEvaluating Oracle agent...")
+oracle_agent = OracleBTAgent(
+    concentration     = cfg.ORACLE_CONCENTRATION,
+    background        = cfg.ORACLE_BACKGROUND,
+    device            = device,
+    normalize_utility = cfg.NORMALIZED_UTILITY,
+)
+oracle_agent.eval()
+pred_oracle        = _probe_matrix(oracle_agent)
+oracle_cmse, oracle_rho = _probe_stats(pred_oracle)
+del oracle_agent
+print(f"  Oracle cMSE−NF={oracle_cmse:+.5f}  ρ={oracle_rho:.4f}")
 
-# Random-init DLBT: average over all seeds for stability
-_rnd_cmse_list = []
-for _sv in cfg.SEEDS:
-    _ag = _init_agent(_sv)
-    _pm = _dlbt_probe_matrix(_ag)
-    _c, _ = _probe_stats(_pm)
-    _rnd_cmse_list.append(_c)
-    del _ag
-random_init_cmse_nf = float(np.mean(_rnd_cmse_list))
-print(f"  Random-guesser cMSE−NF : {random_cmse_nf:.5f}")
-print(f"  Random-init DLBT cMSE−NF : {random_init_cmse_nf:.5f}")
-
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # Main sweep
-# ---------------------------------------------------------------------------
+# ===========================================================================
 n_budgets = len(trial_budgets)
 n_seeds   = len(cfg.SEEDS)
 
-# [n_seeds × n_budgets] result matrices
-dlbt_cmse = np.full((n_seeds, n_budgets), np.nan)
-dlbt_rho  = np.full((n_seeds, n_budgets), np.nan)
-slda_cmse = np.full((n_seeds, n_budgets), np.nan)
-slda_rho  = np.full((n_seeds, n_budgets), np.nan)
-anti_cmse = np.full((n_seeds, n_budgets), np.nan)
-anti_rho  = np.full((n_seeds, n_budgets), np.nan)
+dlbt_cmse    = np.full((n_seeds, n_budgets), np.nan)
+dlbt_rho     = np.full((n_seeds, n_budgets), np.nan)
+detbt_cmse   = np.full((n_seeds, n_budgets), np.nan)
+detbt_rho    = np.full((n_seeds, n_budgets), np.nan)
+slda_cmse    = np.full((n_seeds, n_budgets), np.nan)
+slda_rho     = np.full((n_seeds, n_budgets), np.nan)
+randont_cmse = np.full((n_seeds, n_budgets), np.nan)
+randont_rho  = np.full((n_seeds, n_budgets), np.nan)
 
-# [n_seeds] all-data results
-dlbt_all_cmse = np.full(n_seeds, np.nan)
-dlbt_all_rho  = np.full(n_seeds, np.nan)
-slda_all_cmse = np.full(n_seeds, np.nan)
-slda_all_rho  = np.full(n_seeds, np.nan)
-anti_all_cmse = np.full(n_seeds, np.nan)
-anti_all_rho  = np.full(n_seeds, np.nan)
+dlbt_all_cmse    = np.full(n_seeds, np.nan)
+dlbt_all_rho     = np.full(n_seeds, np.nan)
+detbt_all_cmse   = np.full(n_seeds, np.nan)
+detbt_all_rho    = np.full(n_seeds, np.nan)
+slda_all_cmse    = np.full(n_seeds, np.nan)
+slda_all_rho     = np.full(n_seeds, np.nan)
+randont_all_cmse = np.full(n_seeds, np.nan)
+randont_all_rho  = np.full(n_seeds, np.nan)
 
 for s_i, seed_val in enumerate(cfg.SEEDS):
     print(f"\n{'='*60}")
     print(f"Seed {s_i+1}/{n_seeds}  (seed_val={seed_val})")
 
-    # Separate rngs per model type so DLBT, SLDA, and anti each draw
-    # independently — but all are reproducible given seed_val.
-    rng_dlbt = np.random.default_rng(seed_val)
-    rng_slda = np.random.default_rng(seed_val + 100_000)
-    rng_anti = np.random.default_rng(seed_val + 200_000)
+    rng_dlbt  = np.random.default_rng(seed_val)
+    rng_detbt = np.random.default_rng(seed_val + 50_000)
+    rng_slda  = np.random.default_rng(seed_val + 100_000)
+    rng_rando = np.random.default_rng(seed_val + 200_000)
+
+    # Sample a new random ontology for each seed (different random partitions
+    # per seed averages over both training randomness and ontology randomness).
+    rand_du = make_rand_ontology(all_tasks_ordered, seed=seed_val + 200_000)
 
     # ---- Budget grid -------------------------------------------------------
     for b_i, budget in enumerate(trial_budgets):
@@ -614,56 +553,72 @@ for s_i, seed_val in enumerate(cfg.SEEDS):
 
         # DLBT
         train_ds = _bootstrap_sample(all_tasks_ordered, budget, rng_dlbt)
-        agent    = _init_agent(seed_val)
-        _train_one(agent, train_ds)
-        pred     = _dlbt_probe_matrix(agent)
+        agent    = _init_dlbt(seed_val)
+        _train_dlbt(agent, train_ds)
+        pred     = _probe_matrix(agent)
         dlbt_cmse[s_i, b_i], dlbt_rho[s_i, b_i] = _probe_stats(pred)
         print(f"    DLBT   cMSE−NF={dlbt_cmse[s_i,b_i]:+.5f}  ρ={dlbt_rho[s_i,b_i]:.3f}")
         del agent, train_ds, pred
         gc.collect(); torch.cuda.empty_cache()
 
+        # DetBT
+        train_ds = _bootstrap_sample(all_tasks_ordered, budget, rng_detbt)
+        agent    = _init_detbt(seed_val)
+        _train_detbt(agent, train_ds)
+        pred     = _probe_matrix(agent)
+        detbt_cmse[s_i, b_i], detbt_rho[s_i, b_i] = _probe_stats(pred)
+        print(f"    DetBT  cMSE−NF={detbt_cmse[s_i,b_i]:+.5f}  ρ={detbt_rho[s_i,b_i]:.3f}")
+        del agent, train_ds, pred
+        gc.collect(); torch.cuda.empty_cache()
+
         # SLDA
         train_ds_s = _bootstrap_sample(all_tasks_ordered, budget, rng_slda)
-        pred_s, sca, mod, tmp = _run_slda(all_tasks_ordered, train_ds_s, eval_ds)
+        pred_s     = _run_slda(all_tasks_ordered, train_ds_s)
         slda_cmse[s_i, b_i], slda_rho[s_i, b_i] = _probe_stats(pred_s)
         print(f"    SLDA   cMSE−NF={slda_cmse[s_i,b_i]:+.5f}  ρ={slda_rho[s_i,b_i]:.3f}")
-        del train_ds_s, sca, mod, tmp, pred_s
+        del train_ds_s, pred_s
 
-        # Anti-human DLBT (label-flipped, early stopping on flipped val set)
-        train_ds_a = _bootstrap_sample(all_tasks_ordered, budget, rng_anti, flip=True)
-        agent_a    = _init_agent(seed_val)
-        _train_one(agent_a, train_ds_a, val_ds=eval_ds_anti)
-        pred_a     = _dlbt_probe_matrix(agent_a)
-        anti_cmse[s_i, b_i], anti_rho[s_i, b_i] = _probe_stats(pred_a)
-        print(f"    Anti   cMSE−NF={anti_cmse[s_i,b_i]:+.5f}  ρ={anti_rho[s_i,b_i]:.3f}")
-        del agent_a, train_ds_a, pred_a
+        # RandOnt
+        train_ds_r = _bootstrap_sample(all_tasks_ordered, budget, rng_rando)
+        agent      = _init_randont(seed_val, rand_du)
+        _train_randont(agent, train_ds_r)
+        pred_r     = _probe_matrix(agent)
+        randont_cmse[s_i, b_i], randont_rho[s_i, b_i] = _probe_stats(pred_r)
+        print(f"    RandOnt cMSE−NF={randont_cmse[s_i,b_i]:+.5f}  ρ={randont_rho[s_i,b_i]:.3f}")
+        del agent, train_ds_r, pred_r
         gc.collect(); torch.cuda.empty_cache()
 
     # ---- All-data point ----------------------------------------------------
     print(f"\n  [All data — {total_pool_size:,} trials]")
-
     all_ds = _all_data_ds(all_tasks_ordered)
 
-    agent_all = _init_agent(seed_val)
-    _train_one(agent_all, all_ds)
-    pred_all = _dlbt_probe_matrix(agent_all)
-    dlbt_all_cmse[s_i], dlbt_all_rho[s_i] = _probe_stats(pred_all)
+    agent = _init_dlbt(seed_val)
+    _train_dlbt(agent, all_ds)
+    pred  = _probe_matrix(agent)
+    dlbt_all_cmse[s_i], dlbt_all_rho[s_i] = _probe_stats(pred)
     print(f"    DLBT all  cMSE−NF={dlbt_all_cmse[s_i]:+.5f}  ρ={dlbt_all_rho[s_i]:.3f}")
-    del agent_all, pred_all
+    del agent, pred
     gc.collect(); torch.cuda.empty_cache()
 
-    pred_sa, sca, mod, tmp = _run_slda(all_tasks_ordered, all_ds, eval_ds)
+    agent = _init_detbt(seed_val)
+    _train_detbt(agent, all_ds)
+    pred  = _probe_matrix(agent)
+    detbt_all_cmse[s_i], detbt_all_rho[s_i] = _probe_stats(pred)
+    print(f"    DetBT all cMSE−NF={detbt_all_cmse[s_i]:+.5f}  ρ={detbt_all_rho[s_i]:.3f}")
+    del agent, pred
+    gc.collect(); torch.cuda.empty_cache()
+
+    pred_sa = _run_slda(all_tasks_ordered, all_ds)
     slda_all_cmse[s_i], slda_all_rho[s_i] = _probe_stats(pred_sa)
     print(f"    SLDA all  cMSE−NF={slda_all_cmse[s_i]:+.5f}  ρ={slda_all_rho[s_i]:.3f}")
-    del sca, mod, tmp, pred_sa
+    del pred_sa
 
-    anti_all_ds = _all_data_ds(all_tasks_ordered, flip=True)
-    agent_anti_all = _init_agent(seed_val)
-    _train_one(agent_anti_all, anti_all_ds, val_ds=eval_ds_anti)
-    pred_aa = _dlbt_probe_matrix(agent_anti_all)
-    anti_all_cmse[s_i], anti_all_rho[s_i] = _probe_stats(pred_aa)
-    print(f"    Anti all  cMSE−NF={anti_all_cmse[s_i]:+.5f}  ρ={anti_all_rho[s_i]:.3f}")
-    del agent_anti_all, pred_aa, anti_all_ds
+    agent = _init_randont(seed_val, rand_du)
+    _train_randont(agent, all_ds)
+    pred  = _probe_matrix(agent)
+    randont_all_cmse[s_i], randont_all_rho[s_i] = _probe_stats(pred)
+    print(f"    RandOnt all cMSE−NF={randont_all_cmse[s_i]:+.5f}  ρ={randont_all_rho[s_i]:.3f}")
+    del agent, pred
     gc.collect(); torch.cuda.empty_cache()
 
 # ---------------------------------------------------------------------------
@@ -677,25 +632,33 @@ summary = {
     "all_tasks_ordered":   all_tasks_ordered,
     "probe_uids_ordered":  probe_uids_ordered,
     "true_matrix":         true_matrix,
-    "count_matrix":        count_matrix,        # saved so analysis.py can recompute ceiling
+    "count_matrix":        count_matrix,
     "probe_noise_floor":   probe_noise_floor,
-    "random_cmse_nf":      random_cmse_nf,
-    "random_init_cmse_nf": random_init_cmse_nf,
+    "random_cmse_net":     random_cmse_net,
     "rho_noise_ceiling":   rho_noise_ceiling,
+    # Oracle (scalar — no training)
+    "oracle_cmse":         oracle_cmse,
+    "oracle_rho":          oracle_rho,
+    "oracle_concentration": cfg.ORACLE_CONCENTRATION,
+    "oracle_background":   cfg.ORACLE_BACKGROUND,
     # Budget sweep [n_seeds × n_budgets]
     "dlbt_cmse":           dlbt_cmse,
     "dlbt_rho":            dlbt_rho,
+    "detbt_cmse":          detbt_cmse,
+    "detbt_rho":           detbt_rho,
     "slda_cmse":           slda_cmse,
     "slda_rho":            slda_rho,
-    "anti_cmse":           anti_cmse,
-    "anti_rho":            anti_rho,
+    "randont_cmse":        randont_cmse,
+    "randont_rho":         randont_rho,
     # All-data point [n_seeds]
     "dlbt_all_cmse":       dlbt_all_cmse,
     "dlbt_all_rho":        dlbt_all_rho,
+    "detbt_all_cmse":      detbt_all_cmse,
+    "detbt_all_rho":       detbt_all_rho,
     "slda_all_cmse":       slda_all_cmse,
     "slda_all_rho":        slda_all_rho,
-    "anti_all_cmse":       anti_all_cmse,
-    "anti_all_rho":        anti_all_rho,
+    "randont_all_cmse":    randont_all_cmse,
+    "randont_all_rho":     randont_all_rho,
 }
 
 out_path = cfg.RESULTS_DIR / f"{cfg.RUN_TAG}.pkl"

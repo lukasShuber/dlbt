@@ -57,8 +57,8 @@ TRIAL_BUDGETS: list[int] = sorted({
 # ---------------------------------------------------------------------------
 # Seeds
 # ---------------------------------------------------------------------------
-N_SEEDS = 1
-SEEDS   = [42]
+N_SEEDS = 5
+SEEDS   = [42, 43, 44, 45, 46]
 
 # ---------------------------------------------------------------------------
 # Fast-pass mode  (quick smoke-test: min + max budget only)
@@ -78,7 +78,7 @@ PATIENCE_PHASE2 = 50
 LR              = 0.01
 LR_ATTNPOOL     = 1e-5
 N_MC            = 1000
-FREEZE_ENCODER      = False  # DLBT: freeze CLIP encoder (no attnpool fine-tuning)
+FREEZE_ENCODER      = True  # DLBT: freeze CLIP encoder (no attnpool fine-tuning)
 FREEZE_ENCODER_SLDA = True   # SLDA: freeze CLIP encoder (no attnpool fine-tuning)
 MAPPER_HIDDEN      = None
 NORMALIZED_UTILITY = True
@@ -98,12 +98,14 @@ INIT_SEED       = 0
 MEDIAN_CORRECTION = True
 NEUTRAL_ALPHA     = (INIT_ALPHA_LOW + INIT_ALPHA_HIGH) / 2   # 0.65
 
-RUN_TAG = "efficiency_main"
+_enc_dlbt = "frozen" if FREEZE_ENCODER      else "attnpool"
+_enc_slda = "frozen" if FREEZE_ENCODER_SLDA else "attnpool"
+RUN_TAG   = f"efficiency_main_dlbt_{_enc_dlbt}_slda_{_enc_slda}_s{len(SEEDS)}"
 
 # ---------------------------------------------------------------------------
 # Plot options
 # ---------------------------------------------------------------------------
-LOG_Y = False   # log-scale y-axis on the cMSE figure (also overridable via --log-y)
+LOG_Y = True   # log-scale y-axis on the cMSE figure (also overridable via --log-y)
 
 # ---------------------------------------------------------------------------
 # Plot colours

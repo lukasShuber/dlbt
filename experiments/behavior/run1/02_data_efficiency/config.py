@@ -90,7 +90,9 @@ INIT_SEED       = 0
 MEDIAN_CORRECTION = False
 NEUTRAL_ALPHA     = (INIT_ALPHA_LOW + INIT_ALPHA_HIGH) / 2   # 0.65
 
-RUN_TAG = ("frozen" if FREEZE_ENCODER else "attnpool") + "_coverage_norm"
+_enc_dlbt = "frozen" if FREEZE_ENCODER      else "attnpool"
+_enc_slda = "frozen" if FREEZE_ENCODER_SLDA else "attnpool"
+RUN_TAG   = f"dlbt_{_enc_dlbt}_slda_{_enc_slda}_coverage_norm"
 
 # ---------------------------------------------------------------------------
 # Plot colours (used in learning-curve plots)
