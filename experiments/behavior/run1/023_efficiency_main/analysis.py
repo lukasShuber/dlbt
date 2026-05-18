@@ -1,7 +1,10 @@
 """
 run1/023_efficiency_main/analysis.py — budget-sweep plots.
 
-Produces two figures (cMSE−NF and Spearman ρ vs. trial budget):
+Produces two figures (cMSE−NF and Spearman ρ vs. trial budget) for every
+efficiency_main*.pkl found in results/.  Each pkl gets its own subdirectory
+under results/plots/<pkl-stem>/ so different config runs don't overwrite each
+other.
 
   Traces (mean ± SEM across seeds):
     • DLBT          — red solid
@@ -18,6 +21,8 @@ Produces two figures (cMSE−NF and Spearman ρ vs. trial budget):
 
 Run from repo root:
     python experiments/behavior/run1/023_efficiency_main/analysis.py
+    python experiments/behavior/run1/023_efficiency_main/analysis.py --pkl PATH
+    python experiments/behavior/run1/023_efficiency_main/analysis.py --all
 """
 
 import argparse
@@ -40,99 +45,43 @@ import config as cfg
 # ---------------------------------------------------------------------------
 parser = argparse.ArgumentParser()
 parser.add_argument("--pkl", default=None,
-                    help="Path to efficiency_main.pkl. Default: auto-discover.")
+                    help="Path to a specific pkl. Default: match current config.")
+parser.add_argument("--all", action="store_true",
+                    help="Process every efficiency_main*.pkl in results/.")
 parser.add_argument("--log-y", action="store_true",
                     help="Log-scale y-axis on cMSE plot (also set via cfg.LOG_Y).")
 args = parser.parse_args()
 
-# cfg.LOG_Y or --log-y both work
 _log_y = cfg.LOG_Y or args.log_y
 
 # ---------------------------------------------------------------------------
-# Load
+# Collect pkl paths to process
 # ---------------------------------------------------------------------------
 if args.pkl:
-    pkl_path = Path(args.pkl)
+    pkl_paths = [Path(args.pkl)]
+elif args.all:
+    pkl_paths = sorted(cfg.RESULTS_DIR.glob("efficiency_main*.pkl"))
+    if not pkl_paths:
+        raise FileNotFoundError(f"No efficiency_main*.pkl found in {cfg.RESULTS_DIR}")
 else:
-    pkl_path = cfg.RESULTS_DIR / f"{cfg.RUN_TAG}.pkl"
-    if not pkl_path.exists():
+    # Default: prefer the pkl that matches the current config flags; fall back
+    # to the most recent one if it doesn't exist yet.
+    primary = cfg.RESULTS_DIR / f"{cfg.RUN_TAG}.pkl"
+    if primary.exists():
+        pkl_paths = [primary]
+    else:
         candidates = sorted(cfg.RESULTS_DIR.glob("efficiency_main*.pkl"))
-        # Prefer the one matching the current config flags
-        matching = [p for p in candidates if cfg.RUN_TAG in p.stem]
-        if matching:
-            pkl_path = matching[-1]
-        elif candidates:
-            pkl_path = candidates[-1]
-        else:
-            raise FileNotFoundError(f"No pkl found in {cfg.RESULTS_DIR}")
+        matching   = [p for p in candidates if cfg.RUN_TAG in p.stem]
+        pkl_paths  = matching if matching else (candidates[-1:] if candidates else [])
+    if not pkl_paths:
+        raise FileNotFoundError(f"No pkl found in {cfg.RESULTS_DIR}")
 
-print(f"Loading: {pkl_path.name}")
-with open(pkl_path, "rb") as f:
-    d = pickle.load(f)
-
-budgets          = np.array(d["trial_budgets"])          # [n_budgets]
-total_pool_size  = d["total_pool_size"]
-seeds            = d["seeds"]
-n_seeds          = len(seeds)
-
-dlbt_cmse = d["dlbt_cmse"]    # [n_seeds, n_budgets]
-dlbt_rho  = d["dlbt_rho"]
-slda_cmse = d["slda_cmse"]
-slda_rho  = d["slda_rho"]
-anti_cmse = d["anti_cmse"]
-anti_rho  = d["anti_rho"]
-
-dlbt_all_cmse = d["dlbt_all_cmse"]   # [n_seeds]
-dlbt_all_rho  = d["dlbt_all_rho"]
-slda_all_cmse = d["slda_all_cmse"]
-slda_all_rho  = d["slda_all_rho"]
-anti_all_cmse = d["anti_all_cmse"]
-anti_all_rho  = d["anti_all_rho"]
-
-random_cmse_nf      = d["random_cmse_nf"]
-random_init_cmse_nf = d["random_init_cmse_nf"]
-probe_noise_floor   = d["probe_noise_floor"]
-rho_noise_ceiling   = d.get("rho_noise_ceiling", float("nan"))
-
-# If ceiling is missing (old pkl), compute it from count_matrix
-if np.isnan(rho_noise_ceiling) and "count_matrix" in d:
-    from scipy.stats import spearmanr as _spearmanr
-
-    def _rho_nc_from_counts(true_mat, count_mat, n_splits=200, seed=0):
-        """Split-half Spearman ρ ceiling from saved count_matrix."""
-        # Flatten to (uid, task) cells with ≥ 2 observations
-        mask    = count_mat > 1
-        totals  = count_mat[mask].astype(int)
-        count1s = np.round(true_mat[mask] * totals).astype(int)
-        n1s     = totals // 2
-        n2s     = totals - n1s
-        if len(totals) < 2:
-            return float("nan")
-        rng = np.random.default_rng(seed)
-        vals = []
-        for _ in range(n_splits):
-            k1 = np.array([rng.hypergeometric(c1, t - c1, n1)
-                           for c1, t, n1 in zip(count1s, totals, n1s)], dtype=float)
-            p1 = k1 / n1s
-            p2 = (count1s - k1) / n2s
-            rh, _ = _spearmanr(p1, p2)
-            if not np.isnan(rh) and rh > -1:
-                vals.append((2 * rh) / (1 + rh))
-        return float(np.mean(vals)) if vals else float("nan")
-
-    print("Computing Spearman ρ noise ceiling from count_matrix...")
-    count_matrix      = d["count_matrix"]
-    true_matrix_local = d["true_matrix"]
-    rho_noise_ceiling = _rho_nc_from_counts(true_matrix_local, count_matrix)
-    print(f"  ρ noise ceiling: {rho_noise_ceiling:.4f}")
-elif np.isnan(rho_noise_ceiling):
-    print("[warn] rho_noise_ceiling not available in pkl — re-run run.py to generate it.")
-
-plots_dir = cfg.RESULTS_DIR / "plots"
-plots_dir.mkdir(exist_ok=True)
+print(f"Processing {len(pkl_paths)} pkl(s):")
+for p in pkl_paths:
+    print(f"  {p.name}")
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Helpers (shared across all pkls)
 # ---------------------------------------------------------------------------
 
 def _mean_sem(arr: np.ndarray):
@@ -169,7 +118,7 @@ def _plot_all_data_marker(ax, x, mu, sem, color, zorder=5):
 
 
 def _xaxis_setup(ax):
-    """Log x-axis from 10^2 to 10^5 — same style as 02/022, no ticks below 10^2."""
+    """Log x-axis from 10^2 to 10^5."""
     ax.set_xscale("log")
     ax.set_xlim(70, 1.5e5)
     ax.set_xticks([100, 1_000, 10_000, 100_000])
@@ -177,120 +126,177 @@ def _xaxis_setup(ax):
     ax.set_xlabel("Total trial budget", fontsize=11)
 
 
+def _rho_nc_from_counts(true_mat, count_mat, n_splits=200, seed=0):
+    """Split-half Spearman ρ ceiling from saved count_matrix."""
+    from scipy.stats import spearmanr as _spearmanr
+    mask    = count_mat > 1
+    totals  = count_mat[mask].astype(int)
+    count1s = np.round(true_mat[mask] * totals).astype(int)
+    n1s     = totals // 2
+    n2s     = totals - n1s
+    if len(totals) < 2:
+        return float("nan")
+    rng = np.random.default_rng(seed)
+    vals = []
+    for _ in range(n_splits):
+        k1 = np.array([rng.hypergeometric(c1, t - c1, n1)
+                       for c1, t, n1 in zip(count1s, totals, n1s)], dtype=float)
+        p1 = k1 / n1s
+        p2 = (count1s - k1) / n2s
+        rh, _ = _spearmanr(p1, p2)
+        if not np.isnan(rh) and rh > -1:
+            vals.append((2 * rh) / (1 + rh))
+    return float(np.mean(vals)) if vals else float("nan")
+
+
 # ---------------------------------------------------------------------------
-# Figure factory
+# Per-pkl processing
 # ---------------------------------------------------------------------------
 
-def _make_figure(metric: str):
-    """
-    metric: "cmse" or "rho"
-    Anti-human is plotted on cMSE only; omitted from the ρ figure.
-    """
-    is_cmse = metric == "cmse"
+def process_pkl(pkl_path: Path):
+    print(f"\n{'='*60}")
+    print(f"Loading: {pkl_path.name}")
 
-    dlbt_mu, dlbt_sem = _mean_sem(dlbt_cmse if is_cmse else dlbt_rho)
-    slda_mu, slda_sem = _mean_sem(slda_cmse if is_cmse else slda_rho)
+    with open(pkl_path, "rb") as f:
+        d = pickle.load(f)
 
-    dlbt_all_mu, dlbt_all_sem = _mean_sem_scalar(
-        dlbt_all_cmse if is_cmse else dlbt_all_rho)
-    slda_all_mu, slda_all_sem = _mean_sem_scalar(
-        slda_all_cmse if is_cmse else slda_all_rho)
+    budgets         = np.array(d["trial_budgets"])
+    total_pool_size = d["total_pool_size"]
+    seeds           = d["seeds"]
+    n_seeds         = len(seeds)
 
-    fig, ax = plt.subplots(figsize=(5.0, 4.5))
+    dlbt_cmse = d["dlbt_cmse"]
+    dlbt_rho  = d["dlbt_rho"]
+    slda_cmse = d["slda_cmse"]
+    slda_rho  = d["slda_rho"]
+    anti_cmse = d["anti_cmse"]
+    anti_rho  = d["anti_rho"]
 
-    # ---- Reference lines (cMSE only) ----
-    if is_cmse:
-        ax.axhline(random_cmse_nf, color=cfg.C_RNDINI, lw=1.5,
-                   ls=(0, (4, 3)), label="Random (P=0.5)", zorder=1)
-        ax.axhline(random_init_cmse_nf, color=cfg.C_RNDINI, lw=1.5,
-                   ls=":", label="Random-init DLBT", zorder=1)
+    dlbt_all_cmse = d["dlbt_all_cmse"]
+    dlbt_all_rho  = d["dlbt_all_rho"]
+    slda_all_cmse = d["slda_all_cmse"]
+    slda_all_rho  = d["slda_all_rho"]
+    anti_all_cmse = d["anti_all_cmse"]
+    anti_all_rho  = d["anti_all_rho"]
 
-    # ---- Budget-grid traces ----
-    _plot_trace(ax, budgets, dlbt_mu, dlbt_sem, cfg.C_DLBT, "DLBT", zorder=4)
-    _plot_trace(ax, budgets, slda_mu, slda_sem, cfg.C_SLDA, "SLDA", zorder=3)
+    random_cmse_nf      = d["random_cmse_nf"]
+    random_init_cmse_nf = d["random_init_cmse_nf"]
+    probe_noise_floor   = d["probe_noise_floor"]
+    rho_noise_ceiling   = d.get("rho_noise_ceiling", float("nan"))
 
-    if is_cmse:
-        # Anti-human: gray solid, cMSE figure only
-        anti_mu, anti_sem = _mean_sem(anti_cmse)
-        anti_all_mu, anti_all_sem = _mean_sem_scalar(anti_all_cmse)
-        _plot_trace(ax, budgets, anti_mu, anti_sem,
-                    cfg.C_ANTI, "Anti-human DLBT", zorder=2)
+    if np.isnan(rho_noise_ceiling) and "count_matrix" in d:
+        print("  Computing ρ noise ceiling from count_matrix...")
+        rho_noise_ceiling = _rho_nc_from_counts(d["true_matrix"], d["count_matrix"])
+        print(f"  ρ noise ceiling: {rho_noise_ceiling:.4f}")
+    elif np.isnan(rho_noise_ceiling):
+        print("  [warn] rho_noise_ceiling missing — re-run run.py to generate it.")
+
+    print(f"  Seeds: {n_seeds}  Budgets: {list(budgets)}")
+
+    # Each pkl gets its own plots subdirectory named after the pkl stem
+    plots_dir = cfg.RESULTS_DIR / "plots" / pkl_path.stem
+    plots_dir.mkdir(parents=True, exist_ok=True)
+
+    # ---- Figure factory ----
+    def _make_figure(metric: str):
+        is_cmse = metric == "cmse"
+
+        dlbt_mu, dlbt_sem = _mean_sem(dlbt_cmse if is_cmse else dlbt_rho)
+        slda_mu, slda_sem = _mean_sem(slda_cmse if is_cmse else slda_rho)
+
+        dlbt_all_mu, dlbt_all_sem = _mean_sem_scalar(
+            dlbt_all_cmse if is_cmse else dlbt_all_rho)
+        slda_all_mu, slda_all_sem = _mean_sem_scalar(
+            slda_all_cmse if is_cmse else slda_all_rho)
+
+        fig, ax = plt.subplots(figsize=(5.0, 4.5))
+
+        if is_cmse:
+            ax.axhline(random_cmse_nf, color=cfg.C_RNDINI, lw=1.5,
+                       ls=(0, (4, 3)), label="Random (P=0.5)", zorder=1)
+            ax.axhline(random_init_cmse_nf, color=cfg.C_RNDINI, lw=1.5,
+                       ls=":", label="Random-init DLBT", zorder=1)
+
+        _plot_trace(ax, budgets, dlbt_mu, dlbt_sem, cfg.C_DLBT, "DLBT", zorder=4)
+        _plot_trace(ax, budgets, slda_mu, slda_sem, cfg.C_SLDA, "SLDA", zorder=3)
+
+        if is_cmse:
+            anti_mu, anti_sem = _mean_sem(anti_cmse)
+            anti_all_mu, anti_all_sem = _mean_sem_scalar(anti_all_cmse)
+            _plot_trace(ax, budgets, anti_mu, anti_sem,
+                        cfg.C_ANTI, "Anti-human DLBT", zorder=2)
+            _plot_all_data_marker(ax, total_pool_size,
+                                  anti_all_mu, anti_all_sem, cfg.C_ANTI, zorder=4)
+
         _plot_all_data_marker(ax, total_pool_size,
-                              anti_all_mu, anti_all_sem, cfg.C_ANTI, zorder=4)
+                              dlbt_all_mu, dlbt_all_sem, cfg.C_DLBT, zorder=5)
+        _plot_all_data_marker(ax, total_pool_size,
+                              slda_all_mu, slda_all_sem, cfg.C_SLDA, zorder=5)
 
-    # ---- All-data markers (filled, disconnected) ----
-    _plot_all_data_marker(ax, total_pool_size,
-                          dlbt_all_mu, dlbt_all_sem, cfg.C_DLBT, zorder=5)
-    _plot_all_data_marker(ax, total_pool_size,
-                          slda_all_mu, slda_all_sem, cfg.C_SLDA, zorder=5)
+        _xaxis_setup(ax)
 
-    # ---- Axes ----
-    _xaxis_setup(ax)
-
-    if is_cmse:
-        ax.set_ylabel("cMSE − noise floor", fontsize=11)
-        if _log_y:
-            ax.set_yscale("log")
-            ax.set_ylim(0.01, 1.0)
-            ax.set_yticks([0.01, 0.1, 1])
-            ax.set_yticklabels([r"$10^{-2}$", r"$10^{-1}$", r"$10^{0}$"])
+        if is_cmse:
+            ax.set_ylabel("cMSE − noise floor", fontsize=11)
+            if _log_y:
+                ax.set_yscale("log")
+                ax.set_ylim(0.01, 1.0)
+                ax.set_yticks([0.01, 0.1, 1])
+                ax.set_yticklabels([r"$10^{-2}$", r"$10^{-1}$", r"$10^{0}$"])
+            else:
+                ax.set_ylim(0, 0.34)
+            legend_loc = "upper right"
         else:
-            ax.set_ylim(0, 0.34)
-        legend_loc = "upper right"
-    else:
-        ax.set_ylabel(r"Spearman $\rho$", fontsize=11)
-        ax.set_ylim(0, 1)
-        if not np.isnan(rho_noise_ceiling):
-            ax.axhline(rho_noise_ceiling, color="#555555", lw=1.5,
-                       ls=(0, (2, 2)), label="Noise ceiling", zorder=2)
-        legend_loc = "lower right"
+            ax.set_ylabel(r"Spearman $\rho$", fontsize=11)
+            ax.set_ylim(0, 1)
+            if not np.isnan(rho_noise_ceiling):
+                ax.axhline(rho_noise_ceiling, color="#555555", lw=1.5,
+                           ls=(0, (2, 2)), label="Noise ceiling", zorder=2)
+            legend_loc = "lower right"
 
-    ax.legend(fontsize=8, frameon=False, loc=legend_loc)
-    sns.despine(top=True, right=True, left=False, bottom=False)
-    plt.tight_layout()
+        ax.legend(fontsize=8, frameon=False, loc=legend_loc)
+        sns.despine(top=True, right=True, left=False, bottom=False)
+        plt.tight_layout()
 
-    tag = "cmse" if is_cmse else "rho"
-    out = plots_dir / f"plot_{tag}.png"
-    fig.savefig(out, dpi=300, bbox_inches="tight")
-    plt.close(fig)
-    print(f"Saved: {out}")
+        tag = "cmse" if is_cmse else "rho"
+        out = plots_dir / f"plot_{tag}.png"
+        fig.savefig(out, dpi=300, bbox_inches="tight")
+        plt.close(fig)
+        print(f"  Saved: {out.relative_to(cfg.RESULTS_DIR)}")
+
+    _make_figure("cmse")
+    _make_figure("rho")
+
+    # ---- Summary table ----
+    print()
+    print(f"  {'Model':<20}  {'budget':>10}  {'cMSE-NF (mean±SEM)':>22}  {'ρ (mean±SEM)':>16}")
+    print("  " + "-" * 68)
+
+    for label, cmse_arr, rho_arr in [
+        ("DLBT",       dlbt_cmse, dlbt_rho),
+        ("SLDA",       slda_cmse, slda_rho),
+        ("Anti-human", anti_cmse, anti_rho),
+    ]:
+        for b_i, b in enumerate(budgets):
+            mu_c, sem_c = _mean_sem_scalar(cmse_arr[:, b_i])
+            mu_r, sem_r = _mean_sem_scalar(rho_arr[:, b_i])
+            print(f"  {label:<20}  {b:>10,}  "
+                  f"{mu_c:+.5f} ± {sem_c:.5f}  "
+                  f"{mu_r:+.4f} ± {sem_r:.4f}")
+
+        c_all = (dlbt_all_cmse if label == "DLBT" else
+                 slda_all_cmse if label == "SLDA" else anti_all_cmse)
+        r_all = (dlbt_all_rho  if label == "DLBT" else
+                 slda_all_rho  if label == "SLDA" else anti_all_rho)
+        mu_c, sem_c = _mean_sem_scalar(c_all)
+        mu_r, sem_r = _mean_sem_scalar(r_all)
+        print(f"  {label:<20}  {'all data':>10}  "
+              f"{mu_c:+.5f} ± {sem_c:.5f}  "
+              f"{mu_r:+.4f} ± {sem_r:.4f}")
+        print()
 
 
 # ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
-_make_figure("cmse")
-_make_figure("rho")
-
-# ---------------------------------------------------------------------------
-# Print summary table
-# ---------------------------------------------------------------------------
-print("\n" + "=" * 70)
-print(f"{'Model':<20}  {'budget':>10}  {'cMSE-NF (mean±SEM)':>22}  {'ρ (mean±SEM)':>16}")
-print("-" * 70)
-
-for label, cmse_arr, rho_arr in [
-    ("DLBT",         dlbt_cmse, dlbt_rho),
-    ("SLDA",         slda_cmse, slda_rho),
-    ("Anti-human",   anti_cmse, anti_rho),
-]:
-    for b_i, b in enumerate(budgets):
-        mu_c, sem_c = _mean_sem_scalar(cmse_arr[:, b_i])
-        mu_r, sem_r = _mean_sem_scalar(rho_arr[:, b_i])
-        print(f"  {label:<18}  {b:>10,}  "
-              f"{mu_c:+.5f} ± {sem_c:.5f}  "
-              f"{mu_r:+.4f} ± {sem_r:.4f}")
-
-    # All-data row
-    c_arr = (dlbt_all_cmse if label == "DLBT" else
-             slda_all_cmse if label == "SLDA" else anti_all_cmse)
-    r_arr = (dlbt_all_rho  if label == "DLBT" else
-             slda_all_rho  if label == "SLDA" else anti_all_rho)
-    mu_c, sem_c = _mean_sem_scalar(c_arr)
-    mu_r, sem_r = _mean_sem_scalar(r_arr)
-    print(f"  {label:<18}  {'all data':>10}  "
-          f"{mu_c:+.5f} ± {sem_c:.5f}  "
-          f"{mu_r:+.4f} ± {sem_r:.4f}")
-    print()
-
-print("=" * 70)
+for pkl_path in pkl_paths:
+    process_pkl(pkl_path)

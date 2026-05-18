@@ -446,7 +446,7 @@ print(f"\nAll plots saved to {PLOTS_DIR}")
 # This illustrates that normalization centres the mean at 0 but leaves the
 # distribution skewed, so the median stays negative for arity > 1.
 
-from scipy.stats import gaussian_kde  # noqa: E402 (late import, already in env)
+from scipy.stats import gaussian_kde, beta as _scipy_beta  # noqa: E402
 
 N_MC_SEU    = 2000   # Dirichlet samples per (image, task)
 N_IMGS_SEU  = 30     # probe images to use
@@ -581,3 +581,175 @@ out3 = PLOTS_DIR / "fig3_seu_distribution.png"
 fig3.savefig(out3, dpi=200, bbox_inches="tight")
 plt.close(fig3)
 print(f"Saved: {out3}")
+
+# ===========================================================================
+# Figure 4 — Is P(SEU > 0) = 0.5 under the uniform Dirichlet?
+#             Is the imbalance finite-MC noise or intrinsic?
+# ===========================================================================
+#
+# Colleague's question: "Check if for the uniform Dirichlet, given the prior
+# trick [normalised utility], P(SEU > 0) = 0.5 for all tasks."
+#
+# ANALYTIC REDUCTION
+# ------------------
+# With normalised utility and K=16 latent states:
+#
+#     ΔU_k = +1/m  for k ∈ Z+  (m = |Z+| = K / 2^arity)
+#     ΔU_k = -1/n  for k ∈ Z-  (n = K - m)
+#
+# For b ~ Dir(α·1_K), let p = Σ_{k∈Z+} b_k.  Then:
+#
+#     SEU = b · ΔU = p/m - (1-p)/n  >  0   ⟺   p > m/K = 1/2^arity
+#
+# And p ~ Beta(m·α, n·α) (marginal of a symmetric Dirichlet over a subset).
+#
+# Therefore:
+#
+#     P(SEU > 0) = P(Beta(m·α, n·α) > 1/2^arity)
+#
+# For arity = 1 (m = n = K/2):  Beta(m·α, m·α) is SYMMETRIC around 1/2
+#                                 → P = 0.5 exactly.
+# For arity > 1 (m < n):         mean of Beta = m/K = threshold, but the
+#                                 distribution is right-skewed (median < mean)
+#                                 → P(X > mean) < 0.5 for all α.
+#
+# This is NOT a finite-MC artifact: the MC estimator is unbiased for P(SEU>0).
+# More samples converge to the same value < 0.5, not to 0.5.
+
+alpha_init = (INIT_ALPHA_LOW + INIT_ALPHA_HIGH) / 2   # 0.65
+
+
+def _p_seu_analytic(arity: int, alpha: float, k: int = K) -> float:
+    """
+    Exact P(SEU > 0) for a uniform Dir(alpha·1_K) prior and the given arity.
+
+    Reduces the K-dimensional Dirichlet to a 1-D Beta via the subset-sum
+    marginal:  p = Σ_{k∈Z+} b_k  ~  Beta(m·alpha, n·alpha).
+    Then  SEU > 0  ⟺  p > m/K  (the threshold equals the mean of p).
+    """
+    m         = k // (2 ** arity)          # |Z+|
+    n         = k - m                      # |Z-|
+    threshold = m / k                      # 1 / 2^arity
+    # P(p > threshold) = survival function of Beta(m·α, n·α) at threshold
+    return float(_scipy_beta.sf(threshold, m * alpha, n * alpha))
+
+
+def _p_seu_mc(arity: int, alpha: float, n_mc: int,
+              n_reps: int = 40, seed: int = 7, k: int = K) -> tuple[float, float]:
+    """
+    MC estimate of P(SEU > 0) for Dir(alpha·1_K).
+
+    Uses the Gamma representation for speed; does NOT call the full DLBT
+    agent (we only need the sign of the SEU score, not the choice probability).
+
+    Returns (mean, std) over n_reps independent seeds so we can show the
+    estimator's variance shrinking with N.
+    """
+    m  = k // (2 ** arity)
+    n  = k - m
+    du = np.array([1.0 / m] * m + [-1.0 / n] * n, dtype=np.float64)
+    rng = np.random.default_rng(seed)
+    estimates = []
+    for _ in range(n_reps):
+        g   = rng.gamma(alpha, size=(n_mc, k))
+        b   = g / g.sum(axis=1, keepdims=True)    # [n_mc, K]
+        seu = b @ du                               # [n_mc]
+        estimates.append(float((seu > 0).mean()))
+    return float(np.mean(estimates)), float(np.std(estimates))
+
+
+# ---- Compute ----------------------------------------------------------------
+print("\nComputing P(SEU > 0) diagnostics for Figure 4 ...")
+
+n_mc_grid = [10, 32, 100, 316, 1000, 3162, 10_000, 31_623, 100_000, 316_228, 1_000_000]
+alpha_grid = np.linspace(0.05, 5.0, 300)
+
+p_mc_by_arity: dict[int, list[tuple[float, float]]] = {}
+p_analytic_at_init: dict[int, float] = {}
+
+for ar in arities:
+    p_analytic_at_init[ar] = _p_seu_analytic(ar, alpha_init)
+    row = []
+    for nmc in n_mc_grid:
+        # Fewer reps at large N — variance is already tiny
+        reps = max(5, min(40, 40 * 10_000 // nmc))
+        mu, sd = _p_seu_mc(ar, alpha_init, nmc, n_reps=reps)
+        row.append((mu, sd))
+    p_mc_by_arity[ar] = row
+    print(f"  arity={ar}  analytic={p_analytic_at_init[ar]:.5f}  "
+          f"MC(N=10k)={row[-1][0]:.4f} ± {row[-1][1]:.4f}")
+
+# ---- Print table (Colleague's diagnostic) -----------------------------------
+print()
+print("=" * 55)
+print("P(SEU > 0) — uniform Dir(α) prior, normalised utility")
+print("-" * 55)
+print(f"{'arity':>6}  {'|Z+|':>5}  {'analytic':>10}  {'bias from 0.5':>14}")
+for ar in arities:
+    m   = K // (2 ** ar)
+    p   = p_analytic_at_init[ar]
+    print(f"  {ar:>4}  {m:>5}  {p:>10.5f}  {p - 0.5:>+14.5f}")
+print("=" * 55)
+print(f"α = {alpha_init:.2f}, K = {K}")
+print("Conclusion: bias is INTRINSIC — finite-MC is not the cause.\n")
+
+# ---- Plot -------------------------------------------------------------------
+fig4, (ax4L, ax4R) = plt.subplots(1, 2, figsize=(11, 4.5),
+                                   gridspec_kw={"wspace": 0.38})
+
+# Left: P(SEU > 0) vs N_MC — does it converge to 0.5 or to something < 0.5?
+for ar in arities:
+    color = ARITY_COLOR[ar]
+    mus   = np.array([p_mc_by_arity[ar][i][0] for i in range(len(n_mc_grid))])
+    sds   = np.array([p_mc_by_arity[ar][i][1] for i in range(len(n_mc_grid))])
+    ax4L.fill_between(n_mc_grid, mus - sds, mus + sds, color=color, alpha=0.15)
+    ax4L.plot(n_mc_grid, mus, color=color, lw=2.0, label=f"{ar}-way")
+    # Analytic asymptote (dashed)
+    ax4L.axhline(p_analytic_at_init[ar], color=color, lw=1.0,
+                 ls="--", alpha=0.6, zorder=1)
+
+ax4L.axhline(0.5, color="black", lw=1.3, ls="-", zorder=2, label="0.5 (ideal)")
+ax4L.set_xscale("log")
+ax4L.set_xlabel("MC samples (N)", fontsize=10)
+ax4L.set_ylabel("P(SEU > 0)", fontsize=10)
+ax4L.set_title(
+    f"P(SEU > 0) vs MC sample size\n"
+    f"(Dir(α={alpha_init:.2f}·1_K), normalised utility)\n"
+    r"Dashed = analytic limit — NOT converging to 0.5 for arity > 1",
+    fontsize=8,
+)
+ax4L.set_ylim(0.3, 0.6)
+ax4L.legend(fontsize=8, frameon=False, loc="lower right")
+sns.despine(ax=ax4L, trim=True)
+
+# Right: Analytic P(SEU > 0) vs α — how does concentration affect the bias?
+for ar in arities:
+    color  = ARITY_COLOR[ar]
+    p_vals = [_p_seu_analytic(ar, a) for a in alpha_grid]
+    ax4R.plot(alpha_grid, p_vals, color=color, lw=2.0, label=f"{ar}-way")
+
+ax4R.axhline(0.5, color="black", lw=1.3, ls="-", zorder=2)
+# Shade the initialisation α range
+ax4R.axvspan(INIT_ALPHA_LOW, INIT_ALPHA_HIGH, color="gray", alpha=0.10,
+             label=f"init range [{INIT_ALPHA_LOW}, {INIT_ALPHA_HIGH}]")
+ax4R.set_xlabel("Dirichlet concentration α", fontsize=10)
+ax4R.set_ylabel("Analytic P(SEU > 0)", fontsize=10)
+ax4R.set_title(
+    "Analytic P(SEU > 0) vs concentration α\n"
+    "(K=16, normalised utility; gray = init range)\n"
+    "Arity-1 is always 0.5; arity > 1 is always < 0.5",
+    fontsize=8,
+)
+ax4R.set_ylim(0.3, 0.6)
+ax4R.legend(fontsize=8, frameon=False, loc="upper right")
+sns.despine(ax=ax4R, trim=True)
+
+fig4.suptitle(
+    "P(SEU > 0) under uniform Dirichlet with normalised utility\n"
+    "Arity > 1: bias is intrinsic to the Beta marginal — NOT a finite-MC artifact",
+    fontsize=10, y=1.02,
+)
+out4 = PLOTS_DIR / "fig4_p_seu_gt_0.png"
+fig4.savefig(out4, dpi=200, bbox_inches="tight")
+plt.close(fig4)
+print(f"Saved: {out4}")

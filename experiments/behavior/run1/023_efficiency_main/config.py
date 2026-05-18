@@ -95,7 +95,7 @@ INIT_SEED       = 0
 # ---------------------------------------------------------------------------
 # Median threshold correction (off by default; set True to enable)
 # ---------------------------------------------------------------------------
-MEDIAN_CORRECTION = True
+MEDIAN_CORRECTION = False
 NEUTRAL_ALPHA     = (INIT_ALPHA_LOW + INIT_ALPHA_HIGH) / 2   # 0.65
 
 _enc_dlbt = "frozen" if FREEZE_ENCODER      else "attnpool"
