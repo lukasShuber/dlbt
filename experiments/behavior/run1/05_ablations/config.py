@@ -77,8 +77,8 @@ PATIENCE_PHASE2 = 50
 LR              = 0.01
 LR_ATTNPOOL     = 1e-5
 N_MC            = 1000
-FREEZE_ENCODER      = True   # DLBT + DetBT: freeze CLIP encoder
-FREEZE_ENCODER_SLDA = True   # SLDA: freeze CLIP encoder
+FREEZE_ENCODER      = False   
+FREEZE_ENCODER_SLDA = True   
 MAPPER_HIDDEN      = None
 NORMALIZED_UTILITY = True
 
@@ -110,7 +110,7 @@ RUN_TAG   = f"ablations_dlbt_{_enc_dlbt}_slda_{_enc_slda}_s{len(SEEDS)}"
 # ---------------------------------------------------------------------------
 # Plot options
 # ---------------------------------------------------------------------------
-LOG_Y = False
+LOG_Y = True
 
 # ---------------------------------------------------------------------------
 # Plot colours

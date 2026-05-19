@@ -12,8 +12,12 @@ other.
     • Anti-human    — gray solid  (cMSE plot only; omitted from ρ plot)
 
   Reference lines (no SEM):
-    • Random guesser       — gray dashed horizontal   (cMSE only)
-    • Random-init DLBT     — gray dotted horizontal   (cMSE only)
+    • Random guesser          — gray dashed horizontal   (cMSE only)
+    • Max-uncertain DLBT      — gray dotted horizontal   (cMSE only)
+        Concentration α=1000 for all K states → beliefs always at centroid
+        (1/K each).  Uses raw utility so P(yes|task) = σ((n_pos−n_neg)/K),
+        giving the arity-induced bias of an image-blind flat-prior observer.
+        Computed analytically here (no training, no CLIP features needed).
 
   Markers:
     • Budget grid points   — open markers, connected by lines
@@ -36,9 +40,13 @@ warnings.filterwarnings("ignore")
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
+from scipy.stats import spearmanr
 
 sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parents[4]))   # repo root for dlbt imports
 import config as cfg
+from dlbt.data.task import get_task
+from dlbt.constants import K as _K
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -46,8 +54,6 @@ import config as cfg
 parser = argparse.ArgumentParser()
 parser.add_argument("--pkl", default=None,
                     help="Path to a specific pkl. Default: match current config.")
-parser.add_argument("--all", action="store_true",
-                    help="Process every efficiency_main*.pkl in results/.")
 parser.add_argument("--log-y", action="store_true",
                     help="Log-scale y-axis on cMSE plot (also set via cfg.LOG_Y).")
 args = parser.parse_args()
@@ -59,22 +65,11 @@ _log_y = cfg.LOG_Y or args.log_y
 # ---------------------------------------------------------------------------
 if args.pkl:
     pkl_paths = [Path(args.pkl)]
-elif args.all:
+else:
+    # Default: all efficiency_main*.pkl files in results/
     pkl_paths = sorted(cfg.RESULTS_DIR.glob("efficiency_main*.pkl"))
     if not pkl_paths:
         raise FileNotFoundError(f"No efficiency_main*.pkl found in {cfg.RESULTS_DIR}")
-else:
-    # Default: prefer the pkl that matches the current config flags; fall back
-    # to the most recent one if it doesn't exist yet.
-    primary = cfg.RESULTS_DIR / f"{cfg.RUN_TAG}.pkl"
-    if primary.exists():
-        pkl_paths = [primary]
-    else:
-        candidates = sorted(cfg.RESULTS_DIR.glob("efficiency_main*.pkl"))
-        matching   = [p for p in candidates if cfg.RUN_TAG in p.stem]
-        pkl_paths  = matching if matching else (candidates[-1:] if candidates else [])
-    if not pkl_paths:
-        raise FileNotFoundError(f"No pkl found in {cfg.RESULTS_DIR}")
 
 print(f"Processing {len(pkl_paths)} pkl(s):")
 for p in pkl_paths:
@@ -120,10 +115,10 @@ def _plot_all_data_marker(ax, x, mu, sem, color, zorder=5):
 def _xaxis_setup(ax):
     """Log x-axis from 10^2 to 10^5."""
     ax.set_xscale("log")
-    ax.set_xlim(70, 1.5e5)
+    ax.set_xlim(70, 1e5)
     ax.set_xticks([100, 1_000, 10_000, 100_000])
     ax.set_xticklabels([r"$10^2$", r"$10^3$", r"$10^4$", r"$10^5$"])
-    ax.set_xlabel("Total trial budget", fontsize=11)
+    ax.set_xlabel("Total trial budget", fontsize=11, fontweight="bold")
 
 
 def _rho_nc_from_counts(true_mat, count_mat, n_splits=200, seed=0):
@@ -153,6 +148,39 @@ def _rho_nc_from_counts(true_mat, count_mat, n_splits=200, seed=0):
 # Per-pkl processing
 # ---------------------------------------------------------------------------
 
+def _max_uncertain_cmse_rho(
+    all_tasks: list,
+    true_matrix: np.ndarray,
+    probe_noise_floor: float,
+) -> tuple[float, float]:
+    """
+    Compute cMSE-NF and Spearman ρ for the maximally uncertain DLBT observer.
+
+    Agent: concentration α=1000 for all K states → beliefs ≈ 1/K for every
+    image.  With raw utility, P(yes | task) = σ(Σ_k delta_u_k / K), which
+    depends only on task arity (not on the image).  This is image-blind but
+    arity-aware, explaining the gap between the random guesser and random-init.
+    """
+    n_probe, n_tasks = true_matrix.shape
+    pred = np.full((n_probe, n_tasks), np.nan)
+
+    for j, task_name in enumerate(all_tasks):
+        task  = get_task(task_name)
+        du    = task.delta_u
+        n_pos = int((du > 0).sum())
+        n_neg = _K - n_pos
+        # Prior-normalised utility: +1 for positive states, −n_pos/n_neg for negative
+        du_norm = np.where(du > 0, 1.0, -float(n_pos) / float(n_neg))
+        seu   = float(du_norm.sum()) / _K   # = 0 exactly by construction
+        p_yes = float(1.0 / (1.0 + np.exp(-seu)))     # σ(0) = 0.5
+        pred[:, j] = p_yes
+
+    valid    = ~np.isnan(true_matrix) & ~np.isnan(pred)
+    cmse_nf  = float(np.mean((pred[valid] - true_matrix[valid]) ** 2)) - probe_noise_floor
+    rho, _   = spearmanr(pred[valid], true_matrix[valid])
+    return cmse_nf, float(rho)
+
+
 def process_pkl(pkl_path: Path):
     print(f"\n{'='*60}")
     print(f"Loading: {pkl_path.name}")
@@ -179,10 +207,15 @@ def process_pkl(pkl_path: Path):
     anti_all_cmse = d["anti_all_cmse"]
     anti_all_rho  = d["anti_all_rho"]
 
-    random_cmse_nf      = d["random_cmse_nf"]
-    random_init_cmse_nf = d["random_init_cmse_nf"]
-    probe_noise_floor   = d["probe_noise_floor"]
-    rho_noise_ceiling   = d.get("rho_noise_ceiling", float("nan"))
+    random_cmse_nf    = d["random_cmse_nf"]
+    probe_noise_floor = d["probe_noise_floor"]
+    rho_noise_ceiling = d.get("rho_noise_ceiling", float("nan"))
+
+    # Max-uncertain DLBT: computed analytically here (no training needed)
+    max_unc_cmse_nf, max_unc_rho = _max_uncertain_cmse_rho(
+        d["all_tasks_ordered"], d["true_matrix"], probe_noise_floor,
+    )
+    print(f"  Max-uncertain DLBT — cMSE-NF: {max_unc_cmse_nf:.5f}  ρ: {max_unc_rho:.4f}")
 
     if np.isnan(rho_noise_ceiling) and "count_matrix" in d:
         print("  Computing ρ noise ceiling from count_matrix...")
@@ -213,18 +246,23 @@ def process_pkl(pkl_path: Path):
 
         if is_cmse:
             ax.axhline(random_cmse_nf, color=cfg.C_RNDINI, lw=1.5,
-                       ls=(0, (4, 3)), label="Random (P=0.5)", zorder=1)
-            ax.axhline(random_init_cmse_nf, color=cfg.C_RNDINI, lw=1.5,
-                       ls=":", label="Random-init DLBT", zorder=1)
+                       ls=(0, (4, 3)), zorder=1)
+            ax.axhline(max_unc_cmse_nf, color=cfg.C_RNDINI, lw=1.5,
+                       ls=":", label="Max-uncertain DLBT", zorder=1)
+            ax.annotate("chance (P=0.5)",
+                        xy=(1.0, random_cmse_nf), xycoords=("axes fraction", "data"),
+                        xytext=(-4, 5), textcoords="offset points",
+                        color=cfg.C_RNDINI, fontsize=8, style="italic",
+                        va="bottom", ha="right", zorder=6)
 
-        _plot_trace(ax, budgets, dlbt_mu, dlbt_sem, cfg.C_DLBT, "DLBT", zorder=4)
-        _plot_trace(ax, budgets, slda_mu, slda_sem, cfg.C_SLDA, "SLDA", zorder=3)
+        _plot_trace(ax, budgets, dlbt_mu, dlbt_sem, cfg.C_DLBT, "", zorder=4)
+        _plot_trace(ax, budgets, slda_mu, slda_sem, cfg.C_SLDA, "", zorder=3)
 
         if is_cmse:
             anti_mu, anti_sem = _mean_sem(anti_cmse)
             anti_all_mu, anti_all_sem = _mean_sem_scalar(anti_all_cmse)
             _plot_trace(ax, budgets, anti_mu, anti_sem,
-                        cfg.C_ANTI, "Anti-human DLBT", zorder=2)
+                        cfg.C_ANTI, "", zorder=2)
             _plot_all_data_marker(ax, total_pool_size,
                                   anti_all_mu, anti_all_sem, cfg.C_ANTI, zorder=4)
 
@@ -236,22 +274,47 @@ def process_pkl(pkl_path: Path):
         _xaxis_setup(ax)
 
         if is_cmse:
-            ax.set_ylabel("cMSE − noise floor", fontsize=11)
+            ax.set_ylabel("cMSE − noise floor", fontsize=11, fontweight="bold")
             if _log_y:
                 ax.set_yscale("log")
-                ax.set_ylim(0.01, 1.0)
+                _ybot = 0.01 if "frozen" in pkl_path.stem else 0.005
+                ax.set_ylim(_ybot, 1.0)
                 ax.set_yticks([0.01, 0.1, 1])
                 ax.set_yticklabels([r"$10^{-2}$", r"$10^{-1}$", r"$10^{0}$"])
             else:
                 ax.set_ylim(0, 0.34)
             legend_loc = "upper right"
         else:
-            ax.set_ylabel(r"Spearman $\rho$", fontsize=11)
-            ax.set_ylim(0, 1)
+            ax.set_ylabel(r"Spearman $\rho$", fontsize=11, fontweight="bold")
+            ax.set_ylim(-0.04, 1)
             if not np.isnan(rho_noise_ceiling):
                 ax.axhline(rho_noise_ceiling, color="#555555", lw=1.5,
-                           ls=(0, (2, 2)), label="Noise ceiling", zorder=2)
+                           ls=(0, (2, 2)), zorder=2)
+                ax.annotate("noise ceiling",
+                            xy=(0.0, rho_noise_ceiling),
+                            xycoords=("axes fraction", "data"),
+                            xytext=(4, 5), textcoords="offset points",
+                            color="#555555", fontsize=8, style="italic",
+                            va="bottom", ha="left", zorder=6)
             legend_loc = "lower right"
+
+        # Direct annotation for traces
+        def _ann(label, x, y, color, dx=0, dy=6, va="bottom", ha="center"):
+            ax.annotate(label, xy=(x, y),
+                        xytext=(dx, dy), textcoords="offset points",
+                        color=color, fontsize=9, fontweight="bold",
+                        style="italic", va=va, ha=ha, zorder=6)
+
+        def _idx(i):
+            return min(i, len(budgets) - 1)
+
+        if is_cmse:
+            _ann("DLBT",       budgets[_idx(len(budgets) // 2)], dlbt_mu[_idx(len(budgets) // 2)], cfg.C_DLBT, dy=6,  va="bottom")
+            _ann("SLDA",       budgets[_idx(1)],                 slda_mu[_idx(1)],                 cfg.C_SLDA, dx=6,  dy=6,  va="bottom", ha="left")
+            _ann("anti-human", budgets[_idx(7)],                 anti_mu[_idx(7)],                 cfg.C_ANTI, dy=6,  va="bottom")
+        else:
+            _ann("DLBT", budgets[_idx(2)], dlbt_mu[_idx(2)], cfg.C_DLBT, dx=-6, dy=6,  va="bottom", ha="right")
+            _ann("SLDA", budgets[_idx(5)], slda_mu[_idx(5)], cfg.C_SLDA, dx=10, dy=0, va="center", ha="left")
 
         ax.legend(fontsize=8, frameon=False, loc=legend_loc)
         sns.despine(top=True, right=True, left=False, bottom=False)
