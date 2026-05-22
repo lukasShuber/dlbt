@@ -244,3 +244,29 @@ class SldaAgent(nn.Module, Agent):
     def trainable_parameters(self):
         """Return all parameters with requires_grad=True."""
         return [p for p in self.parameters() if p.requires_grad]
+
+    @torch.no_grad()
+    def extract_features(
+        self,
+        image_refs: List[ImageRef],
+        batch_size: int = 16,
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Extract CLIP features for all image_refs using the current encoder
+        (frozen or fine-tuned attnpool).
+
+        When freeze_encoder=False this runs backbone cache + fine-tuned
+        attnpool, giving updated features for Phase 3 LogReg refit.
+        When freeze_encoder=True this is equivalent to _cache lookups.
+
+        Returns uid → [D] tensor (on CPU).
+        """
+        self.eval()
+        features: Dict[str, torch.Tensor] = {}
+        uncached = [r for r in image_refs if r.uid not in features]
+        for i in range(0, len(uncached), batch_size):
+            batch = uncached[i : i + batch_size]
+            feats = self._encode(batch)   # [B, D]
+            for ref, feat in zip(batch, feats):
+                features[ref.uid] = feat.cpu()
+        return features

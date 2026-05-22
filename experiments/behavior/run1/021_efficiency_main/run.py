@@ -43,14 +43,15 @@ import numpy as np
 import pandas as pd
 import torch
 from scipy.stats import spearmanr
-from sklearn.linear_model import LogisticRegressionCV
-from sklearn.preprocessing import StandardScaler
 
 from dlbt.agents.dlbt import DlbtAgent
+from dlbt.agents.slda import SldaAgent
 from dlbt.data.dataset import BehavioralDataset
 from dlbt.data.image_ref import load_image_refs, image_refs_as_list
 from dlbt.data.task import get_task
 from dlbt.training.train_dlbt import train_dlbt
+from dlbt.training.train_slda import fit_slda_logreg, slda_probe_matrix
+from dlbt.training.train_slda_attnpool import finetune_slda_attnpool
 
 sys.path.insert(0, str(Path(__file__).parent))
 import config as cfg
@@ -266,8 +267,6 @@ del _agent_tmp
 print(f"CLIP cache ready ({len(frozen_clip)} images).")
 
 # Pre-build probe feature matrix for SLDA (ordering matches probe_uids_ordered)
-_probe_uid_clip = [uid for uid in probe_uids_ordered if uid in frozen_clip]
-_probe_X_np     = np.array([frozen_clip[uid].cpu().numpy() for uid in _probe_uid_clip])
 
 # ---------------------------------------------------------------------------
 # DLBT base agent  (symmetric Dirichlet α = BASE_CONCENTRATION)
@@ -427,13 +426,54 @@ def _run_dlbt(
     train_ds: BehavioralDataset,
     val_ds: BehavioralDataset,
 ) -> DlbtAgent:
-    """Train DLBT and return whichever of (trained, base) wins on val_ds."""
+    """
+    Train DLBT and return whichever of (trained, base) wins on val_ds.
+
+    Phase 1: train mapper with frozen CLIP encoder.
+    Phase 2: fine-tune attnpool jointly  [if FREEZE_ENCODER_DLBT=False].
+    """
+    # Phase 1 — mapper, frozen encoder
     train_dlbt(
         agent, train_ds, val_ds, refs_dict,
         n_epochs = cfg.N_EPOCHS,
         lr       = cfg.LR,
         patience = cfg.PATIENCE,
     )
+
+    if not cfg.FREEZE_ENCODER_DLBT:
+        # Phase 2 — unfreeze attnpool, freeze mapper
+        gc.collect(); torch.cuda.empty_cache()
+        for p in agent.mapper.parameters():
+            p.requires_grad_(False)
+        for p in agent.encoder.attnpool.parameters():
+            p.requires_grad_(True)
+        agent.freeze_encoder = False
+        agent._cache.clear()
+        opt2 = torch.optim.Adam(
+            agent.encoder.attnpool.parameters(), lr=cfg.LR_ATTNPOOL)
+        train_dlbt(
+            agent, train_ds, val_ds, refs_dict,
+            n_epochs  = cfg.N_EPOCHS_PHASE2,
+            patience  = cfg.PATIENCE_PHASE2,
+            optimizer = opt2,
+        )
+        # Repopulate CLIP cache with fine-tuned attnpool features
+        agent.eval()
+        agent.precompute_backbone_features(all_refs)
+        with torch.no_grad():
+            for i in range(0, len(all_refs), 16):
+                batch   = all_refs[i : i + 16]
+                spatial = torch.stack(
+                    [agent._backbone_cache[r.uid] for r in batch]
+                ).to(device)
+                feats = agent.encoder.attnpool(spatial).float()
+                for ref, feat in zip(batch, feats):
+                    agent._cache[ref.uid] = feat.cpu()
+        # Re-enable mapper gradients for any future use
+        for p in agent.mapper.parameters():
+            p.requires_grad_(True)
+        agent.freeze_encoder = True
+
     if val_ds.df.empty:
         return agent
     trained_mse = _ds_mse_dlbt(agent, val_ds)
@@ -458,105 +498,59 @@ def _dlbt_probe_matrix(agent: DlbtAgent) -> np.ndarray:
 # Helpers — SLDA
 # ---------------------------------------------------------------------------
 
-def _fit_slda_logreg(
+def _slda_features_for_probe(clip_feats: dict) -> dict:
+    """Extract probe image features as np.ndarray dict for slda_probe_matrix."""
+    return {uid: clip_feats[uid].cpu().numpy()
+            for uid in probe_uids_ordered if uid in clip_feats}
+
+
+def _run_slda(
     tasks: list,
     train_ds: BehavioralDataset,
     val_ds: BehavioralDataset,
-) -> tuple[dict, dict, dict]:
+    clip_feats: dict | None = None,
+) -> np.ndarray:
     """
-    Fit per-task L2 logistic regression on train_ds.
-    Model selection: compare fitted model vs P=0.5 on val_ds cells for each task.
-    Returns (scalers, models, use_base).
-      use_base[task_name] = True  →  base (P=0.5) wins on val; probe column = 0.5.
-    Tasks with < 2 training images or all-same labels are skipped (probe col = NaN).
+    Full SLDA pipeline → probe prediction matrix.
+
+    Phase 1: fit LogReg per task on frozen (or provided) CLIP features.
+    Phase 2: fine-tune attnpool through fixed decoders  [if FREEZE_ENCODER_SLDA=False].
+    Phase 3: re-fit LogReg on fine-tuned features       [if FREEZE_ENCODER_SLDA=False].
+
+    clip_feats defaults to frozen_clip.
     """
-    scalers, models, use_base = {}, {}, {}
+    if clip_feats is None:
+        clip_feats = frozen_clip
 
-    for task_name in tasks:
-        train_grp = train_ds.df[train_ds.df["task_name"] == task_name]
-        uids_tr   = [uid for uid in train_grp["uid"].tolist() if uid in frozen_clip]
+    # Phase 1
+    scalers, models, ub = fit_slda_logreg(
+        tasks, train_ds, val_ds, clip_feats,
+        Cs=cfg.SLDA_Cs, max_iter=cfg.SLDA_MAX_ITER,
+    )
 
-        if len(uids_tr) < 2:
-            continue
+    if not cfg.FREEZE_ENCODER_SLDA:
+        # Phase 2 — fine-tune attnpool through fixed Phase-1 decoders
+        slda_agent = SldaAgent(freeze_encoder=False, device=device)
+        slda_agent.precompute_backbone_features(all_refs)
+        finetune_slda_attnpool(
+            slda_agent, scalers, models,
+            train_ds, val_ds, refs_dict,
+            n_epochs   = cfg.N_EPOCHS_PHASE2,
+            patience   = cfg.PATIENCE_PHASE2,
+            lr         = cfg.LR_ATTNPOOL,
+        )
+        # Phase 3 — re-fit LogReg on fine-tuned features
+        clip_feats = slda_agent.extract_features(all_refs)
+        scalers, models, ub = fit_slda_logreg(
+            tasks, train_ds, val_ds, clip_feats,
+            Cs=cfg.SLDA_Cs, max_iter=cfg.SLDA_MAX_ITER,
+        )
+        del slda_agent
+        gc.collect(); torch.cuda.empty_cache()
 
-        # Expand aggregated counts → (X, y, w) for logistic regression
-        X_list, y_list, w_list = [], [], []
-        for row in (train_grp[train_grp["uid"].isin(uids_tr)]
-                    .itertuples(index=False)):
-            feat = frozen_clip[row.uid].cpu().numpy()
-            c0, c1 = int(row.count_0), int(row.count_1)
-            if c1 > 0:
-                X_list.append(feat); y_list.append(1); w_list.append(c1)
-            if c0 > 0:
-                X_list.append(feat); y_list.append(0); w_list.append(c0)
-
-        if not X_list or len(set(y_list)) < 2:
-            continue
-
-        X = np.array(X_list)
-        y = np.array(y_list)
-        w = np.array(w_list, dtype=float)
-
-        # Fit scaler on unique feature vectors (not expanded rows)
-        X_unique = np.array([frozen_clip[uid].cpu().numpy() for uid in uids_tr])
-        scaler   = StandardScaler()
-        scaler.fit(X_unique)
-        X_sc = scaler.transform(X)
-
-        try:
-            model = LogisticRegressionCV(
-                Cs=cfg.SLDA_Cs, max_iter=cfg.SLDA_MAX_ITER,
-                solver="lbfgs", cv=3,
-            )
-            model.fit(X_sc, y, sample_weight=w)
-        except Exception:
-            continue
-
-        # Model selection on val_ds for this task
-        val_grp  = val_ds.df[val_ds.df["task_name"] == task_name]
-        uids_val = [uid for uid in val_grp["uid"].tolist() if uid in frozen_clip]
-        if len(uids_val) >= 1:
-            val_sub    = val_grp[val_grp["uid"].isin(uids_val)]
-            tot_val    = (val_sub["count_0"] + val_sub["count_1"]).values.astype(float)
-            p_obs_val  = val_sub["count_1"].values / np.clip(tot_val, 1, None)
-            X_val_sc   = scaler.transform(
-                np.array([frozen_clip[uid].cpu().numpy() for uid in uids_val]))
-            p_pred_val = model.predict_proba(X_val_sc)[:, 1]
-            fitted_mse = float(np.mean((p_pred_val - p_obs_val) ** 2))
-            base_mse   = float(np.mean((0.5 - p_obs_val) ** 2))
-            use_base[task_name] = base_mse < fitted_mse
-        else:
-            use_base[task_name] = False   # no val data → use fitted model
-
-        scalers[task_name] = scaler
-        models[task_name]  = model
-
-    return scalers, models, use_base
-
-
-def _slda_probe_matrix(scalers: dict, models: dict, use_base: dict) -> np.ndarray:
-    """
-    Compute probe predictions from fitted per-task logistic regressions.
-    Tasks not in models (too few training images) stay NaN.
-    Tasks where use_base[task] = True → predict 0.5 (base wins on val).
-    """
-    pred = np.full((n_probe, n_all_tasks), np.nan)
-
-    for j, task_name in enumerate(all_tasks_ordered):
-        if task_name not in models:
-            pred[:, j] = 0.5   # skipped / failed → base model
-            continue
-        if use_base.get(task_name, False):
-            pred[:, j] = 0.5
-            continue
-        X_sc   = scalers[task_name].transform(_probe_X_np)
-        p_pred = models[task_name].predict_proba(X_sc)[:, 1]
-        for i_p, uid in enumerate(_probe_uid_clip):
-            row_i = uid_to_row.get(uid)
-            if row_i is not None:
-                pred[row_i, j] = float(p_pred[i_p])
-
-    return pred
+    probe_feats = _slda_features_for_probe(clip_feats)
+    return slda_probe_matrix(scalers, models, ub, probe_feats,
+                             all_tasks_ordered, uid_to_row, n_probe)
 
 
 # ---------------------------------------------------------------------------
@@ -616,11 +610,10 @@ for s_i, seed_val in enumerate(cfg.SEEDS):
 
         # SLDA
         train_ds_s, val_ds_s = _sample_and_split(all_tasks_ordered, tpt, rng_slda)
-        sca, mod, ub = _fit_slda_logreg(all_tasks_ordered, train_ds_s, val_ds_s)
-        pred_s = _slda_probe_matrix(sca, mod, ub)
+        pred_s = _run_slda(all_tasks_ordered, train_ds_s, val_ds_s)
         slda_cmse[s_i, b_i], slda_rho[s_i, b_i] = _probe_stats(pred_s)
         print(f"    SLDA   cMSE−NF={slda_cmse[s_i,b_i]:+.5f}  ρ={slda_rho[s_i,b_i]:.3f}")
-        del train_ds_s, val_ds_s, sca, mod, ub, pred_s
+        del train_ds_s, val_ds_s, pred_s
 
         # Anti-human DLBT (label-flipped)
         train_ds_a, val_ds_a = _sample_and_split(all_tasks_ordered, tpt, rng_anti, flip=True)
@@ -649,11 +642,10 @@ for s_i, seed_val in enumerate(cfg.SEEDS):
 
     # SLDA all  — train on 90 % pool, model selection on fixed 10 % eval split
     all_tr_s = _all_data_ds(all_tasks_ordered)
-    sca_a, mod_a, ub_a = _fit_slda_logreg(all_tasks_ordered, all_tr_s, eval_ds_global)
-    pred_sa = _slda_probe_matrix(sca_a, mod_a, ub_a)
+    pred_sa  = _run_slda(all_tasks_ordered, all_tr_s, eval_ds_global)
     slda_all_cmse[s_i], slda_all_rho[s_i] = _probe_stats(pred_sa)
     print(f"    SLDA all  cMSE−NF={slda_all_cmse[s_i]:+.5f}  ρ={slda_all_rho[s_i]:.3f}")
-    del all_tr_s, sca_a, mod_a, ub_a, pred_sa
+    del all_tr_s, pred_sa
 
     # Anti all  — train on 90 % pool (flipped), val on fixed anti eval split
     all_tr_a = _all_data_ds(all_tasks_ordered, flip=True)

@@ -3,11 +3,11 @@ Phase 2 fine-tuning of CLIP attention pooling for the SLDA baseline.
 
 Pipeline
 --------
-  Phase 1 — fit per-task ridge decoders on frozen CLIP features (run.py).
+  Phase 1 — fit per-task LogReg decoders on frozen CLIP features
+             (fit_slda_logreg in train_slda.py).
   Phase 2 — fine-tune attnpool through those FIXED decoders (this module).
-             Temperature τ is intentionally excluded: it is fit once at the
-             end (Phase 3) on the final features, after attnpool has converged.
-  Phase 3 — re-optimize τ per task using fine-tuned features (run.py).
+  Phase 3 — re-fit LogReg per task on the fine-tuned features
+             (fit_slda_logreg again, with updated clip_features dict).
 
 Loss (Phase 2)
 --------------
@@ -15,10 +15,10 @@ For each training cell (image x, task t, counts c0/c1):
 
     f_φ(x) = attnpool(backbone(x))              [trainable attnpool only]
     z_xt   = (f_φ(x) − μ_t) / σ_t  ·  w_t  +  b_t
-    p_xt   = σ(z_xt)                             [τ = 1 during Phase 2]
+    p_xt   = σ(z_xt)
     ℓ_xt   = − [c1 · log p_xt  +  c0 · log(1 − p_xt)]
 
-where (μ_t, σ_t, w_t, b_t) are the FIXED Phase-1 sklearn artifacts and
+where (μ_t, σ_t, w_t, b_t) are the FIXED Phase-1 LogReg artifacts and
 φ (attnpool parameters) is the only thing being updated.
 
 The backbone (everything before attnpool) is frozen and pre-cached in
@@ -88,8 +88,17 @@ def _build_decoder_tensors(
         else:
             std = torch.ones(feature_dim, device=device)
 
-        w = torch.tensor(model.coef_,              dtype=torch.float32, device=device)
-        b = torch.tensor(float(model.intercept_),  dtype=torch.float32, device=device)
+        # LogisticRegressionCV: coef_ is [1, D], intercept_ is [1]
+        # Ridge:                coef_ is [D],    intercept_ is scalar
+        coef = model.coef_
+        if coef.ndim == 2:
+            coef = coef[0]
+        intercept = model.intercept_
+        if hasattr(intercept, "__len__"):
+            intercept = intercept[0]
+
+        w = torch.tensor(coef,            dtype=torch.float32, device=device)
+        b = torch.tensor(float(intercept), dtype=torch.float32, device=device)
 
         dec[t] = {"mean": mean, "std": std, "w": w, "b": b}
     return dec
