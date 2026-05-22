@@ -201,13 +201,49 @@ for row in main_cells_df.itertuples(index=False):
     for _ in range(int(row.count_1)):
         pool.append((row.uid, 1))
 
-pool_sizes        = {t: len(task_trial_pools[t]) for t in all_tasks_ordered}
-total_pool_size   = sum(pool_sizes.values())
-avg_pool_per_task = total_pool_size / n_all_tasks
-print(f"\n  Trial pool — min: {min(pool_sizes.values())}  "
+pool_sizes      = {t: len(task_trial_pools[t]) for t in all_tasks_ordered}
+total_pool_size = sum(pool_sizes.values())
+print(f"\n  Trial pool (full) — min: {min(pool_sizes.values())}  "
       f"max: {max(pool_sizes.values())}  "
-      f"total: {total_pool_size:,}  "
-      f"avg/task: {avg_pool_per_task:.1f}")
+      f"total: {total_pool_size:,}")
+
+# ---------------------------------------------------------------------------
+# Fixed cell-level 10 % eval split for the all-data point
+# (mirrors 02_efficiency_main: same seed, same cell-level strategy)
+# ---------------------------------------------------------------------------
+rng_split    = np.random.default_rng(cfg.SEED)
+n_eval_cells = max(1, int(len(main_cells_df) * 0.10))
+eval_idx     = rng_split.choice(len(main_cells_df), size=n_eval_cells, replace=False)
+eval_mask    = np.zeros(len(main_cells_df), dtype=bool)
+eval_mask[eval_idx] = True
+
+eval_df   = main_cells_df[eval_mask].reset_index(drop=True)
+pool_df   = main_cells_df[~eval_mask].reset_index(drop=True)
+eval_ds_global = BehavioralDataset(eval_df)
+
+eval_df_anti = eval_df.copy()
+eval_df_anti["count_0"], eval_df_anti["count_1"] = (
+    eval_df["count_1"].copy(), eval_df["count_0"].copy()
+)
+eval_ds_anti_global = BehavioralDataset(eval_df_anti)
+
+# 90 % pool used for all-data training (task_trial_pools used for budget grid)
+task_trial_pools_all: dict[str, list] = {t: [] for t in all_tasks_ordered}
+for row in pool_df.itertuples(index=False):
+    tn = row.task_name
+    if tn not in task_trial_pools_all:
+        continue
+    p = task_trial_pools_all[tn]
+    for _ in range(int(row.count_0)):
+        p.append((row.uid, 0))
+    for _ in range(int(row.count_1)):
+        p.append((row.uid, 1))
+
+pool_all_size     = sum(len(v) for v in task_trial_pools_all.values())
+avg_pool_per_task = pool_all_size / n_all_tasks   # x-position for all-data marker
+print(f"  Trial pool (all-data 90%) — total: {pool_all_size:,}  "
+      f"avg/task: {avg_pool_per_task:.1f}"
+      f"  eval cells: {len(eval_df)}")
 
 trials_per_task = list(cfg.TRIALS_PER_TASK)
 if cfg.FAST_PASS:
@@ -304,24 +340,19 @@ def _sample_and_split(
     return _trials_to_ds(train_trials), _trials_to_ds(val_trials)
 
 
-def _all_data_and_split(
-    tasks: list,
-    rng: np.random.Generator,
-    flip: bool = False,
-) -> tuple[BehavioralDataset, BehavioralDataset]:
-    """Use every trial in the pool; split 90/10. Returns (train_ds, val_ds)."""
+def _all_data_ds(tasks: list, flip: bool = False) -> BehavioralDataset:
+    """
+    Build a training dataset from the fixed 90 % pool (task_trial_pools_all).
+    Used for the all-data point; the matching eval split is eval_ds_global /
+    eval_ds_anti_global (cell-level 10 %, fixed at startup — same strategy as 02).
+    """
     all_trials = []
     for task_name in tasks:
-        for uid, outcome in task_trial_pools[task_name]:
+        for uid, outcome in task_trial_pools_all[task_name]:
             if flip:
                 outcome = 1 - outcome
             all_trials.append((uid, task_name, outcome))
-
-    perm         = rng.permutation(len(all_trials))
-    n_val        = max(1, int(len(all_trials) * 0.10))
-    val_trials   = [all_trials[i] for i in perm[:n_val]]
-    train_trials = [all_trials[i] for i in perm[n_val:]]
-    return _trials_to_ds(train_trials), _trials_to_ds(val_trials)
+    return _trials_to_ds(all_trials)
 
 
 # ---------------------------------------------------------------------------
@@ -568,36 +599,37 @@ for s_i, seed_val in enumerate(cfg.SEEDS):
         del agent_a, chosen_a, train_ds_a, val_ds_a, pred_a
         gc.collect(); torch.cuda.empty_cache()
 
-    # ---- All-data point ----------------------------------------------------
-    print(f"\n  [All data — {total_pool_size:,} trials, avg {avg_pool_per_task:.0f}/task]")
+    # ---- All-data point  (fixed cell-level 10 % eval split, same as 02) -----
+    print(f"\n  [All data — {pool_all_size:,} train trials, avg {avg_pool_per_task:.0f}/task]")
 
-    # DLBT all
-    all_tr, all_val = _all_data_and_split(all_tasks_ordered, rng_dlbt)
+    # DLBT all  — train on 90 % pool, val on fixed cell-level 10 % eval split
+    all_tr = _all_data_ds(all_tasks_ordered)
     agent_all  = _init_agent(seed_val)
-    chosen_all = _run_dlbt(agent_all, all_tr, all_val)
+    chosen_all = _run_dlbt(agent_all, all_tr, eval_ds_global)
     pred_all   = _dlbt_probe_matrix(chosen_all)
     dlbt_all_cmse[s_i], dlbt_all_rho[s_i] = _probe_stats(pred_all)
-    print(f"    DLBT all  cMSE−NF={dlbt_all_cmse[s_i]:+.5f}  ρ={dlbt_all_rho[s_i]:.3f}")
-    del agent_all, chosen_all, all_tr, all_val, pred_all
+    print(f"    DLBT all  cMSE−NF={dlbt_all_cmse[s_i]:+.5f}  ρ={dlbt_all_rho[s_i]:.3f}"
+          f"  (base={'yes' if chosen_all is base_agent else 'no'})")
+    del agent_all, chosen_all, all_tr, pred_all
     gc.collect(); torch.cuda.empty_cache()
 
-    # SLDA all
-    all_tr_s, all_val_s = _all_data_and_split(all_tasks_ordered, rng_slda)
+    # SLDA all  — train on 90 % pool (no val needed; no model selection for SLDA)
+    all_tr_s = _all_data_ds(all_tasks_ordered)
     sca_a, mod_a = _fit_slda_logreg(all_tasks_ordered, all_tr_s)
     pred_sa = _slda_probe_matrix(sca_a, mod_a)
     slda_all_cmse[s_i], slda_all_rho[s_i] = _probe_stats(pred_sa)
     print(f"    SLDA all  cMSE−NF={slda_all_cmse[s_i]:+.5f}  ρ={slda_all_rho[s_i]:.3f}")
-    del all_tr_s, all_val_s, sca_a, mod_a, pred_sa
+    del all_tr_s, sca_a, mod_a, pred_sa
 
-    # Anti all
-    all_tr_a, all_val_a = _all_data_and_split(all_tasks_ordered, rng_anti, flip=True)
+    # Anti all  — train on 90 % pool (flipped), val on fixed anti eval split
+    all_tr_a = _all_data_ds(all_tasks_ordered, flip=True)
     agent_aa  = _init_agent(seed_val)
-    chosen_aa = _run_dlbt(agent_aa, all_tr_a, all_val_a)
+    chosen_aa = _run_dlbt(agent_aa, all_tr_a, eval_ds_anti_global)
     pred_aa   = _dlbt_probe_matrix(chosen_aa)
     anti_all_cmse[s_i], anti_all_rho[s_i] = _probe_stats(pred_aa)
     print(f"    Anti all  cMSE−NF={anti_all_cmse[s_i]:+.5f}  ρ={anti_all_rho[s_i]:.3f}"
           f"  (base={'yes' if chosen_aa is base_agent else 'no'})")
-    del agent_aa, chosen_aa, all_tr_a, all_val_a, pred_aa
+    del agent_aa, chosen_aa, all_tr_a, pred_aa
     gc.collect(); torch.cuda.empty_cache()
 
 # ---------------------------------------------------------------------------
