@@ -86,9 +86,9 @@ NORMALIZED_UTILITY = True
 BASE_CONCENTRATION = 1000.0
 
 # ---------------------------------------------------------------------------
-# SLDA — L2 logistic regression
+# SLDA — L2 logistic regression with cross-validated regularisation
 # ---------------------------------------------------------------------------
-SLDA_C        = 1.0    # inverse L2 regularisation strength (sklearn convention)
+SLDA_Cs       = [0.001, 0.01, 0.1, 1.0, 10.0, 100.0]   # C grid for CV
 SLDA_MAX_ITER = 1000
 
 # ---------------------------------------------------------------------------

@@ -43,7 +43,7 @@ import numpy as np
 import pandas as pd
 import torch
 from scipy.stats import spearmanr
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LogisticRegressionCV
 from sklearn.preprocessing import StandardScaler
 
 from dlbt.agents.dlbt import DlbtAgent
@@ -504,9 +504,9 @@ def _fit_slda_logreg(
         X_sc = scaler.transform(X)
 
         try:
-            model = LogisticRegression(
-                C=cfg.SLDA_C, max_iter=cfg.SLDA_MAX_ITER,
-                solver="lbfgs",
+            model = LogisticRegressionCV(
+                Cs=cfg.SLDA_Cs, max_iter=cfg.SLDA_MAX_ITER,
+                solver="lbfgs", cv=3,
             )
             model.fit(X_sc, y, sample_weight=w)
         except Exception:
