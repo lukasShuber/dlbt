@@ -60,8 +60,8 @@ TRIALS_PER_TASK: list[int] = sorted({
 # ---------------------------------------------------------------------------
 # Seeds
 # ---------------------------------------------------------------------------
-N_SEEDS = 1
-SEEDS   = [42]
+N_SEEDS = 5
+SEEDS   = [42, 43, 44, 45, 46]
 
 # ---------------------------------------------------------------------------
 # Fast-pass mode  (quick smoke-test: smallest budget only)
@@ -71,8 +71,8 @@ FAST_PASS = True
 # ---------------------------------------------------------------------------
 # Encoder freeze flags
 # ---------------------------------------------------------------------------
-FREEZE_ENCODER_DLBT = True   # False → Phase 2 attnpool fine-tuning for DLBT
-FREEZE_ENCODER_SLDA = True   # False → Phase 2 attnpool fine-tuning for SLDA
+FREEZE_ENCODER_DLBT = False   # False → Phase 2 attnpool fine-tuning for DLBT
+FREEZE_ENCODER_SLDA = False   # False → Phase 2 attnpool fine-tuning for SLDA
 
 # ---------------------------------------------------------------------------
 # Training — DLBT
