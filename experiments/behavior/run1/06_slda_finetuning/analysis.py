@@ -1,26 +1,23 @@
 """
-run1/05_ablations/analysis.py — belief-ablation budget-sweep plots.
+run1/06_slda_finetuning/analysis.py — frozen vs. attnpool SLDA budget-sweep plots.
 
 Produces two figures (cMSE−NF and Spearman ρ vs. trial budget) for every
-ablations*.pkl found in results/.  Each pkl gets its own subdirectory under
-results/plots/<pkl-stem>/.
+slda_finetuning*.pkl found in results/.
 
-  Traces (mean ± SEM, in legend):
-    • DLBT             — red solid
-    • Determ. Beliefs  — blue solid   (DetBT)
-    • Random Ontology  — green solid  (RandOnt)
+  Traces (mean ± SEM):
+    • Frozen SLDA   — saturated purple, solid
+    • Attnpool SLDA — lighter purple, solid
 
   Reference lines:
-    • chance (P=0.5)           — gray dashed, annotated at line
-    • No behavioral supervision — orange dashed (oracle)
-    • Noise ceiling             — dark gray dotted (ρ plot only, annotated)
+    • chance (P=0.5)  — gray dashed, annotated at right edge (cMSE only)
+    • Noise ceiling   — dark gray dotted, annotated at left edge (ρ only)
 
   All-data markers:
-    • Filled marker for DLBT, DetBT, RandOnt (disconnected from trace)
+    • Filled marker (disconnected from trace) for both conditions.
 
 Run from repo root:
-    python experiments/behavior/run1/05_ablations/analysis.py
-    python experiments/behavior/run1/05_ablations/analysis.py --pkl PATH
+    python experiments/behavior/run1/06_slda_finetuning/analysis.py
+    python experiments/behavior/run1/06_slda_finetuning/analysis.py --pkl PATH
 """
 
 import argparse
@@ -44,7 +41,7 @@ import config as cfg
 # ---------------------------------------------------------------------------
 parser = argparse.ArgumentParser()
 parser.add_argument("--pkl", default=None,
-                    help="Path to a specific pkl. Default: all ablations*.pkl.")
+                    help="Path to a specific pkl. Default: all slda_finetuning*.pkl.")
 parser.add_argument("--log-y", action="store_true",
                     help="Log-scale y-axis on cMSE plot (also set via cfg.LOG_Y).")
 args = parser.parse_args()
@@ -57,9 +54,9 @@ _log_y = cfg.LOG_Y or args.log_y
 if args.pkl:
     pkl_paths = [Path(args.pkl)]
 else:
-    pkl_paths = sorted(cfg.RESULTS_DIR.glob("ablations*.pkl"))
+    pkl_paths = sorted(cfg.RESULTS_DIR.glob("slda_finetuning*.pkl"))
     if not pkl_paths:
-        raise FileNotFoundError(f"No ablations*.pkl found in {cfg.RESULTS_DIR}")
+        raise FileNotFoundError(f"No slda_finetuning*.pkl found in {cfg.RESULTS_DIR}")
 
 print(f"Processing {len(pkl_paths)} pkl(s):")
 for p in pkl_paths:
@@ -83,11 +80,10 @@ def _mean_sem_scalar(arr: np.ndarray):
     return mu, sem
 
 
-def _plot_trace(ax, budgets, mu, sem, color, label, ls="-", zorder=3):
+def _plot_trace(ax, budgets, mu, sem, color, ls="-", zorder=3):
     ax.fill_between(budgets, mu - sem, mu + sem,
                     color=color, alpha=0.15, zorder=zorder - 1)
-    ax.plot(budgets, mu, color=color, lw=2.0, ls=ls, zorder=zorder,
-            label=label)
+    ax.plot(budgets, mu, color=color, lw=2.0, ls=ls, zorder=zorder)
     ax.plot(budgets, mu, "o", color=color, ms=5, mfc="none",
             mew=1.4, zorder=zorder + 1)
 
@@ -142,23 +138,15 @@ def process_pkl(pkl_path: Path):
     total_pool_size = d["total_pool_size"]
     seeds           = d["seeds"]
 
-    dlbt_cmse    = d["dlbt_cmse"]
-    dlbt_rho     = d["dlbt_rho"]
-    detbt_cmse   = d["detbt_cmse"]
-    detbt_rho    = d["detbt_rho"]
-    randont_cmse = d["randont_cmse"]
-    randont_rho  = d["randont_rho"]
+    frozen_cmse   = d["frozen_cmse"]
+    frozen_rho    = d["frozen_rho"]
+    attnpool_cmse = d["attnpool_cmse"]
+    attnpool_rho  = d["attnpool_rho"]
 
-    dlbt_all_cmse    = d["dlbt_all_cmse"]
-    dlbt_all_rho     = d["dlbt_all_rho"]
-    detbt_all_cmse   = d["detbt_all_cmse"]
-    detbt_all_rho    = d["detbt_all_rho"]
-    randont_all_cmse = d["randont_all_cmse"]
-    randont_all_rho  = d["randont_all_rho"]
-
-    oracle_cmse = d["oracle_cmse"]
-    oracle_rho  = d["oracle_rho"]
-    oracle_conc = d.get("oracle_concentration", cfg.ORACLE_CONCENTRATION)
+    frozen_all_cmse   = d["frozen_all_cmse"]
+    frozen_all_rho    = d["frozen_all_rho"]
+    attnpool_all_cmse = d["attnpool_all_cmse"]
+    attnpool_all_rho  = d["attnpool_all_rho"]
 
     random_cmse_nf    = d["random_cmse_net"]
     rho_noise_ceiling = d.get("rho_noise_ceiling", float("nan"))
@@ -167,8 +155,6 @@ def process_pkl(pkl_path: Path):
         print("  Computing ρ noise ceiling from count_matrix...")
         rho_noise_ceiling = _rho_nc_from_counts(d["true_matrix"], d["count_matrix"])
         print(f"  ρ noise ceiling: {rho_noise_ceiling:.4f}")
-    elif np.isnan(rho_noise_ceiling):
-        print("  [warn] rho_noise_ceiling missing — re-run run.py to generate it.")
 
     print(f"  Seeds: {len(seeds)}  Budgets: {list(budgets)}")
 
@@ -178,13 +164,13 @@ def process_pkl(pkl_path: Path):
     def _make_figure(metric: str):
         is_cmse = metric == "cmse"
 
-        dlbt_mu,    dlbt_sem    = _mean_sem(dlbt_cmse    if is_cmse else dlbt_rho)
-        detbt_mu,   detbt_sem   = _mean_sem(detbt_cmse   if is_cmse else detbt_rho)
-        randont_mu, randont_sem = _mean_sem(randont_cmse if is_cmse else randont_rho)
+        frozen_mu,   frozen_sem   = _mean_sem(frozen_cmse   if is_cmse else frozen_rho)
+        attnpool_mu, attnpool_sem = _mean_sem(attnpool_cmse if is_cmse else attnpool_rho)
 
-        dlbt_all_mu,    dlbt_all_sem    = _mean_sem_scalar(dlbt_all_cmse    if is_cmse else dlbt_all_rho)
-        detbt_all_mu,   detbt_all_sem   = _mean_sem_scalar(detbt_all_cmse   if is_cmse else detbt_all_rho)
-        randont_all_mu, randont_all_sem = _mean_sem_scalar(randont_all_cmse if is_cmse else randont_all_rho)
+        frozen_all_mu,   frozen_all_sem   = _mean_sem_scalar(
+            frozen_all_cmse   if is_cmse else frozen_all_rho)
+        attnpool_all_mu, attnpool_all_sem = _mean_sem_scalar(
+            attnpool_all_cmse if is_cmse else attnpool_all_rho)
 
         fig, ax = plt.subplots(figsize=(5.0, 4.5))
 
@@ -199,10 +185,6 @@ def process_pkl(pkl_path: Path):
                         color=cfg.C_RNDINI, fontsize=8, style="italic",
                         va="bottom", ha="right", zorder=6)
 
-        oracle_val = oracle_cmse if is_cmse else oracle_rho
-        ax.axhline(oracle_val, color=cfg.C_ORACLE, lw=1.5,
-                   ls="--", zorder=2)
-
         if not is_cmse and not np.isnan(rho_noise_ceiling):
             ax.axhline(rho_noise_ceiling, color="#555555", lw=1.5,
                        ls=(0, (2, 2)), zorder=2)
@@ -214,14 +196,18 @@ def process_pkl(pkl_path: Path):
                         va="bottom", ha="left", zorder=6)
 
         # ── Traces ───────────────────────────────────────────────────────────
-        _plot_trace(ax, budgets, dlbt_mu,    dlbt_sem,    cfg.C_DLBT,    "", zorder=6)
-        _plot_trace(ax, budgets, detbt_mu,   detbt_sem,   cfg.C_DETBT,   "", zorder=5)
-        _plot_trace(ax, budgets, randont_mu, randont_sem, cfg.C_RANDONT, "", zorder=4)
+        _plot_trace(ax, budgets, attnpool_mu, attnpool_sem,
+                    cfg.C_ATTNPOOL, zorder=4)
+        _plot_trace(ax, budgets, frozen_mu,   frozen_sem,
+                    cfg.C_FROZEN,   zorder=5)
 
         # ── All-data markers ─────────────────────────────────────────────────
-        _plot_all_data_marker(ax, total_pool_size, dlbt_all_mu,    dlbt_all_sem,    cfg.C_DLBT,    zorder=7)
-        _plot_all_data_marker(ax, total_pool_size, detbt_all_mu,   detbt_all_sem,   cfg.C_DETBT,   zorder=7)
-        _plot_all_data_marker(ax, total_pool_size, randont_all_mu, randont_all_sem, cfg.C_RANDONT, zorder=7)
+        _plot_all_data_marker(ax, total_pool_size,
+                              attnpool_all_mu, attnpool_all_sem,
+                              cfg.C_ATTNPOOL, zorder=6)
+        _plot_all_data_marker(ax, total_pool_size,
+                              frozen_all_mu,   frozen_all_sem,
+                              cfg.C_FROZEN,   zorder=7)
 
         _xaxis_setup(ax)
 
@@ -230,31 +216,26 @@ def process_pkl(pkl_path: Path):
             ax.set_ylabel("cMSE − noise floor", fontsize=11, fontweight="bold")
             if _log_y:
                 ax.set_yscale("log")
-                ax.set_yticks([0.01, 0.1])
-                ax.set_yticklabels([r"$10^{-2}$", r"$10^{-1}$"])
+                ax.set_yticks([0.01, 0.1, 1])
+                ax.set_yticklabels([r"$10^{-2}$", r"$10^{-1}$", r"$10^{0}$"])
                 ax.yaxis.set_minor_locator(plt.NullLocator())
-                ax.set_ylim(0.008, 0.1)
+                ax.set_ylim(0.008, 1.0)
             else:
                 ax.set_ylim(0, 0.34)
+
+            # Stacked annotations bottom-left
+            for k, (lbl, col) in enumerate([
+                ("Attnpool SLDA", cfg.C_ATTNPOOL),
+                ("Frozen SLDA",   cfg.C_FROZEN),
+            ]):
+                ax.text(0.03, 0.03 + k * 0.045, lbl,
+                        transform=ax.transAxes,
+                        color=col, fontsize=8, fontweight="bold", style="italic",
+                        va="bottom", ha="left", zorder=6)
         else:
             ax.set_ylabel(r"Spearman $\rho$", fontsize=11, fontweight="bold")
             ax.set_ylim(-0.04, 1)
 
-        # ── Stacked annotations bottom-left (cMSE only) ──────────────────────
-        if is_cmse:
-            _labels = [
-                ("no behavioral supervision", cfg.C_ORACLE),
-                ("random ontology",         cfg.C_RANDONT),
-                ("deterministic beliefs",         cfg.C_DETBT),
-                ("DLBT",                    cfg.C_DLBT),
-            ]
-            _x = 0.03
-            _dy = 0.045  # spacing between lines in axes fraction
-            for k, (lbl, col) in enumerate(_labels):
-                ax.text(_x, 0.03 + k * _dy, lbl,
-                        transform=ax.transAxes,
-                        color=col, fontsize=8, fontweight="bold", style="italic",
-                        va="bottom", ha="left", zorder=6)
         sns.despine(top=True, right=True, left=False, bottom=False)
         plt.tight_layout()
 
@@ -269,31 +250,27 @@ def process_pkl(pkl_path: Path):
 
     # ── Summary table ────────────────────────────────────────────────────────
     print()
-    print(f"  {'Model':<22}  {'budget':>10}  {'cMSE-NF (mean±SEM)':>22}  {'ρ (mean±SEM)':>16}")
-    print("  " + "-" * 74)
-
+    print(f"  {'Model':<18}  {'budget':>10}  {'cMSE-NF (mean±SEM)':>22}  {'ρ (mean±SEM)':>16}")
+    print("  " + "-" * 70)
     for label, cmse_arr, rho_arr, cmse_all, rho_all in [
-        ("DLBT",           dlbt_cmse,    dlbt_rho,    dlbt_all_cmse,    dlbt_all_rho),
-        ("Determ. Beliefs", detbt_cmse,  detbt_rho,   detbt_all_cmse,   detbt_all_rho),
-        ("Random Ontology", randont_cmse, randont_rho, randont_all_cmse, randont_all_rho),
+        ("Frozen SLDA",   frozen_cmse,   frozen_rho,
+                          frozen_all_cmse,   frozen_all_rho),
+        ("Attnpool SLDA", attnpool_cmse, attnpool_rho,
+                          attnpool_all_cmse, attnpool_all_rho),
     ]:
         for b_i, b in enumerate(budgets):
             mu_c, sem_c = _mean_sem_scalar(cmse_arr[:, b_i])
             mu_r, sem_r = _mean_sem_scalar(rho_arr[:, b_i])
-            print(f"  {label:<22}  {b:>10,}  "
+            print(f"  {label:<18}  {b:>10,}  "
                   f"{mu_c:+.5f} ± {sem_c:.5f}  "
                   f"{mu_r:+.4f} ± {sem_r:.4f}")
         mu_c, sem_c = _mean_sem_scalar(cmse_all)
         mu_r, sem_r = _mean_sem_scalar(rho_all)
-        print(f"  {label:<22}  {'all data':>10}  "
+        print(f"  {label:<18}  {'all data':>10}  "
               f"{mu_c:+.5f} ± {sem_c:.5f}  "
               f"{mu_r:+.4f} ± {sem_r:.4f}")
         print()
-
-    print(f"  {'No beh. supervision':<22}  {'(fixed)':>10}  "
-          f"{oracle_cmse:+.5f}            "
-          f"{oracle_rho:+.4f}")
-    print("=" * 76)
+    print("=" * 72)
 
 
 # ---------------------------------------------------------------------------

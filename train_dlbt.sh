@@ -45,20 +45,5 @@ if not avail:
 "
 
 # Run
-# python experiments/behavior/run1/01_fit/run.py
-# python experiments/behavior/run1/01_fit/analysis.py
-
-# python experiments/behavior/run1/02_data_efficiency/run.py
-# python experiments/behavior/run1/02_data_efficiency/analysis.py
-
-# python experiments/behavior/run1/022_data_efficiency_arity/run.py
-# python experiments/behavior/run1/022_data_efficiency_arity/analysis.py
-
-# python experiments/behavior/run1/023_efficiency_main/run.py
-# python experiments/behavior/run1/023_efficiency_main/analysis.py
-
-python experiments/behavior/run1/05_ablations/run.py
-python experiments/behavior/run1/05_ablations/analysis.py
-
-# python experiments/behavior/run0/03_ebm/run.py
-# python experiments/simulations/04_lbt_recovery/run.py
+python experiments/behavior/run1/021_efficiency_main/run.py
+python experiments/behavior/run1/021_efficiency_main/analysis.py

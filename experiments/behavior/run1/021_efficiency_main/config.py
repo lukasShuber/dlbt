@@ -1,21 +1,19 @@
 """
-Configuration for behavior run1 / 05_ablations.
+Configuration for behavior run1 / 021_efficiency_main.
 
-Budget sweep ablation comparing:
-  - DLBT         : full model (MC Dirichlet integration, learned mapper)
-  - DetBT        : deterministic beliefs (Dirichlet mean, learned mapper)
-  - SLDA         : ridge decoder baseline (all tasks)
-  - Oracle       : fixed beliefs from metadata latent state (no training)
-
-Same data / sampling protocol as 023_efficiency_main:
-  - Full task coverage only
-  - Bootstrap fallback sampling
-  - Dense log-spaced budget grid
-  - Separate all-data point
+Key improvements over 02:
+  - X-axis: trials per task  (total budget = tpt × n_tasks).
+  - Budget grid: 10, 22, 46, 100, 215, 464, 1000 trials/task  (+  all data).
+  - Per-budget 90/10 trial split for early stopping / model selection.
+  - DLBT model selection: compare trained vs. base (concentration=1000,
+    symmetric Dirichlet → P ≈ 0.5 everywhere under normalised utility).
+  - SLDA: L2 logistic regression (C=1.0); per-task 90/10 split;
+    compare fitted vs. base model (P=0.5) for each task.
+  - Frozen CLIP encoder for both DLBT and SLDA (no attnpool fine-tuning).
 
 Run from repo root:
-    python experiments/behavior/run1/05_ablations/run.py
-    python experiments/behavior/run1/05_ablations/analysis.py
+    python experiments/behavior/run1/021_efficiency_main/run.py
+    python experiments/behavior/run1/021_efficiency_main/analysis.py
 """
 
 from pathlib import Path
@@ -48,64 +46,62 @@ MAIN_PERF_QUANTILE   = _run1_cfg.MAIN_PERF_QUANTILE
 MIN_TASK_ASSIGNMENTS = _run1_cfg.MIN_TASK_ASSIGNMENTS
 
 # ---------------------------------------------------------------------------
-# Budget grid
+# Budget grid  (trials per task)
 # ---------------------------------------------------------------------------
-TRIAL_BUDGETS: list[int] = sorted({
+# 3 log-spaced points per decade (decade start + 2 intermediates),
+# spanning 10^1 to 10^3.  All-data is a separate special point in run.py.
+TRIALS_PER_TASK: list[int] = sorted({
     int(round(10 ** (lo + k / 3)))
-    for lo in range(2, 5)
-    for k in range(3)
-} | {100_000})
+    for lo in range(1, 3)   # decades: 10^1, 10^2
+    for k in range(3)       # k=0,1,2  →  start + 2 intermediates
+} | {1_000})                # include 10^3 endpoint
+# → [10, 22, 46, 100, 215, 464, 1000]
 
 # ---------------------------------------------------------------------------
 # Seeds
 # ---------------------------------------------------------------------------
-N_SEEDS = 5
-SEEDS   = [42, 43, 44, 45, 46]
+N_SEEDS = 1
+SEEDS   = [42]
 
 # ---------------------------------------------------------------------------
-# Fast-pass mode
+# Fast-pass mode  (quick smoke-test: smallest budget only)
 # ---------------------------------------------------------------------------
 FAST_PASS = False
 
 # ---------------------------------------------------------------------------
-# Training
+# Training — DLBT
 # ---------------------------------------------------------------------------
-N_EPOCHS        = 1000
-PATIENCE        = 200
-N_EPOCHS_PHASE2 = 3000
-PATIENCE_PHASE2 = 50
-LR              = 0.01
-LR_ATTNPOOL     = 1e-5
-N_MC            = 1000
-FREEZE_ENCODER      = False   
-FREEZE_ENCODER_SLDA = True   
-MAPPER_HIDDEN      = None
+N_EPOCHS          = 1000
+PATIENCE          = 200
+LR                = 0.01
+N_MC              = 1000
 NORMALIZED_UTILITY = True
+
+# ---------------------------------------------------------------------------
+# DLBT base model
+# ---------------------------------------------------------------------------
+# Symmetric Dirichlet with very high concentration → beliefs locked at 1/K.
+# Under normalised utility the SEU score is exactly 0 → P(right) = 0.5.
+# Used as the comparison point for per-budget model selection.
+BASE_CONCENTRATION = 1000.0
+
+# ---------------------------------------------------------------------------
+# SLDA — L2 logistic regression
+# ---------------------------------------------------------------------------
+SLDA_C        = 1.0    # inverse L2 regularisation strength (sklearn convention)
+SLDA_MAX_ITER = 1000
 
 # ---------------------------------------------------------------------------
 # Mapper initialisation
 # ---------------------------------------------------------------------------
 INIT_MODE       = "random"
-INIT_ALPHA      = 1.0
 INIT_ALPHA_LOW  = 0.6
 INIT_ALPHA_HIGH = 0.7
-INIT_SEED       = 0
 
 # ---------------------------------------------------------------------------
-# Median threshold correction
+# Run tag
 # ---------------------------------------------------------------------------
-MEDIAN_CORRECTION = False
-NEUTRAL_ALPHA     = (INIT_ALPHA_LOW + INIT_ALPHA_HIGH) / 2   # 0.65
-
-# ---------------------------------------------------------------------------
-# Oracle agent hyperparameters
-# ---------------------------------------------------------------------------
-ORACLE_CONCENTRATION = 5.0   # Dirichlet mass on the true latent state bin
-ORACLE_BACKGROUND    = 0.1   # Dirichlet mass on all other bins
-
-_enc_dlbt = "frozen" if FREEZE_ENCODER      else "attnpool"
-_enc_slda = "frozen" if FREEZE_ENCODER_SLDA else "attnpool"
-RUN_TAG   = f"ablations_dlbt_{_enc_dlbt}_slda_{_enc_slda}_s{len(SEEDS)}"
+RUN_TAG = "efficiency_main_021"
 
 # ---------------------------------------------------------------------------
 # Plot options
@@ -115,12 +111,12 @@ LOG_Y = True
 # ---------------------------------------------------------------------------
 # Plot colours
 # ---------------------------------------------------------------------------
-C_DLBT    = "#C0392B"   # DLBT — strong red
-C_DETBT   = "#C95C48"   # DetBT — warm red-salmon
-C_RANDONT = "#D88A74"   # RandOnt — medium salmon
-C_ORACLE  = "#E8B5A5"   # Oracle — light salmon-pink (no behavioral supervision)
-C_SLDA    = "#7D3C98"   # SLDA — purple (unused in ablations plot)
-C_RNDINI  = "#999999"   # reference lines
+C_DLBT   = "#C0392B"   # DLBT — saturated red
+C_SLDA   = "#7D3C98"   # SLDA — purple
+C_ANTI   = "#777777"   # anti-human DLBT — medium gray
+C_RNDINI = "#999999"   # reference lines
+
+ARITY_COLOR = {1: "#2a6fb5", 2: "#43AA8B", 3: "#E76F51", 4: "#9B5DE5"}
 
 
 # ---------------------------------------------------------------------------

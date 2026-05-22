@@ -247,8 +247,6 @@ def process_pkl(pkl_path: Path):
         if is_cmse:
             ax.axhline(random_cmse_nf, color=cfg.C_RNDINI, lw=1.5,
                        ls=(0, (4, 3)), zorder=1)
-            ax.axhline(max_unc_cmse_nf, color=cfg.C_RNDINI, lw=1.5,
-                       ls=":", label="Max-uncertain DLBT", zorder=1)
             ax.annotate("chance (P=0.5)",
                         xy=(1.0, random_cmse_nf), xycoords=("axes fraction", "data"),
                         xytext=(-4, 5), textcoords="offset points",
@@ -258,13 +256,13 @@ def process_pkl(pkl_path: Path):
         _plot_trace(ax, budgets, dlbt_mu, dlbt_sem, cfg.C_DLBT, "", zorder=4)
         _plot_trace(ax, budgets, slda_mu, slda_sem, cfg.C_SLDA, "", zorder=3)
 
-        if is_cmse:
-            anti_mu, anti_sem = _mean_sem(anti_cmse)
-            anti_all_mu, anti_all_sem = _mean_sem_scalar(anti_all_cmse)
-            _plot_trace(ax, budgets, anti_mu, anti_sem,
-                        cfg.C_ANTI, "", zorder=2)
-            _plot_all_data_marker(ax, total_pool_size,
-                                  anti_all_mu, anti_all_sem, cfg.C_ANTI, zorder=4)
+        anti_mu, anti_sem = _mean_sem(anti_cmse if is_cmse else anti_rho)
+        anti_all_mu, anti_all_sem = _mean_sem_scalar(
+            anti_all_cmse if is_cmse else anti_all_rho)
+        _plot_trace(ax, budgets, anti_mu, anti_sem,
+                    cfg.C_ANTI, "", zorder=2)
+        _plot_all_data_marker(ax, total_pool_size,
+                              anti_all_mu, anti_all_sem, cfg.C_ANTI, zorder=4)
 
         _plot_all_data_marker(ax, total_pool_size,
                               dlbt_all_mu, dlbt_all_sem, cfg.C_DLBT, zorder=5)
@@ -277,16 +275,16 @@ def process_pkl(pkl_path: Path):
             ax.set_ylabel("cMSE − noise floor", fontsize=11, fontweight="bold")
             if _log_y:
                 ax.set_yscale("log")
-                _ybot = 0.01 if "frozen" in pkl_path.stem else 0.005
-                ax.set_ylim(_ybot, 1.0)
+                _ybot = 0.01 if "dlbt_frozen" in pkl_path.stem else 0.008
                 ax.set_yticks([0.01, 0.1, 1])
                 ax.set_yticklabels([r"$10^{-2}$", r"$10^{-1}$", r"$10^{0}$"])
+                ax.set_ylim(_ybot, 1.0)
             else:
                 ax.set_ylim(0, 0.34)
             legend_loc = "upper right"
         else:
             ax.set_ylabel(r"Spearman $\rho$", fontsize=11, fontweight="bold")
-            ax.set_ylim(-0.04, 1)
+            ax.set_ylim(-1, 1)
             if not np.isnan(rho_noise_ceiling):
                 ax.axhline(rho_noise_ceiling, color="#555555", lw=1.5,
                            ls=(0, (2, 2)), zorder=2)
@@ -298,25 +296,17 @@ def process_pkl(pkl_path: Path):
                             va="bottom", ha="left", zorder=6)
             legend_loc = "lower right"
 
-        # Direct annotation for traces
-        def _ann(label, x, y, color, dx=0, dy=6, va="bottom", ha="center"):
-            ax.annotate(label, xy=(x, y),
-                        xytext=(dx, dy), textcoords="offset points",
-                        color=color, fontsize=9, fontweight="bold",
-                        style="italic", va=va, ha=ha, zorder=6)
-
-        def _idx(i):
-            return min(i, len(budgets) - 1)
-
+        # Stacked annotations bottom-left (cMSE plot only)
         if is_cmse:
-            _ann("DLBT",       budgets[_idx(len(budgets) // 2)], dlbt_mu[_idx(len(budgets) // 2)], cfg.C_DLBT, dy=6,  va="bottom")
-            _ann("SLDA",       budgets[_idx(1)],                 slda_mu[_idx(1)],                 cfg.C_SLDA, dx=6,  dy=6,  va="bottom", ha="left")
-            _ann("anti-human", budgets[_idx(7)],                 anti_mu[_idx(7)],                 cfg.C_ANTI, dy=6,  va="bottom")
-        else:
-            _ann("DLBT", budgets[_idx(2)], dlbt_mu[_idx(2)], cfg.C_DLBT, dx=-6, dy=6,  va="bottom", ha="right")
-            _ann("SLDA", budgets[_idx(5)], slda_mu[_idx(5)], cfg.C_SLDA, dx=10, dy=0, va="center", ha="left")
-
-        ax.legend(fontsize=8, frameon=False, loc=legend_loc)
+            for k, (lbl, col) in enumerate([
+                ("anti-human DLBT", cfg.C_ANTI),
+                ("SLDA",            cfg.C_SLDA),
+                ("DLBT",            cfg.C_DLBT),
+            ]):
+                ax.text(0.03, 0.03 + k * 0.045, lbl,
+                        transform=ax.transAxes,
+                        color=col, fontsize=8, fontweight="bold", style="italic",
+                        va="bottom", ha="left", zorder=6)
         sns.despine(top=True, right=True, left=False, bottom=False)
         plt.tight_layout()
 
