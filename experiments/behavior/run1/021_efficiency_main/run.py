@@ -313,7 +313,7 @@ def _sample_and_split(
 ) -> tuple[BehavioralDataset, BehavioralDataset]:
     """
     Sample `tpt` trials per task (bootstrap if pool < tpt).
-    Pool all sampled trials, shuffle, and split 90/10.
+    Aggregate to (uid, task) cells, then split 90/10 at cell level.
     Returns (train_ds_90, val_ds_10).
     """
     all_trials = []
@@ -330,14 +330,25 @@ def _sample_and_split(
             all_trials.append((uid, task_name, outcome))
 
     if not all_trials:
-        empty = _trials_to_ds([])
+        empty = BehavioralDataset(pd.DataFrame(
+            columns=["uid", "task_name", "count_0", "count_1"]))
         return empty, empty
 
-    perm         = rng.permutation(len(all_trials))
-    n_val        = max(1, int(len(all_trials) * 0.10))
-    val_trials   = [all_trials[i] for i in perm[:n_val]]
-    train_trials = [all_trials[i] for i in perm[n_val:]]
-    return _trials_to_ds(train_trials), _trials_to_ds(val_trials)
+    # Aggregate trials → cells, then split at cell level
+    rows = [{"uid": uid, "task_name": tn, "count_0": 1 - out, "count_1": out}
+            for uid, tn, out in all_trials]
+    cell_df = (pd.DataFrame(rows)
+               .groupby(["uid", "task_name"])[["count_0", "count_1"]]
+               .sum().reset_index())
+
+    n_cells  = len(cell_df)
+    n_val    = max(1, int(n_cells * 0.10))
+    perm     = rng.permutation(n_cells)
+    val_mask = np.zeros(n_cells, dtype=bool)
+    val_mask[perm[:n_val]] = True
+
+    return (BehavioralDataset(cell_df[~val_mask].reset_index(drop=True)),
+            BehavioralDataset(cell_df[ val_mask].reset_index(drop=True)))
 
 
 def _all_data_ds(tasks: list, flip: bool = False) -> BehavioralDataset:
@@ -450,14 +461,16 @@ def _dlbt_probe_matrix(agent: DlbtAgent) -> np.ndarray:
 def _fit_slda_logreg(
     tasks: list,
     train_ds: BehavioralDataset,
-) -> tuple[dict, dict]:
+    val_ds: BehavioralDataset,
+) -> tuple[dict, dict, dict]:
     """
     Fit per-task L2 logistic regression on train_ds.
-    Returns (scalers, models).  Tasks with < 2 training images or all-same
-    labels are skipped (their probe columns stay NaN).
-    No val-based model selection — the fitted model is always used.
+    Model selection: compare fitted model vs P=0.5 on val_ds cells for each task.
+    Returns (scalers, models, use_base).
+      use_base[task_name] = True  →  base (P=0.5) wins on val; probe column = 0.5.
+    Tasks with < 2 training images or all-same labels are skipped (probe col = NaN).
     """
-    scalers, models = {}, {}
+    scalers, models, use_base = {}, {}, {}
 
     for task_name in tasks:
         train_grp = train_ds.df[train_ds.df["task_name"] == task_name]
@@ -499,21 +512,41 @@ def _fit_slda_logreg(
         except Exception:
             continue
 
+        # Model selection on val_ds for this task
+        val_grp  = val_ds.df[val_ds.df["task_name"] == task_name]
+        uids_val = [uid for uid in val_grp["uid"].tolist() if uid in frozen_clip]
+        if len(uids_val) >= 1:
+            val_sub    = val_grp[val_grp["uid"].isin(uids_val)]
+            tot_val    = (val_sub["count_0"] + val_sub["count_1"]).values.astype(float)
+            p_obs_val  = val_sub["count_1"].values / np.clip(tot_val, 1, None)
+            X_val_sc   = scaler.transform(
+                np.array([frozen_clip[uid].cpu().numpy() for uid in uids_val]))
+            p_pred_val = model.predict_proba(X_val_sc)[:, 1]
+            fitted_mse = float(np.mean((p_pred_val - p_obs_val) ** 2))
+            base_mse   = float(np.mean((0.5 - p_obs_val) ** 2))
+            use_base[task_name] = base_mse < fitted_mse
+        else:
+            use_base[task_name] = False   # no val data → use fitted model
+
         scalers[task_name] = scaler
         models[task_name]  = model
 
-    return scalers, models
+    return scalers, models, use_base
 
 
-def _slda_probe_matrix(scalers: dict, models: dict) -> np.ndarray:
+def _slda_probe_matrix(scalers: dict, models: dict, use_base: dict) -> np.ndarray:
     """
     Compute probe predictions from fitted per-task logistic regressions.
     Tasks not in models (too few training images) stay NaN.
+    Tasks where use_base[task] = True → predict 0.5 (base wins on val).
     """
     pred = np.full((n_probe, n_all_tasks), np.nan)
 
     for j, task_name in enumerate(all_tasks_ordered):
         if task_name not in models:
+            continue
+        if use_base.get(task_name, False):
+            pred[:, j] = 0.5
             continue
         X_sc   = scalers[task_name].transform(_probe_X_np)
         p_pred = models[task_name].predict_proba(X_sc)[:, 1]
@@ -582,11 +615,11 @@ for s_i, seed_val in enumerate(cfg.SEEDS):
 
         # SLDA
         train_ds_s, val_ds_s = _sample_and_split(all_tasks_ordered, tpt, rng_slda)
-        sca, mod = _fit_slda_logreg(all_tasks_ordered, train_ds_s)
-        pred_s = _slda_probe_matrix(sca, mod)
+        sca, mod, ub = _fit_slda_logreg(all_tasks_ordered, train_ds_s, val_ds_s)
+        pred_s = _slda_probe_matrix(sca, mod, ub)
         slda_cmse[s_i, b_i], slda_rho[s_i, b_i] = _probe_stats(pred_s)
         print(f"    SLDA   cMSE−NF={slda_cmse[s_i,b_i]:+.5f}  ρ={slda_rho[s_i,b_i]:.3f}")
-        del train_ds_s, val_ds_s, sca, mod, pred_s
+        del train_ds_s, val_ds_s, sca, mod, ub, pred_s
 
         # Anti-human DLBT (label-flipped)
         train_ds_a, val_ds_a = _sample_and_split(all_tasks_ordered, tpt, rng_anti, flip=True)
@@ -613,13 +646,13 @@ for s_i, seed_val in enumerate(cfg.SEEDS):
     del agent_all, chosen_all, all_tr, pred_all
     gc.collect(); torch.cuda.empty_cache()
 
-    # SLDA all  — train on 90 % pool (no val needed; no model selection for SLDA)
+    # SLDA all  — train on 90 % pool, model selection on fixed 10 % eval split
     all_tr_s = _all_data_ds(all_tasks_ordered)
-    sca_a, mod_a = _fit_slda_logreg(all_tasks_ordered, all_tr_s)
-    pred_sa = _slda_probe_matrix(sca_a, mod_a)
+    sca_a, mod_a, ub_a = _fit_slda_logreg(all_tasks_ordered, all_tr_s, eval_ds_global)
+    pred_sa = _slda_probe_matrix(sca_a, mod_a, ub_a)
     slda_all_cmse[s_i], slda_all_rho[s_i] = _probe_stats(pred_sa)
     print(f"    SLDA all  cMSE−NF={slda_all_cmse[s_i]:+.5f}  ρ={slda_all_rho[s_i]:.3f}")
-    del all_tr_s, sca_a, mod_a, pred_sa
+    del all_tr_s, sca_a, mod_a, ub_a, pred_sa
 
     # Anti all  — train on 90 % pool (flipped), val on fixed anti eval split
     all_tr_a = _all_data_ds(all_tasks_ordered, flip=True)
