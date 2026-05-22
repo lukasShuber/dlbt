@@ -544,6 +544,7 @@ def _slda_probe_matrix(scalers: dict, models: dict, use_base: dict) -> np.ndarra
 
     for j, task_name in enumerate(all_tasks_ordered):
         if task_name not in models:
+            pred[:, j] = 0.5   # skipped / failed → base model
             continue
         if use_base.get(task_name, False):
             pred[:, j] = 0.5
