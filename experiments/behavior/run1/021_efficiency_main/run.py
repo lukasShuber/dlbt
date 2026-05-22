@@ -419,22 +419,20 @@ def _dlbt_probe_matrix(agent: DlbtAgent) -> np.ndarray:
 def _fit_slda_logreg(
     tasks: list,
     train_ds: BehavioralDataset,
-    val_ds: BehavioralDataset,
-) -> tuple[dict, dict, dict]:
+) -> tuple[dict, dict]:
     """
     Fit per-task L2 logistic regression on train_ds.
-    Compare each task's model vs. base (P=0.5) on val_ds.
-    Returns (scalers, models, use_base) where use_base[task]=True means
-    the base model (P=0.5) won for that task.
+    Returns (scalers, models).  Tasks with < 2 training images or all-same
+    labels are skipped (their probe columns stay NaN).
+    No val-based model selection — the fitted model is always used.
     """
-    scalers, models, use_base = {}, {}, {}
+    scalers, models = {}, {}
 
     for task_name in tasks:
         train_grp = train_ds.df[train_ds.df["task_name"] == task_name]
         uids_tr   = [uid for uid in train_grp["uid"].tolist() if uid in frozen_clip]
 
         if len(uids_tr) < 2:
-            use_base[task_name] = True
             continue
 
         # Expand aggregated counts → (X, y, w) for logistic regression
@@ -449,14 +447,13 @@ def _fit_slda_logreg(
                 X_list.append(feat); y_list.append(0); w_list.append(c0)
 
         if not X_list or len(set(y_list)) < 2:
-            use_base[task_name] = True
             continue
 
         X = np.array(X_list)
         y = np.array(y_list)
         w = np.array(w_list, dtype=float)
 
-        # Fit scaler on the unique feature vectors (not expanded rows)
+        # Fit scaler on unique feature vectors (not expanded rows)
         X_unique = np.array([frozen_clip[uid].cpu().numpy() for uid in uids_tr])
         scaler   = StandardScaler()
         scaler.fit(X_unique)
@@ -465,58 +462,34 @@ def _fit_slda_logreg(
         try:
             model = LogisticRegression(
                 C=cfg.SLDA_C, max_iter=cfg.SLDA_MAX_ITER,
-                solver="lbfgs", n_jobs=1,
+                solver="lbfgs",
             )
             model.fit(X_sc, y, sample_weight=w)
         except Exception:
-            use_base[task_name] = True
             continue
-
-        # Compare on val set for this task
-        val_grp  = val_ds.df[val_ds.df["task_name"] == task_name]
-        uids_val = [uid for uid in val_grp["uid"].tolist() if uid in frozen_clip]
-
-        if uids_val:
-            X_val    = np.array([frozen_clip[uid].cpu().numpy() for uid in uids_val])
-            X_val_sc = scaler.transform(X_val)
-            p_pred   = model.predict_proba(X_val_sc)[:, 1]
-
-            v_sub = val_grp.set_index("uid").loc[uids_val]
-            v_tot = (v_sub["count_0"] + v_sub["count_1"]).values.astype(float)
-            p_obs = v_sub["count_1"].values / np.clip(v_tot, 1, None)
-
-            fitted_mse = float(np.mean((p_pred - p_obs) ** 2))
-            base_mse_t = float(np.mean((0.5  - p_obs) ** 2))
-            use_base[task_name] = base_mse_t < fitted_mse
-        else:
-            use_base[task_name] = False   # no val data → keep fitted model
 
         scalers[task_name] = scaler
         models[task_name]  = model
 
-    return scalers, models, use_base
+    return scalers, models
 
 
-def _slda_probe_matrix(scalers: dict, models: dict, use_base: dict) -> np.ndarray:
+def _slda_probe_matrix(scalers: dict, models: dict) -> np.ndarray:
     """
-    Compute probe predictions from SLDA.
-    Tasks where use_base=True → 0.5.  Others → fitted logistic regression.
+    Compute probe predictions from fitted per-task logistic regressions.
+    Tasks not in models (too few training images) stay NaN.
     """
     pred = np.full((n_probe, n_all_tasks), np.nan)
 
     for j, task_name in enumerate(all_tasks_ordered):
-        if use_base.get(task_name, True):
-            for uid in _probe_uid_clip:
-                row_i = uid_to_row.get(uid)
-                if row_i is not None:
-                    pred[row_i, j] = 0.5
-        elif task_name in models:
-            X_sc   = scalers[task_name].transform(_probe_X_np)
-            p_pred = models[task_name].predict_proba(X_sc)[:, 1]
-            for i_p, uid in enumerate(_probe_uid_clip):
-                row_i = uid_to_row.get(uid)
-                if row_i is not None:
-                    pred[row_i, j] = float(p_pred[i_p])
+        if task_name not in models:
+            continue
+        X_sc   = scalers[task_name].transform(_probe_X_np)
+        p_pred = models[task_name].predict_proba(X_sc)[:, 1]
+        for i_p, uid in enumerate(_probe_uid_clip):
+            row_i = uid_to_row.get(uid)
+            if row_i is not None:
+                pred[row_i, j] = float(p_pred[i_p])
 
     return pred
 
@@ -578,13 +551,11 @@ for s_i, seed_val in enumerate(cfg.SEEDS):
 
         # SLDA
         train_ds_s, val_ds_s = _sample_and_split(all_tasks_ordered, tpt, rng_slda)
-        sca, mod, ub = _fit_slda_logreg(all_tasks_ordered, train_ds_s, val_ds_s)
-        pred_s = _slda_probe_matrix(sca, mod, ub)
+        sca, mod = _fit_slda_logreg(all_tasks_ordered, train_ds_s)
+        pred_s = _slda_probe_matrix(sca, mod)
         slda_cmse[s_i, b_i], slda_rho[s_i, b_i] = _probe_stats(pred_s)
-        n_base = sum(ub.values())
-        print(f"    SLDA   cMSE−NF={slda_cmse[s_i,b_i]:+.5f}  ρ={slda_rho[s_i,b_i]:.3f}"
-              f"  (base tasks={n_base}/{n_all_tasks})")
-        del train_ds_s, val_ds_s, sca, mod, ub, pred_s
+        print(f"    SLDA   cMSE−NF={slda_cmse[s_i,b_i]:+.5f}  ρ={slda_rho[s_i,b_i]:.3f}")
+        del train_ds_s, val_ds_s, sca, mod, pred_s
 
         # Anti-human DLBT (label-flipped)
         train_ds_a, val_ds_a = _sample_and_split(all_tasks_ordered, tpt, rng_anti, flip=True)
@@ -592,7 +563,8 @@ for s_i, seed_val in enumerate(cfg.SEEDS):
         chosen_a = _run_dlbt(agent_a, train_ds_a, val_ds_a)
         pred_a   = _dlbt_probe_matrix(chosen_a)
         anti_cmse[s_i, b_i], anti_rho[s_i, b_i] = _probe_stats(pred_a)
-        print(f"    Anti   cMSE−NF={anti_cmse[s_i,b_i]:+.5f}  ρ={anti_rho[s_i,b_i]:.3f}")
+        print(f"    Anti   cMSE−NF={anti_cmse[s_i,b_i]:+.5f}  ρ={anti_rho[s_i,b_i]:.3f}"
+              f"  (base={'yes' if chosen_a is base_agent else 'no'})")
         del agent_a, chosen_a, train_ds_a, val_ds_a, pred_a
         gc.collect(); torch.cuda.empty_cache()
 
@@ -611,11 +583,11 @@ for s_i, seed_val in enumerate(cfg.SEEDS):
 
     # SLDA all
     all_tr_s, all_val_s = _all_data_and_split(all_tasks_ordered, rng_slda)
-    sca_a, mod_a, ub_a = _fit_slda_logreg(all_tasks_ordered, all_tr_s, all_val_s)
-    pred_sa = _slda_probe_matrix(sca_a, mod_a, ub_a)
+    sca_a, mod_a = _fit_slda_logreg(all_tasks_ordered, all_tr_s)
+    pred_sa = _slda_probe_matrix(sca_a, mod_a)
     slda_all_cmse[s_i], slda_all_rho[s_i] = _probe_stats(pred_sa)
     print(f"    SLDA all  cMSE−NF={slda_all_cmse[s_i]:+.5f}  ρ={slda_all_rho[s_i]:.3f}")
-    del all_tr_s, all_val_s, sca_a, mod_a, ub_a, pred_sa
+    del all_tr_s, all_val_s, sca_a, mod_a, pred_sa
 
     # Anti all
     all_tr_a, all_val_a = _all_data_and_split(all_tasks_ordered, rng_anti, flip=True)
@@ -623,7 +595,8 @@ for s_i, seed_val in enumerate(cfg.SEEDS):
     chosen_aa = _run_dlbt(agent_aa, all_tr_a, all_val_a)
     pred_aa   = _dlbt_probe_matrix(chosen_aa)
     anti_all_cmse[s_i], anti_all_rho[s_i] = _probe_stats(pred_aa)
-    print(f"    Anti all  cMSE−NF={anti_all_cmse[s_i]:+.5f}  ρ={anti_all_rho[s_i]:.3f}")
+    print(f"    Anti all  cMSE−NF={anti_all_cmse[s_i]:+.5f}  ρ={anti_all_rho[s_i]:.3f}"
+          f"  (base={'yes' if chosen_aa is base_agent else 'no'})")
     del agent_aa, chosen_aa, all_tr_a, all_val_a, pred_aa
     gc.collect(); torch.cuda.empty_cache()
 
