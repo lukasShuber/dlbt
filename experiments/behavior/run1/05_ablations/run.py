@@ -36,7 +36,6 @@ from scipy.stats import spearmanr
 from dlbt.agents.dlbt import DlbtAgent
 from dlbt.agents.detbt import DetBTAgent
 from dlbt.agents.onehot_bt import OneHotBTAgent
-from dlbt.agents.oracle_bt import OracleBTAgent
 from dlbt.data.dataset import BehavioralDataset
 from dlbt.data.image_ref import load_image_refs, image_refs_as_list
 from dlbt.data.task import get_task
@@ -399,25 +398,12 @@ def _behav_superv_probe_matrix() -> np.ndarray:
 
 
 # ===========================================================================
-# Reference baselines (no training — evaluated once at startup)
+# Reference baseline: no behavioral supervision (ground-truth P=0/1)
 # ===========================================================================
 
-print("\nEvaluating Oracle agent...")
-oracle_agent = OracleBTAgent(
-    concentration     = cfg.ORACLE_CONCENTRATION,
-    background        = cfg.ORACLE_BACKGROUND,
-    device            = device,
-    normalize_utility = cfg.NORMALIZED_UTILITY,
-)
-oracle_agent.eval()
-pred_oracle              = _probe_matrix(oracle_agent)
-oracle_cmse, oracle_rho  = _probe_stats(pred_oracle)
-del oracle_agent
-print(f"  Oracle cMSE−NF={oracle_cmse:+.5f}  ρ={oracle_rho:.4f}")
-
-print("\nEvaluating Behavioral Supervision baseline...")
-pred_bsup                  = _behav_superv_probe_matrix()
-bsup_cmse, bsup_rho        = _probe_stats(pred_bsup)
+print("\nEvaluating no-behavioral-supervision baseline (ground-truth P=0/1)...")
+pred_bsup              = _behav_superv_probe_matrix()
+bsup_cmse, bsup_rho   = _probe_stats(pred_bsup)
 print(f"  BehavSuperv cMSE−NF={bsup_cmse:+.5f}  ρ={bsup_rho:.4f}")
 
 # ===========================================================================
@@ -525,11 +511,7 @@ summary = {
     "probe_noise_floor":   probe_noise_floor,
     "random_cmse_net":     random_cmse_net,
     "rho_noise_ceiling":   rho_noise_ceiling,
-    # Reference baselines (no training)
-    "oracle_cmse":             oracle_cmse,
-    "oracle_rho":              oracle_rho,
-    "oracle_concentration":    cfg.ORACLE_CONCENTRATION,
-    "oracle_background":       cfg.ORACLE_BACKGROUND,
+    # Reference baseline: no behavioral supervision (ground-truth P=0/1)
     "behav_superv_cmse":       bsup_cmse,
     "behav_superv_rho":        bsup_rho,
     # Budget sweep [n_seeds × n_budgets]

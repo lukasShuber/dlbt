@@ -7,9 +7,8 @@ Belief-representation ablation comparing:
                       (Dirichlet mean at train AND eval; no MC sampling)
   - OneHotBT        : perceptual uncertainty ablation
                       (train: mean like DetBT; eval: argmax one-hot, certain belief)
-  - BehavSuperv     : behavioral supervision reference — P=1 if true latent ∈ Z+
-                      (no learning; evaluated once alongside Oracle)
-  - Oracle          : fixed soft beliefs from metadata latent state (no training)
+  - BehavSuperv     : no behavioral supervision reference — P=1 if true latent ∈ Z+,
+                      P=0 otherwise; no learning, purely ground-truth-based
 
 Same data / sampling protocol as 021_efficiency_main:
   - Full task coverage only
@@ -63,8 +62,8 @@ TRIAL_BUDGETS: list[int] = sorted({
 # ---------------------------------------------------------------------------
 # Seeds
 # ---------------------------------------------------------------------------
-N_SEEDS = 5
-SEEDS   = [42, 43, 44, 45, 46]
+N_SEEDS = 1
+SEEDS   = [42]
 
 # ---------------------------------------------------------------------------
 # Fast-pass mode
@@ -92,12 +91,6 @@ INIT_MODE       = "random"
 INIT_ALPHA_LOW  = 0.6
 INIT_ALPHA_HIGH = 0.7
 
-# ---------------------------------------------------------------------------
-# Oracle agent hyperparameters
-# ---------------------------------------------------------------------------
-ORACLE_CONCENTRATION = 5.0   # Dirichlet mass on the true latent state bin
-ORACLE_BACKGROUND    = 0.1   # Dirichlet mass on all other bins
-
 _enc_dlbt = "frozen" if FREEZE_ENCODER else "attnpool"
 RUN_TAG   = f"ablations_dlbt_{_enc_dlbt}_s{N_SEEDS}"
 
@@ -112,8 +105,7 @@ LOG_Y = True
 C_DLBT        = "#C0392B"   # DLBT — strong red
 C_DETBT       = "#C95C48"   # DetBT (perc. stochasticity) — warm red-salmon
 C_ONEHOT      = "#D4876A"   # OneHotBT (perc. uncertainty) — medium salmon
-C_ORACLE      = "#E8B5A5"   # Oracle (no beh. supervision, soft) — light pink
-C_BEHAV_SUPER = "#8E44AD"   # Behavioral supervision (ground-truth P=0/1) — purple
+C_BEHAV_SUPER = "#8E44AD"   # No beh. supervision (ground-truth P=0/1) — purple
 C_RNDINI      = "#999999"   # reference lines — gray
 
 

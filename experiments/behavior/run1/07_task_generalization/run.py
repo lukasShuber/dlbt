@@ -386,15 +386,7 @@ gen_rho  = {c: np.full(n_seeds, np.nan) for c in conditions}
 # Record which tasks were used per seed per condition
 gen_train_tasks = {c: [] for c in conditions}
 
-if cfg.FAST_PASS:
-    seeds_to_run = cfg.SEEDS[:1]
-    print("\n  FAST_PASS=True → 1 seed only")
-else:
-    seeds_to_run = cfg.SEEDS
-
 for s_i, seed_val in enumerate(cfg.SEEDS):
-    if seed_val not in seeds_to_run:
-        continue
     print(f"\n{'='*60}")
     print(f"Seed {s_i+1}/{n_seeds}  (seed_val={seed_val})")
 

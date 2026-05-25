@@ -11,9 +11,8 @@ under results/plots/<pkl-stem>/.
     • Certain Beliefs      — medium salmon (OneHotBT; perceptual uncertainty)
 
   Reference lines (no training — horizontal):
-    • chance (P=0.5)          — gray dashed, annotated
-    • No beh. supervision     — light pink dashed (Oracle)
-    • Behavioral supervision  — purple dashed (BehavSuperv)
+    • chance (P=0.5)             — gray dashed, annotated
+    • No beh. supervision        — purple dashed (BehavSuperv, ground-truth P=0/1)
 
   All-data markers:
     • Filled marker for DLBT, DetBT, OneHotBT
@@ -156,10 +155,6 @@ def process_pkl(pkl_path: Path):
     onehot_all_cmse = d.get("onehot_all_cmse", np.full_like(dlbt_all_cmse, np.nan))
     onehot_all_rho  = d.get("onehot_all_rho",  np.full_like(dlbt_all_rho,  np.nan))
 
-    oracle_cmse = d["oracle_cmse"]
-    oracle_rho  = d["oracle_rho"]
-    oracle_conc = d.get("oracle_concentration", cfg.ORACLE_CONCENTRATION)
-
     bsup_cmse = d.get("behav_superv_cmse", float("nan"))
     bsup_rho  = d.get("behav_superv_rho",  float("nan"))
 
@@ -205,13 +200,10 @@ def process_pkl(pkl_path: Path):
                         color=cfg.C_RNDINI, fontsize=8, style="italic",
                         va="bottom", ha="right", zorder=6)
 
-        oracle_val = oracle_cmse if is_cmse else oracle_rho
-        ax.axhline(oracle_val, color=cfg.C_ORACLE, lw=1.5, ls="--", zorder=2)
-
         if not np.isnan(bsup_cmse if is_cmse else bsup_rho):
             bsup_val = bsup_cmse if is_cmse else bsup_rho
             ax.axhline(bsup_val, color=cfg.C_BEHAV_SUPER, lw=1.5,
-                       ls=(0, (5, 2)), zorder=2)
+                       ls="--", zorder=2)
 
         if not is_cmse and not np.isnan(rho_noise_ceiling):
             ax.axhline(rho_noise_ceiling, color="#555555", lw=1.5,
@@ -256,11 +248,10 @@ def process_pkl(pkl_path: Path):
         # ── Stacked annotations bottom-left (cMSE only) ──────────────────────
         if is_cmse:
             _labels = [
-                ("no beh. supervision (oracle)",  cfg.C_ORACLE),
-                ("behavioral supervision",         cfg.C_BEHAV_SUPER),
-                ("certain beliefs",                cfg.C_ONEHOT),
-                ("determ. beliefs",                cfg.C_DETBT),
-                ("DLBT",                           cfg.C_DLBT),
+                ("no beh. supervision",  cfg.C_BEHAV_SUPER),
+                ("certain beliefs",      cfg.C_ONEHOT),
+                ("determ. beliefs",      cfg.C_DETBT),
+                ("DLBT",                 cfg.C_DLBT),
             ]
             _x  = 0.03
             _dy = 0.045
@@ -305,10 +296,7 @@ def process_pkl(pkl_path: Path):
               f"{mu_r:+.4f} ± {sem_r:.4f}")
         print()
 
-    print(f"  {'No beh. supervision (oracle)':<26}  {'(fixed)':>10}  "
-          f"{oracle_cmse:+.5f}            "
-          f"{oracle_rho:+.4f}")
-    print(f"  {'Behavioral supervision':<26}  {'(fixed)':>10}  "
+    print(f"  {'No beh. supervision':<26}  {'(fixed)':>10}  "
           f"{bsup_cmse:+.5f}            "
           f"{bsup_rho:+.4f}")
     print("=" * 80)
