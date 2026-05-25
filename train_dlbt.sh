@@ -3,7 +3,7 @@
 #### SLURM JOB OPTIONS ##############################################
 #SBATCH --mail-user=lukas.s.huber@unibe.ch
 #SBATCH --mail-type=FAIL,END
-#SBATCH --job-name=ablations_attpool_5_seeds_no_median_correction
+#SBATCH --job-name=attpool_5_seeds_slda_dlbt
 #SBATCH --output=logs/output_%j.txt
 #SBATCH --error=logs/error_%j.txt
 
