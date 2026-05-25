@@ -549,8 +549,15 @@ def _run_slda(
         gc.collect(); torch.cuda.empty_cache()
 
     probe_feats = _slda_features_for_probe(clip_feats)
-    return slda_probe_matrix(scalers, models, ub, probe_feats,
+    pred = slda_probe_matrix(scalers, models, ub, probe_feats,
                              all_tasks_ordered, uid_to_row, n_probe)
+
+    # Model-selection summary: how many tasks chose fitted vs base
+    n_fitted = sum(1 for t in tasks if t in models and not ub.get(t, False))
+    n_base   = sum(1 for t in tasks if t not in models or ub.get(t, False))
+    print(f"    SLDA model sel: fitted={n_fitted}/{len(tasks)}  base={n_base}/{len(tasks)}")
+
+    return pred
 
 
 # ---------------------------------------------------------------------------

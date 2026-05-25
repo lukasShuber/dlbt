@@ -105,7 +105,7 @@ RUN_TAG = "task_generalization_s5"
 # ---------------------------------------------------------------------------
 C_DLBT      = "#C0392B"   # DLBT ablations — red
 C_SLDA_REF  = "#7D3C98"   # SLDA full reference — purple
-C_DLBT_REF  = "#2E4057"   # DLBT full reference — dark blue
+C_DLBT_REF  = "#C0392B"   # DLBT full reference — red  (matches 021)
 C_CHANCE    = "#999999"   # random guesser — gray
 C_SEED      = "#AAAAAA"   # per-seed scatter dots — light gray
 ARITY_COLOR = {1: "#2a6fb5", 2: "#43AA8B", 3: "#E76F51", 4: "#9B5DE5",
