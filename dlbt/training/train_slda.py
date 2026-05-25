@@ -11,9 +11,8 @@ Phase 1  fit_slda_logreg()
 Phase 2  finetune_slda_attnpool()   [train_slda_attnpool.py]
     Fine-tune the CLIP attention-pooling layer through the FIXED Phase-1
     logistic decoders.  Only runs when FREEZE_ENCODER_SLDA = False.
-
-Phase 3  fit_slda_logreg()  (called again)
-    Re-fit per-task LogReg on the Phase-2 fine-tuned features.
+    Phase-1 scalers/models/use_base are kept unchanged; fine-tuned features
+    are used for probe prediction.
 
 Probe prediction  slda_probe_matrix()
     Build the [n_probe × n_tasks] prediction matrix from fitted models.
@@ -109,7 +108,12 @@ def fit_slda_logreg(
                 solver="lbfgs", cv=cv,
             )
             model.fit(X_sc, y, sample_weight=w)
-        except Exception:
+        except Exception as e:
+            print(f"\n{'!'*60}")
+            print(f"  WARNING: LogReg fitting FAILED for task '{task_name}'")
+            print(f"  Exception: {type(e).__name__}: {e}")
+            print(f"  Task will fall back to P=0.5 for all probe images.")
+            print(f"{'!'*60}\n")
             continue
 
         # ---- Model selection on val cells ------------------------------------

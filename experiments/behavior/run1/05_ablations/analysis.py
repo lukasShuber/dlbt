@@ -99,10 +99,10 @@ def _plot_all_data_marker(ax, x, mu, sem, color, zorder=5):
 
 def _xaxis_setup(ax):
     ax.set_xscale("log")
-    ax.set_xlim(70, 1e5)
-    ax.set_xticks([100, 1_000, 10_000, 100_000])
-    ax.set_xticklabels([r"$10^2$", r"$10^3$", r"$10^4$", r"$10^5$"])
-    ax.set_xlabel("Total trial budget", fontsize=11, fontweight="bold")
+    ax.set_xlim(7, 3_000)
+    ax.set_xticks([10, 100, 1_000])
+    ax.set_xticklabels([r"$10^1$", r"$10^2$", r"$10^3$"])
+    ax.set_xlabel("Trials per task", fontsize=11, fontweight="bold")
 
 
 def _rho_nc_from_counts(true_mat, count_mat, n_splits=200, seed=0):
@@ -137,9 +137,9 @@ def process_pkl(pkl_path: Path):
     with open(pkl_path, "rb") as f:
         d = pickle.load(f)
 
-    budgets         = np.array(d["trial_budgets"])
-    total_pool_size = d["total_pool_size"]
-    seeds           = d["seeds"]
+    trials_per_task  = np.array(d["trials_per_task"])
+    avg_pool_per_task = d.get("avg_pool_per_task", d["total_pool_size"])
+    seeds            = d["seeds"]
 
     dlbt_cmse   = d["dlbt_cmse"]
     dlbt_rho    = d["dlbt_rho"]
@@ -168,7 +168,7 @@ def process_pkl(pkl_path: Path):
     elif np.isnan(rho_noise_ceiling):
         print("  [warn] rho_noise_ceiling missing — re-run run.py to regenerate.")
 
-    print(f"  Seeds: {len(seeds)}  Budgets: {list(budgets)}")
+    print(f"  Seeds: {len(seeds)}  Trials-per-task: {list(trials_per_task)}")
 
     plots_dir = cfg.RESULTS_DIR / "plots" / pkl_path.stem
     plots_dir.mkdir(parents=True, exist_ok=True)
@@ -216,16 +216,16 @@ def process_pkl(pkl_path: Path):
                         va="bottom", ha="left", zorder=6)
 
         # ── Traces ───────────────────────────────────────────────────────────
-        _plot_trace(ax, budgets, dlbt_mu,   dlbt_sem,   cfg.C_DLBT,   "", zorder=6)
-        _plot_trace(ax, budgets, detbt_mu,  detbt_sem,  cfg.C_DETBT,  "", zorder=5)
-        _plot_trace(ax, budgets, onehot_mu, onehot_sem, cfg.C_ONEHOT, "", zorder=4)
+        _plot_trace(ax, trials_per_task, dlbt_mu,   dlbt_sem,   cfg.C_DLBT,   "", zorder=6)
+        _plot_trace(ax, trials_per_task, detbt_mu,  detbt_sem,  cfg.C_DETBT,  "", zorder=5)
+        _plot_trace(ax, trials_per_task, onehot_mu, onehot_sem, cfg.C_ONEHOT, "", zorder=4)
 
         # ── All-data markers ─────────────────────────────────────────────────
-        _plot_all_data_marker(ax, total_pool_size,
+        _plot_all_data_marker(ax, avg_pool_per_task,
                               dlbt_all_mu,   dlbt_all_sem,   cfg.C_DLBT,   zorder=7)
-        _plot_all_data_marker(ax, total_pool_size,
+        _plot_all_data_marker(ax, avg_pool_per_task,
                               detbt_all_mu,  detbt_all_sem,  cfg.C_DETBT,  zorder=7)
-        _plot_all_data_marker(ax, total_pool_size,
+        _plot_all_data_marker(ax, avg_pool_per_task,
                               onehot_all_mu, onehot_all_sem, cfg.C_ONEHOT, zorder=7)
 
         _xaxis_setup(ax)
@@ -283,10 +283,10 @@ def process_pkl(pkl_path: Path):
         ("Determ. beliefs",   detbt_cmse,  detbt_rho,  detbt_all_cmse,  detbt_all_rho),
         ("Certain beliefs",   onehot_cmse, onehot_rho, onehot_all_cmse, onehot_all_rho),
     ]:
-        for b_i, b in enumerate(budgets):
+        for b_i, tpt in enumerate(trials_per_task):
             mu_c, sem_c = _mean_sem_scalar(cmse_arr[:, b_i])
             mu_r, sem_r = _mean_sem_scalar(rho_arr[:, b_i])
-            print(f"  {label:<26}  {b:>10,}  "
+            print(f"  {label:<26}  {tpt:>10,} tpt  "
                   f"{mu_c:+.5f} ± {sem_c:.5f}  "
                   f"{mu_r:+.4f} ± {sem_r:.4f}")
         mu_c, sem_c = _mean_sem_scalar(cmse_all)

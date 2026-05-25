@@ -51,13 +51,14 @@ MAIN_PERF_QUANTILE   = _run1_cfg.MAIN_PERF_QUANTILE
 MIN_TASK_ASSIGNMENTS = _run1_cfg.MIN_TASK_ASSIGNMENTS
 
 # ---------------------------------------------------------------------------
-# Budget grid  (total trials across all tasks)
+# Budget grid  (trials per task — mirrors 021_efficiency_main)
 # ---------------------------------------------------------------------------
-TRIAL_BUDGETS: list[int] = sorted({
+TRIALS_PER_TASK: list[int] = sorted({
     int(round(10 ** (lo + k / 3)))
-    for lo in range(2, 5)
+    for lo in range(1, 3)
     for k in range(3)
-} | {100_000})
+} | {1_000})
+# → [10, 22, 46, 100, 215, 464, 1000]
 
 # ---------------------------------------------------------------------------
 # Seeds
@@ -73,16 +74,21 @@ FAST_PASS = False
 # ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
-N_EPOCHS        = 1000
-PATIENCE        = 200
-N_EPOCHS_PHASE2 = 3000
-PATIENCE_PHASE2 = 50
-LR              = 0.01
-LR_ATTNPOOL     = 1e-5
-N_MC            = 1000
-FREEZE_ENCODER  = False   # False → Phase 2 attnpool fine-tuning for DLBT
-MAPPER_HIDDEN   = None
+N_EPOCHS           = 1000
+PATIENCE           = 200
+N_EPOCHS_PHASE2    = 3000
+PATIENCE_PHASE2    = 50
+LR                 = 0.01
+LR_ATTNPOOL        = 1e-5
+N_MC               = 1000
+FREEZE_ENCODER     = False   # False → Phase 2 attnpool fine-tuning for DLBT
+MAPPER_HIDDEN      = None
 NORMALIZED_UTILITY = True
+
+# ---------------------------------------------------------------------------
+# DLBT base model  (symmetric Dirichlet α = BASE_CONCENTRATION → P ≈ 0.5)
+# ---------------------------------------------------------------------------
+BASE_CONCENTRATION = 1000.0
 
 # ---------------------------------------------------------------------------
 # Mapper initialisation

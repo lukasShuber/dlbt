@@ -157,7 +157,7 @@ rho_noise_ceiling = _rho_noise_ceiling(probe_cells_df)
 print(f"  Spearman ρ noise ceiling: {rho_noise_ceiling:.4f}")
 
 # ---------------------------------------------------------------------------
-# 10 % eval split of main cells  (for early stopping / model selection)
+# Fixed cell-level 10 % eval split  (for all-data model selection)
 # ---------------------------------------------------------------------------
 main_cells_df = (full_ds.df[full_ds.df["uid"].isin(main_uids)]
                  .copy().reset_index(drop=True))
@@ -167,17 +167,19 @@ eval_idx     = rng_split.choice(len(main_cells_df), size=n_eval_cells, replace=F
 eval_mask    = np.zeros(len(main_cells_df), dtype=bool)
 eval_mask[eval_idx] = True
 
-eval_df = main_cells_df[eval_mask].reset_index(drop=True)
-pool_df = main_cells_df[~eval_mask].reset_index(drop=True)
-eval_ds = BehavioralDataset(eval_df)
-print(f"\n  Eval cells (early stopping): {len(eval_df)}")
-print(f"  Train pool cells (90 %%):    {len(pool_df)}")
+eval_df        = main_cells_df[eval_mask].reset_index(drop=True)
+pool_df        = main_cells_df[~eval_mask].reset_index(drop=True)
+eval_ds_global = BehavioralDataset(eval_df)
+print(f"\n  Eval cells (all-data model sel): {len(eval_df)}")
+print(f"  Train pool cells (90 %%):        {len(pool_df)}")
 
 # ---------------------------------------------------------------------------
 # Per-task trial pools
+#   task_trial_pools     — full main pool  (used for budget-grid sampling)
+#   task_trial_pools_all — 90 % pool only  (used for all-data point)
 # ---------------------------------------------------------------------------
 task_trial_pools: dict[str, list] = {t: [] for t in all_tasks_ordered}
-for row in pool_df.itertuples(index=False):
+for row in main_cells_df.itertuples(index=False):
     tn = row.task_name
     if tn not in task_trial_pools:
         continue
@@ -187,18 +189,31 @@ for row in pool_df.itertuples(index=False):
     for _ in range(int(row.count_1)):
         pool.append((row.uid, 1))
 
-pool_sizes      = {t: len(task_trial_pools[t]) for t in all_tasks_ordered}
-total_pool_size = sum(pool_sizes.values())
-print(f"\n  Trial pool — min: {min(pool_sizes.values())}  "
-      f"max: {max(pool_sizes.values())}  total: {total_pool_size:,}")
+task_trial_pools_all: dict[str, list] = {t: [] for t in all_tasks_ordered}
+for row in pool_df.itertuples(index=False):
+    tn = row.task_name
+    if tn not in task_trial_pools_all:
+        continue
+    p = task_trial_pools_all[tn]
+    for _ in range(int(row.count_0)):
+        p.append((row.uid, 0))
+    for _ in range(int(row.count_1)):
+        p.append((row.uid, 1))
 
-trial_budgets = [b for b in cfg.TRIAL_BUDGETS if b <= total_pool_size]
-if not trial_budgets:
-    trial_budgets = cfg.TRIAL_BUDGETS[:1]
+pool_sizes       = {t: len(task_trial_pools[t]) for t in all_tasks_ordered}
+total_pool_size  = sum(pool_sizes.values())
+pool_all_size    = sum(len(v) for v in task_trial_pools_all.values())
+avg_pool_per_task = pool_all_size / n_all_tasks
+print(f"\n  Trial pool (full) — min: {min(pool_sizes.values())}  "
+      f"max: {max(pool_sizes.values())}  total: {total_pool_size:,}")
+print(f"  Trial pool (90 %) — total: {pool_all_size:,}  "
+      f"avg/task: {avg_pool_per_task:.1f}")
+
+trials_per_task = list(cfg.TRIALS_PER_TASK)
 if cfg.FAST_PASS:
-    trial_budgets = [trial_budgets[0]]
-    print("  FAST_PASS=True → min budget only")
-print(f"  Budget grid ({len(trial_budgets)} points): {trial_budgets}")
+    trials_per_task = [trials_per_task[0]]
+    print("  FAST_PASS=True → min tpt only")
+print(f"  Trials-per-task grid ({len(trials_per_task)} points): {trials_per_task}")
 
 # ---------------------------------------------------------------------------
 # CLIP feature cache
@@ -216,40 +231,74 @@ del _agent_tmp
 print(f"CLIP cache ready ({len(frozen_clip)} images).")
 
 # ---------------------------------------------------------------------------
-# Helpers
+# DLBT base agent  (symmetric Dirichlet α = BASE_CONCENTRATION → P ≈ 0.5)
+# ---------------------------------------------------------------------------
+base_agent = DlbtAgent(
+    freeze_encoder    = True,
+    n_mc_samples      = cfg.N_MC,
+    device            = device,
+    mapper_hidden     = cfg.MAPPER_HIDDEN,
+    normalize_utility = cfg.NORMALIZED_UTILITY,
+)
+base_agent._cache = {uid: feat.clone() for uid, feat in frozen_clip.items()}
+with torch.no_grad():
+    _lin = base_agent.mapper[0]
+    _lin.weight.zero_()
+    _lin.bias.fill_(cfg.BASE_CONCENTRATION)
+base_agent.eval()
+print(f"Base agent ready (α = {cfg.BASE_CONCENTRATION}).")
+
+# ---------------------------------------------------------------------------
+# Helpers — data
 # ---------------------------------------------------------------------------
 
-def _bootstrap_sample(tasks: list, budget: int,
-                      rng: np.random.Generator) -> BehavioralDataset:
-    n     = len(tasks)
-    q     = budget // n
-    r     = budget % n
-    extra = set(int(i) for i in rng.choice(n, size=r, replace=False))
-    rows  = []
-    for i, task_name in enumerate(tasks):
-        k    = q + (1 if i in extra else 0)
+def _sample_and_split(
+    tasks: list,
+    tpt: int,
+    rng: np.random.Generator,
+) -> tuple[BehavioralDataset, BehavioralDataset]:
+    """
+    Sample `tpt` trials per task from task_trial_pools (bootstrap if pool < tpt).
+    Aggregate to (uid, task) cells, split 90/10 at cell level.
+    Returns (train_ds, val_ds).
+    """
+    all_trials = []
+    for task_name in tasks:
         pool = task_trial_pools[task_name]
-        if k == 0 or len(pool) == 0:
+        if tpt == 0 or len(pool) == 0:
             continue
-        replace = len(pool) < k
-        chosen  = rng.choice(len(pool), size=k, replace=replace)
+        replace = len(pool) < tpt
+        chosen  = rng.choice(len(pool), size=tpt, replace=replace)
         for idx in chosen:
             uid, outcome = pool[int(idx)]
-            rows.append({"uid": uid, "task_name": task_name,
-                         "count_0": 1 - outcome, "count_1": outcome})
-    if not rows:
-        return BehavioralDataset(pd.DataFrame(
+            all_trials.append((uid, task_name, outcome))
+
+    if not all_trials:
+        empty = BehavioralDataset(pd.DataFrame(
             columns=["uid", "task_name", "count_0", "count_1"]))
-    df  = pd.DataFrame(rows)
-    agg = (df.groupby(["uid", "task_name"])[["count_0", "count_1"]]
-              .sum().reset_index())
-    return BehavioralDataset(agg)
+        return empty, empty
+
+    rows    = [{"uid": uid, "task_name": tn, "count_0": 1 - out, "count_1": out}
+               for uid, tn, out in all_trials]
+    cell_df = (pd.DataFrame(rows)
+               .groupby(["uid", "task_name"])[["count_0", "count_1"]]
+               .sum().reset_index())
+
+    n_cells  = len(cell_df)
+    n_val    = max(1, int(n_cells * 0.10))
+    perm     = rng.permutation(n_cells)
+    val_mask = np.zeros(n_cells, dtype=bool)
+    val_mask[perm[:n_val]] = True
+
+    return (BehavioralDataset(cell_df[~val_mask].reset_index(drop=True)),
+            BehavioralDataset(cell_df[ val_mask].reset_index(drop=True)))
 
 
 def _all_data_ds(tasks: list) -> BehavioralDataset:
+    """Build training dataset from the fixed 90 % pool (task_trial_pools_all)."""
     rows = []
     for task_name in tasks:
-        for uid, outcome in task_trial_pools[task_name]:
+        for uid, outcome in task_trial_pools_all[task_name]:
             rows.append({"uid": uid, "task_name": task_name,
                          "count_0": 1 - outcome, "count_1": outcome})
     if not rows:
@@ -312,10 +361,45 @@ def _init_onehot(seed: int) -> OneHotBTAgent:
     return agent
 
 
-def _train_dlbt(agent: DlbtAgent, train_ds: BehavioralDataset) -> None:
-    """Phase 1 + optional Phase 2 (attnpool) for DLBT."""
+def _base_mse_on_ds(val_ds: BehavioralDataset) -> float:
+    """MSE of base model (P=0.5 everywhere) on val_ds — analytical."""
+    if val_ds.df.empty:
+        return float("nan")
+    totals = (val_ds.df["count_0"] + val_ds.df["count_1"]).values.astype(float)
+    p_obs  = val_ds.df["count_1"].values / np.clip(totals, 1, None)
+    return float(np.mean((0.5 - p_obs) ** 2))
+
+
+@torch.no_grad()
+def _ds_mse_agent(agent, val_ds: BehavioralDataset) -> float:
+    """MSE of agent predictions on val_ds."""
+    if val_ds.df.empty:
+        return float("nan")
+    agent.eval()
+    pred_list, true_list = [], []
+    for task_name, group in val_ds.df.groupby("task_name"):
+        task = get_task(task_name)
+        uids = [uid for uid in group["uid"].tolist() if uid in refs_by_uid]
+        if not uids:
+            continue
+        refs  = [refs_by_uid[uid] for uid in uids]
+        probs = agent.choice_probs(refs, task)[:, 1].cpu().numpy()
+        g_sub = group[group["uid"].isin(uids)]
+        tot   = (g_sub["count_0"] + g_sub["count_1"]).values.astype(float)
+        p_obs = g_sub["count_1"].values / np.clip(tot, 1, None)
+        pred_list.extend(probs.tolist())
+        true_list.extend(p_obs.tolist())
+    if not pred_list:
+        return float("nan")
+    return float(np.mean((np.array(pred_list) - np.array(true_list)) ** 2))
+
+
+def _run_dlbt(agent: DlbtAgent,
+              train_ds: BehavioralDataset,
+              val_ds: BehavioralDataset):
+    """Phase 1 + optional Phase 2 (attnpool) + model selection vs base."""
     train_dlbt(
-        agent, train_ds, eval_ds, refs_dict,
+        agent, train_ds, val_ds, refs_dict,
         n_epochs = cfg.N_EPOCHS,
         lr       = cfg.LR,
         patience = cfg.PATIENCE,
@@ -331,12 +415,11 @@ def _train_dlbt(agent: DlbtAgent, train_ds: BehavioralDataset) -> None:
         opt2 = torch.optim.Adam(agent.encoder.attnpool.parameters(),
                                 lr=cfg.LR_ATTNPOOL)
         train_dlbt(
-            agent, train_ds, eval_ds, refs_dict,
+            agent, train_ds, val_ds, refs_dict,
             n_epochs  = cfg.N_EPOCHS_PHASE2,
             patience  = cfg.PATIENCE_PHASE2,
             optimizer = opt2,
         )
-        # Rebuild frozen_clip-style cache from fine-tuned attnpool
         agent.eval()
         agent.precompute_backbone_features(all_refs)
         with torch.no_grad():
@@ -344,20 +427,33 @@ def _train_dlbt(agent: DlbtAgent, train_ds: BehavioralDataset) -> None:
                 batch   = all_refs[i : i + 16]
                 spatial = torch.stack(
                     [agent._backbone_cache[r.uid] for r in batch]
-                ).to(agent.device)
+                ).to(device)
                 feats = agent.encoder.attnpool(spatial).float()
                 for ref, feat in zip(batch, feats):
                     agent._cache[ref.uid] = feat.cpu()
+        for p in agent.mapper.parameters():
+            p.requires_grad_(True)
+        agent.freeze_encoder = True
+
+    if not val_ds.df.empty:
+        if _base_mse_on_ds(val_ds) < _ds_mse_agent(agent, val_ds):
+            return base_agent
+    return agent
 
 
-def _train_frozen(agent, train_ds: BehavioralDataset) -> None:
-    """Phase 1 only — frozen encoder (DetBT and OneHotBT)."""
+def _run_frozen(agent, train_ds: BehavioralDataset,
+                val_ds: BehavioralDataset):
+    """Phase 1 only (frozen encoder) + model selection vs base."""
     train_dlbt(
-        agent, train_ds, eval_ds, refs_dict,
+        agent, train_ds, val_ds, refs_dict,
         n_epochs = cfg.N_EPOCHS,
         lr       = cfg.LR,
         patience = cfg.PATIENCE,
     )
+    if not val_ds.df.empty:
+        if _base_mse_on_ds(val_ds) < _ds_mse_agent(agent, val_ds):
+            return base_agent
+    return agent
 
 
 @torch.no_grad()
@@ -409,15 +505,15 @@ print(f"  BehavSuperv cMSE−NF={bsup_cmse:+.5f}  ρ={bsup_rho:.4f}")
 # ===========================================================================
 # Main sweep
 # ===========================================================================
-n_budgets = len(trial_budgets)
-n_seeds   = len(cfg.SEEDS)
+n_tpt   = len(trials_per_task)
+n_seeds = len(cfg.SEEDS)
 
-dlbt_cmse   = np.full((n_seeds, n_budgets), np.nan)
-dlbt_rho    = np.full((n_seeds, n_budgets), np.nan)
-detbt_cmse  = np.full((n_seeds, n_budgets), np.nan)
-detbt_rho   = np.full((n_seeds, n_budgets), np.nan)
-onehot_cmse = np.full((n_seeds, n_budgets), np.nan)
-onehot_rho  = np.full((n_seeds, n_budgets), np.nan)
+dlbt_cmse   = np.full((n_seeds, n_tpt), np.nan)
+dlbt_rho    = np.full((n_seeds, n_tpt), np.nan)
+detbt_cmse  = np.full((n_seeds, n_tpt), np.nan)
+detbt_rho   = np.full((n_seeds, n_tpt), np.nan)
+onehot_cmse = np.full((n_seeds, n_tpt), np.nan)
+onehot_rho  = np.full((n_seeds, n_tpt), np.nan)
 
 dlbt_all_cmse   = np.full(n_seeds, np.nan)
 dlbt_all_rho    = np.full(n_seeds, np.nan)
@@ -435,65 +531,71 @@ for s_i, seed_val in enumerate(cfg.SEEDS):
     rng_onehot = np.random.default_rng(seed_val + 150_000)
 
     # ---- Budget grid -------------------------------------------------------
-    for b_i, budget in enumerate(trial_budgets):
-        print(f"\n  Budget {budget:>7,}  [{b_i+1}/{n_budgets}]")
+    for b_i, tpt in enumerate(trials_per_task):
+        print(f"\n  tpt={tpt:>5,}  (total≈{tpt*n_all_tasks:,})  [{b_i+1}/{n_tpt}]")
 
         # DLBT
-        train_ds = _bootstrap_sample(all_tasks_ordered, budget, rng_dlbt)
-        agent    = _init_dlbt(seed_val)
-        _train_dlbt(agent, train_ds)
-        pred     = _probe_matrix(agent)
+        train_ds, val_ds = _sample_and_split(all_tasks_ordered, tpt, rng_dlbt)
+        agent  = _init_dlbt(seed_val)
+        chosen = _run_dlbt(agent, train_ds, val_ds)
+        pred   = _probe_matrix(chosen)
         dlbt_cmse[s_i, b_i], dlbt_rho[s_i, b_i] = _probe_stats(pred)
-        print(f"    DLBT     cMSE−NF={dlbt_cmse[s_i,b_i]:+.5f}  ρ={dlbt_rho[s_i,b_i]:.3f}")
-        del agent, train_ds, pred
+        print(f"    DLBT     cMSE−NF={dlbt_cmse[s_i,b_i]:+.5f}  ρ={dlbt_rho[s_i,b_i]:.3f}"
+              f"  (base={'yes' if chosen is base_agent else 'no'})")
+        del agent, chosen, train_ds, val_ds, pred
         gc.collect(); torch.cuda.empty_cache()
 
         # DetBT  (perceptual stochasticity)
-        train_ds = _bootstrap_sample(all_tasks_ordered, budget, rng_detbt)
-        agent    = _init_detbt(seed_val)
-        _train_frozen(agent, train_ds)
-        pred     = _probe_matrix(agent)
+        train_ds, val_ds = _sample_and_split(all_tasks_ordered, tpt, rng_detbt)
+        agent  = _init_detbt(seed_val)
+        chosen = _run_frozen(agent, train_ds, val_ds)
+        pred   = _probe_matrix(chosen)
         detbt_cmse[s_i, b_i], detbt_rho[s_i, b_i] = _probe_stats(pred)
-        print(f"    DetBT    cMSE−NF={detbt_cmse[s_i,b_i]:+.5f}  ρ={detbt_rho[s_i,b_i]:.3f}")
-        del agent, train_ds, pred
+        print(f"    DetBT    cMSE−NF={detbt_cmse[s_i,b_i]:+.5f}  ρ={detbt_rho[s_i,b_i]:.3f}"
+              f"  (base={'yes' if chosen is base_agent else 'no'})")
+        del agent, chosen, train_ds, val_ds, pred
         gc.collect(); torch.cuda.empty_cache()
 
         # OneHotBT  (perceptual uncertainty)
-        train_ds = _bootstrap_sample(all_tasks_ordered, budget, rng_onehot)
-        agent    = _init_onehot(seed_val)
-        _train_frozen(agent, train_ds)
-        pred     = _probe_matrix(agent)
+        train_ds, val_ds = _sample_and_split(all_tasks_ordered, tpt, rng_onehot)
+        agent  = _init_onehot(seed_val)
+        chosen = _run_frozen(agent, train_ds, val_ds)
+        pred   = _probe_matrix(chosen)
         onehot_cmse[s_i, b_i], onehot_rho[s_i, b_i] = _probe_stats(pred)
-        print(f"    OneHotBT cMSE−NF={onehot_cmse[s_i,b_i]:+.5f}  ρ={onehot_rho[s_i,b_i]:.3f}")
-        del agent, train_ds, pred
+        print(f"    OneHotBT cMSE−NF={onehot_cmse[s_i,b_i]:+.5f}  ρ={onehot_rho[s_i,b_i]:.3f}"
+              f"  (base={'yes' if chosen is base_agent else 'no'})")
+        del agent, chosen, train_ds, val_ds, pred
         gc.collect(); torch.cuda.empty_cache()
 
-    # ---- All-data point ----------------------------------------------------
-    print(f"\n  [All data — {total_pool_size:,} trials]")
+    # ---- All-data point  (fixed 90 % pool, fixed global eval split) --------
+    print(f"\n  [All data — {pool_all_size:,} train trials, avg {avg_pool_per_task:.0f}/task]")
     all_ds = _all_data_ds(all_tasks_ordered)
 
-    agent = _init_dlbt(seed_val)
-    _train_dlbt(agent, all_ds)
-    pred  = _probe_matrix(agent)
+    agent  = _init_dlbt(seed_val)
+    chosen = _run_dlbt(agent, all_ds, eval_ds_global)
+    pred   = _probe_matrix(chosen)
     dlbt_all_cmse[s_i], dlbt_all_rho[s_i] = _probe_stats(pred)
-    print(f"    DLBT all     cMSE−NF={dlbt_all_cmse[s_i]:+.5f}  ρ={dlbt_all_rho[s_i]:.3f}")
-    del agent, pred
+    print(f"    DLBT all     cMSE−NF={dlbt_all_cmse[s_i]:+.5f}  ρ={dlbt_all_rho[s_i]:.3f}"
+          f"  (base={'yes' if chosen is base_agent else 'no'})")
+    del agent, chosen, pred
     gc.collect(); torch.cuda.empty_cache()
 
-    agent = _init_detbt(seed_val)
-    _train_frozen(agent, all_ds)
-    pred  = _probe_matrix(agent)
+    agent  = _init_detbt(seed_val)
+    chosen = _run_frozen(agent, all_ds, eval_ds_global)
+    pred   = _probe_matrix(chosen)
     detbt_all_cmse[s_i], detbt_all_rho[s_i] = _probe_stats(pred)
-    print(f"    DetBT all    cMSE−NF={detbt_all_cmse[s_i]:+.5f}  ρ={detbt_all_rho[s_i]:.3f}")
-    del agent, pred
+    print(f"    DetBT all    cMSE−NF={detbt_all_cmse[s_i]:+.5f}  ρ={detbt_all_rho[s_i]:.3f}"
+          f"  (base={'yes' if chosen is base_agent else 'no'})")
+    del agent, chosen, pred
     gc.collect(); torch.cuda.empty_cache()
 
-    agent = _init_onehot(seed_val)
-    _train_frozen(agent, all_ds)
-    pred  = _probe_matrix(agent)
+    agent  = _init_onehot(seed_val)
+    chosen = _run_frozen(agent, all_ds, eval_ds_global)
+    pred   = _probe_matrix(chosen)
     onehot_all_cmse[s_i], onehot_all_rho[s_i] = _probe_stats(pred)
-    print(f"    OneHotBT all cMSE−NF={onehot_all_cmse[s_i]:+.5f}  ρ={onehot_all_rho[s_i]:.3f}")
-    del agent, pred
+    print(f"    OneHotBT all cMSE−NF={onehot_all_cmse[s_i]:+.5f}  ρ={onehot_all_rho[s_i]:.3f}"
+          f"  (base={'yes' if chosen is base_agent else 'no'})")
+    del agent, chosen, pred
     gc.collect(); torch.cuda.empty_cache()
 
 # ---------------------------------------------------------------------------
@@ -501,7 +603,8 @@ for s_i, seed_val in enumerate(cfg.SEEDS):
 # ---------------------------------------------------------------------------
 summary = {
     "run_tag":             cfg.RUN_TAG,
-    "trial_budgets":       trial_budgets,
+    "trials_per_task":     trials_per_task,
+    "avg_pool_per_task":   avg_pool_per_task,
     "total_pool_size":     total_pool_size,
     "seeds":               cfg.SEEDS,
     "all_tasks_ordered":   all_tasks_ordered,

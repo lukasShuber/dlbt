@@ -438,8 +438,7 @@ def _run_slda(
     Full SLDA pipeline → probe prediction matrix.
 
     Phase 1: fit LogReg per task on frozen (or provided) CLIP features.
-    Phase 2: fine-tune attnpool through fixed decoders  [if FREEZE_ENCODER_SLDA=False].
-    Phase 3: re-fit LogReg on fine-tuned features       [if FREEZE_ENCODER_SLDA=False].
+    Phase 2: fine-tune attnpool through fixed Phase-1 decoders  [if FREEZE_ENCODER_SLDA=False].
     """
     if clip_feats is None:
         clip_feats = frozen_clip
@@ -461,12 +460,7 @@ def _run_slda(
             patience = cfg.PATIENCE_PHASE2,
             lr       = cfg.LR_ATTNPOOL,
         )
-        # Phase 3 — re-fit LogReg on fine-tuned features
         clip_feats = slda_agent.extract_features(all_refs)
-        scalers, models, ub = fit_slda_logreg(
-            tasks, train_ds, val_ds, clip_feats,
-            Cs=cfg.SLDA_Cs, max_iter=cfg.SLDA_MAX_ITER,
-        )
         del slda_agent
         gc.collect(); torch.cuda.empty_cache()
 
