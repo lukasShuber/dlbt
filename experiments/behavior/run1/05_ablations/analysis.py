@@ -1,22 +1,22 @@
 """
 run1/05_ablations/analysis.py — belief-ablation budget-sweep plots.
 
-Produces two figures (cMSE−NF and Spearman ρ vs. trial budget) for every
-ablations*.pkl found in results/.  Each pkl gets its own subdirectory under
-results/plots/<pkl-stem>/.
+Produces two figures (cMSE−NF and Spearman ρ vs. total trial budget) for
+every ablations*.pkl found in results/.  Each pkl gets its own subdirectory
+under results/plots/<pkl-stem>/.
 
-  Traces (mean ± SEM, in legend):
-    • DLBT             — red solid
-    • Determ. Beliefs  — blue solid   (DetBT)
-    • Random Ontology  — green solid  (RandOnt)
+  Traces (budget sweep, mean ± SEM):
+    • DLBT                 — strong red   (full model)
+    • Determ. Beliefs      — warm salmon  (DetBT; perceptual stochasticity)
+    • Certain Beliefs      — medium salmon (OneHotBT; perceptual uncertainty)
 
-  Reference lines:
-    • chance (P=0.5)           — gray dashed, annotated at line
-    • No behavioral supervision — orange dashed (oracle)
-    • Noise ceiling             — dark gray dotted (ρ plot only, annotated)
+  Reference lines (no training — horizontal):
+    • chance (P=0.5)          — gray dashed, annotated
+    • No beh. supervision     — light pink dashed (Oracle)
+    • Behavioral supervision  — purple dashed (BehavSuperv)
 
   All-data markers:
-    • Filled marker for DLBT, DetBT, RandOnt (disconnected from trace)
+    • Filled marker for DLBT, DetBT, OneHotBT
 
 Run from repo root:
     python experiments/behavior/run1/05_ablations/analysis.py
@@ -142,23 +142,26 @@ def process_pkl(pkl_path: Path):
     total_pool_size = d["total_pool_size"]
     seeds           = d["seeds"]
 
-    dlbt_cmse    = d["dlbt_cmse"]
-    dlbt_rho     = d["dlbt_rho"]
-    detbt_cmse   = d["detbt_cmse"]
-    detbt_rho    = d["detbt_rho"]
-    randont_cmse = d["randont_cmse"]
-    randont_rho  = d["randont_rho"]
+    dlbt_cmse   = d["dlbt_cmse"]
+    dlbt_rho    = d["dlbt_rho"]
+    detbt_cmse  = d["detbt_cmse"]
+    detbt_rho   = d["detbt_rho"]
+    onehot_cmse = d.get("onehot_cmse", np.full_like(dlbt_cmse, np.nan))
+    onehot_rho  = d.get("onehot_rho",  np.full_like(dlbt_rho,  np.nan))
 
-    dlbt_all_cmse    = d["dlbt_all_cmse"]
-    dlbt_all_rho     = d["dlbt_all_rho"]
-    detbt_all_cmse   = d["detbt_all_cmse"]
-    detbt_all_rho    = d["detbt_all_rho"]
-    randont_all_cmse = d["randont_all_cmse"]
-    randont_all_rho  = d["randont_all_rho"]
+    dlbt_all_cmse   = d["dlbt_all_cmse"]
+    dlbt_all_rho    = d["dlbt_all_rho"]
+    detbt_all_cmse  = d["detbt_all_cmse"]
+    detbt_all_rho   = d["detbt_all_rho"]
+    onehot_all_cmse = d.get("onehot_all_cmse", np.full_like(dlbt_all_cmse, np.nan))
+    onehot_all_rho  = d.get("onehot_all_rho",  np.full_like(dlbt_all_rho,  np.nan))
 
     oracle_cmse = d["oracle_cmse"]
     oracle_rho  = d["oracle_rho"]
     oracle_conc = d.get("oracle_concentration", cfg.ORACLE_CONCENTRATION)
+
+    bsup_cmse = d.get("behav_superv_cmse", float("nan"))
+    bsup_rho  = d.get("behav_superv_rho",  float("nan"))
 
     random_cmse_nf    = d["random_cmse_net"]
     rho_noise_ceiling = d.get("rho_noise_ceiling", float("nan"))
@@ -168,7 +171,7 @@ def process_pkl(pkl_path: Path):
         rho_noise_ceiling = _rho_nc_from_counts(d["true_matrix"], d["count_matrix"])
         print(f"  ρ noise ceiling: {rho_noise_ceiling:.4f}")
     elif np.isnan(rho_noise_ceiling):
-        print("  [warn] rho_noise_ceiling missing — re-run run.py to generate it.")
+        print("  [warn] rho_noise_ceiling missing — re-run run.py to regenerate.")
 
     print(f"  Seeds: {len(seeds)}  Budgets: {list(budgets)}")
 
@@ -178,13 +181,16 @@ def process_pkl(pkl_path: Path):
     def _make_figure(metric: str):
         is_cmse = metric == "cmse"
 
-        dlbt_mu,    dlbt_sem    = _mean_sem(dlbt_cmse    if is_cmse else dlbt_rho)
-        detbt_mu,   detbt_sem   = _mean_sem(detbt_cmse   if is_cmse else detbt_rho)
-        randont_mu, randont_sem = _mean_sem(randont_cmse if is_cmse else randont_rho)
+        dlbt_mu,   dlbt_sem   = _mean_sem(dlbt_cmse   if is_cmse else dlbt_rho)
+        detbt_mu,  detbt_sem  = _mean_sem(detbt_cmse  if is_cmse else detbt_rho)
+        onehot_mu, onehot_sem = _mean_sem(onehot_cmse if is_cmse else onehot_rho)
 
-        dlbt_all_mu,    dlbt_all_sem    = _mean_sem_scalar(dlbt_all_cmse    if is_cmse else dlbt_all_rho)
-        detbt_all_mu,   detbt_all_sem   = _mean_sem_scalar(detbt_all_cmse   if is_cmse else detbt_all_rho)
-        randont_all_mu, randont_all_sem = _mean_sem_scalar(randont_all_cmse if is_cmse else randont_all_rho)
+        dlbt_all_mu,   dlbt_all_sem   = _mean_sem_scalar(
+            dlbt_all_cmse   if is_cmse else dlbt_all_rho)
+        detbt_all_mu,  detbt_all_sem  = _mean_sem_scalar(
+            detbt_all_cmse  if is_cmse else detbt_all_rho)
+        onehot_all_mu, onehot_all_sem = _mean_sem_scalar(
+            onehot_all_cmse if is_cmse else onehot_all_rho)
 
         fig, ax = plt.subplots(figsize=(5.0, 4.5))
 
@@ -200,8 +206,12 @@ def process_pkl(pkl_path: Path):
                         va="bottom", ha="right", zorder=6)
 
         oracle_val = oracle_cmse if is_cmse else oracle_rho
-        ax.axhline(oracle_val, color=cfg.C_ORACLE, lw=1.5,
-                   ls="--", zorder=2)
+        ax.axhline(oracle_val, color=cfg.C_ORACLE, lw=1.5, ls="--", zorder=2)
+
+        if not np.isnan(bsup_cmse if is_cmse else bsup_rho):
+            bsup_val = bsup_cmse if is_cmse else bsup_rho
+            ax.axhline(bsup_val, color=cfg.C_BEHAV_SUPER, lw=1.5,
+                       ls=(0, (5, 2)), zorder=2)
 
         if not is_cmse and not np.isnan(rho_noise_ceiling):
             ax.axhline(rho_noise_ceiling, color="#555555", lw=1.5,
@@ -214,14 +224,17 @@ def process_pkl(pkl_path: Path):
                         va="bottom", ha="left", zorder=6)
 
         # ── Traces ───────────────────────────────────────────────────────────
-        _plot_trace(ax, budgets, dlbt_mu,    dlbt_sem,    cfg.C_DLBT,    "", zorder=6)
-        _plot_trace(ax, budgets, detbt_mu,   detbt_sem,   cfg.C_DETBT,   "", zorder=5)
-        _plot_trace(ax, budgets, randont_mu, randont_sem, cfg.C_RANDONT, "", zorder=4)
+        _plot_trace(ax, budgets, dlbt_mu,   dlbt_sem,   cfg.C_DLBT,   "", zorder=6)
+        _plot_trace(ax, budgets, detbt_mu,  detbt_sem,  cfg.C_DETBT,  "", zorder=5)
+        _plot_trace(ax, budgets, onehot_mu, onehot_sem, cfg.C_ONEHOT, "", zorder=4)
 
         # ── All-data markers ─────────────────────────────────────────────────
-        _plot_all_data_marker(ax, total_pool_size, dlbt_all_mu,    dlbt_all_sem,    cfg.C_DLBT,    zorder=7)
-        _plot_all_data_marker(ax, total_pool_size, detbt_all_mu,   detbt_all_sem,   cfg.C_DETBT,   zorder=7)
-        _plot_all_data_marker(ax, total_pool_size, randont_all_mu, randont_all_sem, cfg.C_RANDONT, zorder=7)
+        _plot_all_data_marker(ax, total_pool_size,
+                              dlbt_all_mu,   dlbt_all_sem,   cfg.C_DLBT,   zorder=7)
+        _plot_all_data_marker(ax, total_pool_size,
+                              detbt_all_mu,  detbt_all_sem,  cfg.C_DETBT,  zorder=7)
+        _plot_all_data_marker(ax, total_pool_size,
+                              onehot_all_mu, onehot_all_sem, cfg.C_ONEHOT, zorder=7)
 
         _xaxis_setup(ax)
 
@@ -233,9 +246,9 @@ def process_pkl(pkl_path: Path):
                 ax.set_yticks([0.01, 0.1])
                 ax.set_yticklabels([r"$10^{-2}$", r"$10^{-1}$"])
                 ax.yaxis.set_minor_locator(plt.NullLocator())
-                ax.set_ylim(0.008, 0.1)
+                ax.set_ylim(0.008, 0.5)
             else:
-                ax.set_ylim(0, 0.34)
+                ax.set_ylim(0, 0.5)
         else:
             ax.set_ylabel(r"Spearman $\rho$", fontsize=11, fontweight="bold")
             ax.set_ylim(-0.04, 1)
@@ -243,18 +256,20 @@ def process_pkl(pkl_path: Path):
         # ── Stacked annotations bottom-left (cMSE only) ──────────────────────
         if is_cmse:
             _labels = [
-                ("no behavioral supervision", cfg.C_ORACLE),
-                ("random ontology",         cfg.C_RANDONT),
-                ("deterministic beliefs",         cfg.C_DETBT),
-                ("DLBT",                    cfg.C_DLBT),
+                ("no beh. supervision (oracle)",  cfg.C_ORACLE),
+                ("behavioral supervision",         cfg.C_BEHAV_SUPER),
+                ("certain beliefs",                cfg.C_ONEHOT),
+                ("determ. beliefs",                cfg.C_DETBT),
+                ("DLBT",                           cfg.C_DLBT),
             ]
-            _x = 0.03
-            _dy = 0.045  # spacing between lines in axes fraction
+            _x  = 0.03
+            _dy = 0.045
             for k, (lbl, col) in enumerate(_labels):
                 ax.text(_x, 0.03 + k * _dy, lbl,
                         transform=ax.transAxes,
                         color=col, fontsize=8, fontweight="bold", style="italic",
                         va="bottom", ha="left", zorder=6)
+
         sns.despine(top=True, right=True, left=False, bottom=False)
         plt.tight_layout()
 
@@ -269,31 +284,34 @@ def process_pkl(pkl_path: Path):
 
     # ── Summary table ────────────────────────────────────────────────────────
     print()
-    print(f"  {'Model':<22}  {'budget':>10}  {'cMSE-NF (mean±SEM)':>22}  {'ρ (mean±SEM)':>16}")
-    print("  " + "-" * 74)
+    print(f"  {'Model':<26}  {'budget':>10}  {'cMSE-NF (mean±SEM)':>22}  {'ρ (mean±SEM)':>16}")
+    print("  " + "-" * 78)
 
     for label, cmse_arr, rho_arr, cmse_all, rho_all in [
-        ("DLBT",           dlbt_cmse,    dlbt_rho,    dlbt_all_cmse,    dlbt_all_rho),
-        ("Determ. Beliefs", detbt_cmse,  detbt_rho,   detbt_all_cmse,   detbt_all_rho),
-        ("Random Ontology", randont_cmse, randont_rho, randont_all_cmse, randont_all_rho),
+        ("DLBT",              dlbt_cmse,   dlbt_rho,   dlbt_all_cmse,   dlbt_all_rho),
+        ("Determ. beliefs",   detbt_cmse,  detbt_rho,  detbt_all_cmse,  detbt_all_rho),
+        ("Certain beliefs",   onehot_cmse, onehot_rho, onehot_all_cmse, onehot_all_rho),
     ]:
         for b_i, b in enumerate(budgets):
             mu_c, sem_c = _mean_sem_scalar(cmse_arr[:, b_i])
             mu_r, sem_r = _mean_sem_scalar(rho_arr[:, b_i])
-            print(f"  {label:<22}  {b:>10,}  "
+            print(f"  {label:<26}  {b:>10,}  "
                   f"{mu_c:+.5f} ± {sem_c:.5f}  "
                   f"{mu_r:+.4f} ± {sem_r:.4f}")
         mu_c, sem_c = _mean_sem_scalar(cmse_all)
         mu_r, sem_r = _mean_sem_scalar(rho_all)
-        print(f"  {label:<22}  {'all data':>10}  "
+        print(f"  {label:<26}  {'all data':>10}  "
               f"{mu_c:+.5f} ± {sem_c:.5f}  "
               f"{mu_r:+.4f} ± {sem_r:.4f}")
         print()
 
-    print(f"  {'No beh. supervision':<22}  {'(fixed)':>10}  "
+    print(f"  {'No beh. supervision (oracle)':<26}  {'(fixed)':>10}  "
           f"{oracle_cmse:+.5f}            "
           f"{oracle_rho:+.4f}")
-    print("=" * 76)
+    print(f"  {'Behavioral supervision':<26}  {'(fixed)':>10}  "
+          f"{bsup_cmse:+.5f}            "
+          f"{bsup_rho:+.4f}")
+    print("=" * 80)
 
 
 # ---------------------------------------------------------------------------

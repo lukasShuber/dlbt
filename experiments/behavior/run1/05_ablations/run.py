@@ -2,12 +2,16 @@
 run1/05_ablations/run.py — belief-representation ablation budget sweep.
 
 Models compared at each trial budget:
-  DLBT    full model: MC Dirichlet integration, mapper trained on behaviour
-  DetBT   deterministic ablation: Dirichlet mean instead of MC samples
-  SLDA    ridge decoder baseline (all tasks, frozen CLIP)
-  Oracle  fixed beliefs from metadata latent state (no training, evaluated once)
+  DLBT        full model: MC Dirichlet integration, mapper trained on behaviour
+  DetBT       perceptual stochasticity: Dirichlet mean at train AND eval (no MC)
+  OneHotBT    perceptual uncertainty: train=mean (DetBT), eval=argmax one-hot
+                (learned mapper, but beliefs certain at argmax latent state)
 
-Protocol mirrors 023_efficiency_main (bootstrap sampling, same budget grid,
+Reference lines (no training — evaluated once):
+  Oracle      fixed soft beliefs from metadata latent state
+  BehavSuperv ground-truth hard P=1/0 from task structure + true latent state
+
+Protocol mirrors 021_efficiency_main (bootstrap sampling, same budget grid,
 all-data point, per-seed weight + data variation for genuine SEM).
 
 Run from repo root:
@@ -27,21 +31,16 @@ warnings.filterwarnings("ignore", message="invalid value encountered in divide",
 import numpy as np
 import pandas as pd
 import torch
-from scipy.optimize import minimize_scalar
-from scipy.special import expit as _sigmoid
 from scipy.stats import spearmanr
-from sklearn.linear_model import RidgeCV
-from sklearn.preprocessing import StandardScaler
 
 from dlbt.agents.dlbt import DlbtAgent
 from dlbt.agents.detbt import DetBTAgent
+from dlbt.agents.onehot_bt import OneHotBTAgent
 from dlbt.agents.oracle_bt import OracleBTAgent
-from dlbt.agents.rand_ont_bt import RandOntBTAgent, make_rand_ontology
 from dlbt.data.dataset import BehavioralDataset
 from dlbt.data.image_ref import load_image_refs, image_refs_as_list
 from dlbt.data.task import get_task
 from dlbt.training.train_dlbt import train_dlbt
-from dlbt.training.train_slda_attnpool import finetune_slda_attnpool
 
 sys.path.insert(0, str(Path(__file__).parent))
 import config as cfg
@@ -159,7 +158,7 @@ rho_noise_ceiling = _rho_noise_ceiling(probe_cells_df)
 print(f"  Spearman ρ noise ceiling: {rho_noise_ceiling:.4f}")
 
 # ---------------------------------------------------------------------------
-# 10 % eval split of main cells (early stopping)
+# 10 % eval split of main cells  (for early stopping / model selection)
 # ---------------------------------------------------------------------------
 main_cells_df = (full_ds.df[full_ds.df["uid"].isin(main_uids)]
                  .copy().reset_index(drop=True))
@@ -199,14 +198,14 @@ if not trial_budgets:
     trial_budgets = cfg.TRIAL_BUDGETS[:1]
 if cfg.FAST_PASS:
     trial_budgets = [trial_budgets[0]]
-    print("  FAST_PASS=True → min budget only (all-data point covers the max)")
+    print("  FAST_PASS=True → min budget only")
 print(f"  Budget grid ({len(trial_budgets)} points): {trial_budgets}")
 
 # ---------------------------------------------------------------------------
 # CLIP feature cache
 # ---------------------------------------------------------------------------
 _agent_tmp  = DlbtAgent(freeze_encoder=True, n_mc_samples=1,
-                         device=device, mapper_hidden=cfg.MAPPER_HIDDEN)
+                        device=device, mapper_hidden=cfg.MAPPER_HIDDEN)
 _cache_path = _REPO_ROOT / cfg.CACHE_PATH
 if _cache_path.exists():
     _agent_tmp.load_cache(str(_cache_path))
@@ -222,7 +221,7 @@ print(f"CLIP cache ready ({len(frozen_clip)} images).")
 # ---------------------------------------------------------------------------
 
 def _bootstrap_sample(tasks: list, budget: int,
-                       rng: np.random.Generator) -> BehavioralDataset:
+                      rng: np.random.Generator) -> BehavioralDataset:
     n     = len(tasks)
     q     = budget // n
     r     = budget % n
@@ -264,21 +263,14 @@ def _all_data_ds(tasks: list) -> BehavioralDataset:
 
 
 def _set_mapper_bias(agent, seed: int):
-    """Shared mapper bias initialisation for DLBT and DetBT."""
+    """Shared mapper bias initialisation for DLBT, DetBT and OneHotBT."""
     _linear = agent.mapper[0] if cfg.MAPPER_HIDDEN is None else agent.mapper[2]
-    if cfg.INIT_MODE == "random":
-        rng_init  = np.random.default_rng(seed)
-        alpha_rnd = rng_init.uniform(cfg.INIT_ALPHA_LOW, cfg.INIT_ALPHA_HIGH,
-                                     size=(_linear.bias.shape[0],)).astype(np.float32)
-        with torch.no_grad():
-            _linear.bias.copy_(
-                torch.from_numpy(np.log(np.exp(alpha_rnd) - 1.0)).to(device))
-    elif cfg.INIT_MODE == "uniform":
-        bv = float(np.log(np.exp(cfg.INIT_ALPHA) - 1.0))
-        with torch.no_grad():
-            _linear.bias.fill_(bv)
-    else:
-        raise ValueError(f"Unknown INIT_MODE {cfg.INIT_MODE!r}")
+    rng_init  = np.random.default_rng(seed)
+    alpha_rnd = rng_init.uniform(cfg.INIT_ALPHA_LOW, cfg.INIT_ALPHA_HIGH,
+                                 size=(_linear.bias.shape[0],)).astype(np.float32)
+    with torch.no_grad():
+        _linear.bias.copy_(
+            torch.from_numpy(np.log(np.exp(alpha_rnd) - 1.0)).to(device))
 
 
 def _init_dlbt(seed: int) -> DlbtAgent:
@@ -289,8 +281,6 @@ def _init_dlbt(seed: int) -> DlbtAgent:
         device            = device,
         mapper_hidden     = cfg.MAPPER_HIDDEN,
         normalize_utility = cfg.NORMALIZED_UTILITY,
-        median_correction = cfg.MEDIAN_CORRECTION,
-        neutral_alpha     = cfg.NEUTRAL_ALPHA,
     )
     agent._cache = {uid: feat.clone() for uid, feat in frozen_clip.items()}
     _set_mapper_bias(agent, seed)
@@ -310,9 +300,22 @@ def _init_detbt(seed: int) -> DetBTAgent:
     return agent
 
 
+def _init_onehot(seed: int) -> OneHotBTAgent:
+    torch.manual_seed(seed)
+    agent = OneHotBTAgent(
+        freeze_encoder    = True,
+        device            = device,
+        mapper_hidden     = cfg.MAPPER_HIDDEN,
+        normalize_utility = cfg.NORMALIZED_UTILITY,
+    )
+    agent._cache = {uid: feat.clone() for uid, feat in frozen_clip.items()}
+    _set_mapper_bias(agent, seed)
+    return agent
+
+
 def _train_dlbt(agent: DlbtAgent, train_ds: BehavioralDataset) -> None:
-    """Phase 1 + optional Phase 2 for DLBT."""
-    phase1 = train_dlbt(
+    """Phase 1 + optional Phase 2 (attnpool) for DLBT."""
+    train_dlbt(
         agent, train_ds, eval_ds, refs_dict,
         n_epochs = cfg.N_EPOCHS,
         lr       = cfg.LR,
@@ -334,6 +337,7 @@ def _train_dlbt(agent: DlbtAgent, train_ds: BehavioralDataset) -> None:
             patience  = cfg.PATIENCE_PHASE2,
             optimizer = opt2,
         )
+        # Rebuild frozen_clip-style cache from fine-tuned attnpool
         agent.eval()
         agent.precompute_backbone_features(all_refs)
         with torch.no_grad():
@@ -347,36 +351,8 @@ def _train_dlbt(agent: DlbtAgent, train_ds: BehavioralDataset) -> None:
                     agent._cache[ref.uid] = feat.cpu()
 
 
-def _train_detbt(agent: DetBTAgent, train_ds: BehavioralDataset) -> None:
-    """Phase 1 only — DetBT always uses frozen encoder."""
-    train_dlbt(
-        agent, train_ds, eval_ds, refs_dict,
-        n_epochs = cfg.N_EPOCHS,
-        lr       = cfg.LR,
-        patience = cfg.PATIENCE,
-    )
-
-
-def _init_randont(seed: int, rand_du: dict) -> RandOntBTAgent:
-    """Initialise a RandOntBTAgent with the given pre-computed random utility map."""
-    torch.manual_seed(seed)
-    agent = RandOntBTAgent(
-        rand_delta_u      = rand_du,
-        freeze_encoder    = True,
-        n_mc_samples      = cfg.N_MC,
-        device            = device,
-        mapper_hidden     = cfg.MAPPER_HIDDEN,
-        normalize_utility = cfg.NORMALIZED_UTILITY,
-        median_correction = cfg.MEDIAN_CORRECTION,
-        neutral_alpha     = cfg.NEUTRAL_ALPHA,
-    )
-    agent._cache = {uid: feat.clone() for uid, feat in frozen_clip.items()}
-    _set_mapper_bias(agent, seed)
-    return agent
-
-
-def _train_randont(agent: RandOntBTAgent, train_ds: BehavioralDataset) -> None:
-    """Phase 1 only — same as DLBT frozen encoder."""
+def _train_frozen(agent, train_ds: BehavioralDataset) -> None:
+    """Phase 1 only — frozen encoder (DetBT and OneHotBT)."""
     train_dlbt(
         agent, train_ds, eval_ds, refs_dict,
         n_epochs = cfg.N_EPOCHS,
@@ -404,99 +380,28 @@ def _probe_stats(pred_mat: np.ndarray) -> tuple[float, float]:
 
 
 # ---------------------------------------------------------------------------
-# SLDA helpers
+# Behavioral supervision probe  (no training — ground-truth P=0/1)
 # ---------------------------------------------------------------------------
 
-def _fit_slda(tasks: list, train_ds: BehavioralDataset):
-    scalers, models, temps = {}, {}, {}
-    for task_name in tasks:
-        group = train_ds.df[train_ds.df["task_name"] == task_name]
-        uids  = [uid for uid in group["uid"].tolist() if uid in frozen_clip]
-        if len(uids) < 1:
-            continue
-        X       = np.array([frozen_clip[uid].cpu().numpy() for uid in uids])
-        g_sub   = group[group["uid"].isin(uids)]
-        totals  = (g_sub["count_0"] + g_sub["count_1"]).values.astype(float)
-        p_right = g_sub["count_1"].values / np.clip(totals, 1, None)
-        scaler  = StandardScaler(with_mean=(len(uids) >= 5),
-                                 with_std=(len(uids) >= 5))
-        X_sc    = scaler.fit_transform(X)
-        model   = RidgeCV(alphas=[1e1, 1e2, 1e3, 1e4, 1e5])
-        model.fit(X_sc, p_right)
-        p_pred  = np.clip(model.predict(X_sc), 1e-6, 1 - 1e-6)
-        logits  = np.log(p_pred / (1 - p_pred))
-
-        def _nll(log_tau, logits=logits, y=p_right):
-            p = _sigmoid(logits / np.exp(log_tau))
-            p = np.clip(p, 1e-7, 1 - 1e-7)
-            return -np.mean(y * np.log(p) + (1 - y) * np.log(1 - p))
-
-        opt = minimize_scalar(_nll, bounds=(-3.0, 3.0), method="bounded")
-        scalers[task_name] = scaler
-        models[task_name]  = model
-        temps[task_name]   = float(np.exp(opt.x))
-    return scalers, models, temps
-
-
-def _slda_probe_matrix(scalers, models, temps,
-                       probe_features: dict | None = None) -> np.ndarray:
-    pred            = np.full((n_probe, n_all_tasks), np.nan)
-    feat_src        = probe_features if probe_features is not None else {
-        uid: frozen_clip[uid].cpu().numpy() for uid in frozen_clip
-    }
-    probe_uids_clip = [uid for uid in probe_uids_ordered if uid in feat_src]
-    probe_X         = np.array([feat_src[uid] for uid in probe_uids_clip])
+def _behav_superv_probe_matrix() -> np.ndarray:
+    """
+    P(right | image, task) = 1.0 if delta_u[image.latent_state] > 0, else 0.0.
+    Uses the true rendering-parameter latent state, not the learned mapper.
+    No training — evaluated once.
+    """
+    pred = np.full((n_probe, n_all_tasks), np.nan)
     for j, task_name in enumerate(all_tasks_ordered):
-        if task_name not in models:
-            continue
-        X_sc   = scalers[task_name].transform(probe_X)
-        p_pred = np.clip(models[task_name].predict(X_sc), 1e-6, 1 - 1e-6)
-        logits = np.log(p_pred / (1 - p_pred))
-        p_cal  = _sigmoid(logits / temps[task_name])
-        for i_clip, uid in enumerate(probe_uids_clip):
-            row_i = uid_to_row.get(uid)
-            if row_i is not None:
-                pred[row_i, j] = float(p_cal[i_clip])
-    return pred
-
-
-def _init_slda_attnpool_agent() -> DlbtAgent:
-    ag = DlbtAgent(freeze_encoder=False, n_mc_samples=1,
-                   device=device, mapper_hidden=cfg.MAPPER_HIDDEN)
-    ag.precompute_backbone_features(all_refs)
-    return ag
-
-
-@torch.no_grad()
-def _slda_probe_features(agent_slda: DlbtAgent) -> dict:
-    agent_slda.eval()
-    return {uid: agent_slda._encode([refs_by_uid[uid]])[0].cpu().numpy()
-            for uid in probe_uids_ordered if uid in refs_by_uid}
-
-
-def _run_slda(tasks: list, train_ds: BehavioralDataset):
-    scalers, models, temps = _fit_slda(tasks, train_ds)
-    if not cfg.FREEZE_ENCODER_SLDA:
-        agent_slda = _init_slda_attnpool_agent()
-        finetune_slda_attnpool(
-            agent_slda, scalers, models, temps,
-            train_ds, eval_ds, refs_dict,
-            n_epochs = cfg.N_EPOCHS_PHASE2,
-            patience = cfg.PATIENCE_PHASE2,
-            lr       = cfg.LR_ATTNPOOL,
-        )
-        pred = _slda_probe_matrix(scalers, models, temps,
-                                  probe_features=_slda_probe_features(agent_slda))
-        del agent_slda
-        gc.collect(); torch.cuda.empty_cache()
-    else:
-        pred = _slda_probe_matrix(scalers, models, temps)
+        task = get_task(task_name)
+        du   = task.delta_u  # [K], entries ±1
+        for i, ref in enumerate(probe_refs_ordered):
+            pred[i, j] = 1.0 if float(du[ref.latent_state]) > 0 else 0.0
     return pred
 
 
 # ===========================================================================
-# Oracle agent  (no training — evaluated once)
+# Reference baselines (no training — evaluated once at startup)
 # ===========================================================================
+
 print("\nEvaluating Oracle agent...")
 oracle_agent = OracleBTAgent(
     concentration     = cfg.ORACLE_CONCENTRATION,
@@ -505,10 +410,15 @@ oracle_agent = OracleBTAgent(
     normalize_utility = cfg.NORMALIZED_UTILITY,
 )
 oracle_agent.eval()
-pred_oracle        = _probe_matrix(oracle_agent)
-oracle_cmse, oracle_rho = _probe_stats(pred_oracle)
+pred_oracle              = _probe_matrix(oracle_agent)
+oracle_cmse, oracle_rho  = _probe_stats(pred_oracle)
 del oracle_agent
 print(f"  Oracle cMSE−NF={oracle_cmse:+.5f}  ρ={oracle_rho:.4f}")
+
+print("\nEvaluating Behavioral Supervision baseline...")
+pred_bsup                  = _behav_superv_probe_matrix()
+bsup_cmse, bsup_rho        = _probe_stats(pred_bsup)
+print(f"  BehavSuperv cMSE−NF={bsup_cmse:+.5f}  ρ={bsup_rho:.4f}")
 
 # ===========================================================================
 # Main sweep
@@ -516,36 +426,27 @@ print(f"  Oracle cMSE−NF={oracle_cmse:+.5f}  ρ={oracle_rho:.4f}")
 n_budgets = len(trial_budgets)
 n_seeds   = len(cfg.SEEDS)
 
-dlbt_cmse    = np.full((n_seeds, n_budgets), np.nan)
-dlbt_rho     = np.full((n_seeds, n_budgets), np.nan)
-detbt_cmse   = np.full((n_seeds, n_budgets), np.nan)
-detbt_rho    = np.full((n_seeds, n_budgets), np.nan)
-slda_cmse    = np.full((n_seeds, n_budgets), np.nan)
-slda_rho     = np.full((n_seeds, n_budgets), np.nan)
-randont_cmse = np.full((n_seeds, n_budgets), np.nan)
-randont_rho  = np.full((n_seeds, n_budgets), np.nan)
+dlbt_cmse   = np.full((n_seeds, n_budgets), np.nan)
+dlbt_rho    = np.full((n_seeds, n_budgets), np.nan)
+detbt_cmse  = np.full((n_seeds, n_budgets), np.nan)
+detbt_rho   = np.full((n_seeds, n_budgets), np.nan)
+onehot_cmse = np.full((n_seeds, n_budgets), np.nan)
+onehot_rho  = np.full((n_seeds, n_budgets), np.nan)
 
-dlbt_all_cmse    = np.full(n_seeds, np.nan)
-dlbt_all_rho     = np.full(n_seeds, np.nan)
-detbt_all_cmse   = np.full(n_seeds, np.nan)
-detbt_all_rho    = np.full(n_seeds, np.nan)
-slda_all_cmse    = np.full(n_seeds, np.nan)
-slda_all_rho     = np.full(n_seeds, np.nan)
-randont_all_cmse = np.full(n_seeds, np.nan)
-randont_all_rho  = np.full(n_seeds, np.nan)
+dlbt_all_cmse   = np.full(n_seeds, np.nan)
+dlbt_all_rho    = np.full(n_seeds, np.nan)
+detbt_all_cmse  = np.full(n_seeds, np.nan)
+detbt_all_rho   = np.full(n_seeds, np.nan)
+onehot_all_cmse = np.full(n_seeds, np.nan)
+onehot_all_rho  = np.full(n_seeds, np.nan)
 
 for s_i, seed_val in enumerate(cfg.SEEDS):
     print(f"\n{'='*60}")
     print(f"Seed {s_i+1}/{n_seeds}  (seed_val={seed_val})")
 
-    rng_dlbt  = np.random.default_rng(seed_val)
-    rng_detbt = np.random.default_rng(seed_val + 50_000)
-    rng_slda  = np.random.default_rng(seed_val + 100_000)
-    rng_rando = np.random.default_rng(seed_val + 200_000)
-
-    # Sample a new random ontology for each seed (different random partitions
-    # per seed averages over both training randomness and ontology randomness).
-    rand_du = make_rand_ontology(all_tasks_ordered, seed=seed_val + 200_000)
+    rng_dlbt   = np.random.default_rng(seed_val)
+    rng_detbt  = np.random.default_rng(seed_val + 50_000)
+    rng_onehot = np.random.default_rng(seed_val + 150_000)
 
     # ---- Budget grid -------------------------------------------------------
     for b_i, budget in enumerate(trial_budgets):
@@ -557,35 +458,28 @@ for s_i, seed_val in enumerate(cfg.SEEDS):
         _train_dlbt(agent, train_ds)
         pred     = _probe_matrix(agent)
         dlbt_cmse[s_i, b_i], dlbt_rho[s_i, b_i] = _probe_stats(pred)
-        print(f"    DLBT   cMSE−NF={dlbt_cmse[s_i,b_i]:+.5f}  ρ={dlbt_rho[s_i,b_i]:.3f}")
+        print(f"    DLBT     cMSE−NF={dlbt_cmse[s_i,b_i]:+.5f}  ρ={dlbt_rho[s_i,b_i]:.3f}")
         del agent, train_ds, pred
         gc.collect(); torch.cuda.empty_cache()
 
-        # DetBT
+        # DetBT  (perceptual stochasticity)
         train_ds = _bootstrap_sample(all_tasks_ordered, budget, rng_detbt)
         agent    = _init_detbt(seed_val)
-        _train_detbt(agent, train_ds)
+        _train_frozen(agent, train_ds)
         pred     = _probe_matrix(agent)
         detbt_cmse[s_i, b_i], detbt_rho[s_i, b_i] = _probe_stats(pred)
-        print(f"    DetBT  cMSE−NF={detbt_cmse[s_i,b_i]:+.5f}  ρ={detbt_rho[s_i,b_i]:.3f}")
+        print(f"    DetBT    cMSE−NF={detbt_cmse[s_i,b_i]:+.5f}  ρ={detbt_rho[s_i,b_i]:.3f}")
         del agent, train_ds, pred
         gc.collect(); torch.cuda.empty_cache()
 
-        # SLDA
-        train_ds_s = _bootstrap_sample(all_tasks_ordered, budget, rng_slda)
-        pred_s     = _run_slda(all_tasks_ordered, train_ds_s)
-        slda_cmse[s_i, b_i], slda_rho[s_i, b_i] = _probe_stats(pred_s)
-        print(f"    SLDA   cMSE−NF={slda_cmse[s_i,b_i]:+.5f}  ρ={slda_rho[s_i,b_i]:.3f}")
-        del train_ds_s, pred_s
-
-        # RandOnt
-        train_ds_r = _bootstrap_sample(all_tasks_ordered, budget, rng_rando)
-        agent      = _init_randont(seed_val, rand_du)
-        _train_randont(agent, train_ds_r)
-        pred_r     = _probe_matrix(agent)
-        randont_cmse[s_i, b_i], randont_rho[s_i, b_i] = _probe_stats(pred_r)
-        print(f"    RandOnt cMSE−NF={randont_cmse[s_i,b_i]:+.5f}  ρ={randont_rho[s_i,b_i]:.3f}")
-        del agent, train_ds_r, pred_r
+        # OneHotBT  (perceptual uncertainty)
+        train_ds = _bootstrap_sample(all_tasks_ordered, budget, rng_onehot)
+        agent    = _init_onehot(seed_val)
+        _train_frozen(agent, train_ds)
+        pred     = _probe_matrix(agent)
+        onehot_cmse[s_i, b_i], onehot_rho[s_i, b_i] = _probe_stats(pred)
+        print(f"    OneHotBT cMSE−NF={onehot_cmse[s_i,b_i]:+.5f}  ρ={onehot_rho[s_i,b_i]:.3f}")
+        del agent, train_ds, pred
         gc.collect(); torch.cuda.empty_cache()
 
     # ---- All-data point ----------------------------------------------------
@@ -596,28 +490,23 @@ for s_i, seed_val in enumerate(cfg.SEEDS):
     _train_dlbt(agent, all_ds)
     pred  = _probe_matrix(agent)
     dlbt_all_cmse[s_i], dlbt_all_rho[s_i] = _probe_stats(pred)
-    print(f"    DLBT all  cMSE−NF={dlbt_all_cmse[s_i]:+.5f}  ρ={dlbt_all_rho[s_i]:.3f}")
+    print(f"    DLBT all     cMSE−NF={dlbt_all_cmse[s_i]:+.5f}  ρ={dlbt_all_rho[s_i]:.3f}")
     del agent, pred
     gc.collect(); torch.cuda.empty_cache()
 
     agent = _init_detbt(seed_val)
-    _train_detbt(agent, all_ds)
+    _train_frozen(agent, all_ds)
     pred  = _probe_matrix(agent)
     detbt_all_cmse[s_i], detbt_all_rho[s_i] = _probe_stats(pred)
-    print(f"    DetBT all cMSE−NF={detbt_all_cmse[s_i]:+.5f}  ρ={detbt_all_rho[s_i]:.3f}")
+    print(f"    DetBT all    cMSE−NF={detbt_all_cmse[s_i]:+.5f}  ρ={detbt_all_rho[s_i]:.3f}")
     del agent, pred
     gc.collect(); torch.cuda.empty_cache()
 
-    pred_sa = _run_slda(all_tasks_ordered, all_ds)
-    slda_all_cmse[s_i], slda_all_rho[s_i] = _probe_stats(pred_sa)
-    print(f"    SLDA all  cMSE−NF={slda_all_cmse[s_i]:+.5f}  ρ={slda_all_rho[s_i]:.3f}")
-    del pred_sa
-
-    agent = _init_randont(seed_val, rand_du)
-    _train_randont(agent, all_ds)
+    agent = _init_onehot(seed_val)
+    _train_frozen(agent, all_ds)
     pred  = _probe_matrix(agent)
-    randont_all_cmse[s_i], randont_all_rho[s_i] = _probe_stats(pred)
-    print(f"    RandOnt all cMSE−NF={randont_all_cmse[s_i]:+.5f}  ρ={randont_all_rho[s_i]:.3f}")
+    onehot_all_cmse[s_i], onehot_all_rho[s_i] = _probe_stats(pred)
+    print(f"    OneHotBT all cMSE−NF={onehot_all_cmse[s_i]:+.5f}  ρ={onehot_all_rho[s_i]:.3f}")
     del agent, pred
     gc.collect(); torch.cuda.empty_cache()
 
@@ -636,29 +525,27 @@ summary = {
     "probe_noise_floor":   probe_noise_floor,
     "random_cmse_net":     random_cmse_net,
     "rho_noise_ceiling":   rho_noise_ceiling,
-    # Oracle (scalar — no training)
-    "oracle_cmse":         oracle_cmse,
-    "oracle_rho":          oracle_rho,
-    "oracle_concentration": cfg.ORACLE_CONCENTRATION,
-    "oracle_background":   cfg.ORACLE_BACKGROUND,
+    # Reference baselines (no training)
+    "oracle_cmse":             oracle_cmse,
+    "oracle_rho":              oracle_rho,
+    "oracle_concentration":    cfg.ORACLE_CONCENTRATION,
+    "oracle_background":       cfg.ORACLE_BACKGROUND,
+    "behav_superv_cmse":       bsup_cmse,
+    "behav_superv_rho":        bsup_rho,
     # Budget sweep [n_seeds × n_budgets]
     "dlbt_cmse":           dlbt_cmse,
     "dlbt_rho":            dlbt_rho,
     "detbt_cmse":          detbt_cmse,
     "detbt_rho":           detbt_rho,
-    "slda_cmse":           slda_cmse,
-    "slda_rho":            slda_rho,
-    "randont_cmse":        randont_cmse,
-    "randont_rho":         randont_rho,
+    "onehot_cmse":         onehot_cmse,
+    "onehot_rho":          onehot_rho,
     # All-data point [n_seeds]
     "dlbt_all_cmse":       dlbt_all_cmse,
     "dlbt_all_rho":        dlbt_all_rho,
     "detbt_all_cmse":      detbt_all_cmse,
     "detbt_all_rho":       detbt_all_rho,
-    "slda_all_cmse":       slda_all_cmse,
-    "slda_all_rho":        slda_all_rho,
-    "randont_all_cmse":    randont_all_cmse,
-    "randont_all_rho":     randont_all_rho,
+    "onehot_all_cmse":     onehot_all_cmse,
+    "onehot_all_rho":      onehot_all_rho,
 }
 
 out_path = cfg.RESULTS_DIR / f"{cfg.RUN_TAG}.pkl"

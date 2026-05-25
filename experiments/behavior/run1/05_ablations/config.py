@@ -1,15 +1,19 @@
 """
 Configuration for behavior run1 / 05_ablations.
 
-Budget sweep ablation comparing:
-  - DLBT         : full model (MC Dirichlet integration, learned mapper)
-  - DetBT        : deterministic beliefs (Dirichlet mean, learned mapper)
-  - SLDA         : ridge decoder baseline (all tasks)
-  - Oracle       : fixed beliefs from metadata latent state (no training)
+Belief-representation ablation comparing:
+  - DLBT            : full model (MC Dirichlet integration, learned mapper)
+  - DetBT           : perceptual stochasticity ablation
+                      (Dirichlet mean at train AND eval; no MC sampling)
+  - OneHotBT        : perceptual uncertainty ablation
+                      (train: mean like DetBT; eval: argmax one-hot, certain belief)
+  - BehavSuperv     : behavioral supervision reference — P=1 if true latent ∈ Z+
+                      (no learning; evaluated once alongside Oracle)
+  - Oracle          : fixed soft beliefs from metadata latent state (no training)
 
-Same data / sampling protocol as 023_efficiency_main:
+Same data / sampling protocol as 021_efficiency_main:
   - Full task coverage only
-  - Bootstrap fallback sampling
+  - Bootstrap fallback sampling (trial-level)
   - Dense log-spaced budget grid
   - Separate all-data point
 
@@ -48,7 +52,7 @@ MAIN_PERF_QUANTILE   = _run1_cfg.MAIN_PERF_QUANTILE
 MIN_TASK_ASSIGNMENTS = _run1_cfg.MIN_TASK_ASSIGNMENTS
 
 # ---------------------------------------------------------------------------
-# Budget grid
+# Budget grid  (total trials across all tasks)
 # ---------------------------------------------------------------------------
 TRIAL_BUDGETS: list[int] = sorted({
     int(round(10 ** (lo + k / 3)))
@@ -77,25 +81,16 @@ PATIENCE_PHASE2 = 50
 LR              = 0.01
 LR_ATTNPOOL     = 1e-5
 N_MC            = 1000
-FREEZE_ENCODER      = False   
-FREEZE_ENCODER_SLDA = True   
-MAPPER_HIDDEN      = None
+FREEZE_ENCODER  = False   # False → Phase 2 attnpool fine-tuning for DLBT
+MAPPER_HIDDEN   = None
 NORMALIZED_UTILITY = True
 
 # ---------------------------------------------------------------------------
 # Mapper initialisation
 # ---------------------------------------------------------------------------
 INIT_MODE       = "random"
-INIT_ALPHA      = 1.0
 INIT_ALPHA_LOW  = 0.6
 INIT_ALPHA_HIGH = 0.7
-INIT_SEED       = 0
-
-# ---------------------------------------------------------------------------
-# Median threshold correction
-# ---------------------------------------------------------------------------
-MEDIAN_CORRECTION = False
-NEUTRAL_ALPHA     = (INIT_ALPHA_LOW + INIT_ALPHA_HIGH) / 2   # 0.65
 
 # ---------------------------------------------------------------------------
 # Oracle agent hyperparameters
@@ -103,9 +98,8 @@ NEUTRAL_ALPHA     = (INIT_ALPHA_LOW + INIT_ALPHA_HIGH) / 2   # 0.65
 ORACLE_CONCENTRATION = 5.0   # Dirichlet mass on the true latent state bin
 ORACLE_BACKGROUND    = 0.1   # Dirichlet mass on all other bins
 
-_enc_dlbt = "frozen" if FREEZE_ENCODER      else "attnpool"
-_enc_slda = "frozen" if FREEZE_ENCODER_SLDA else "attnpool"
-RUN_TAG   = f"ablations_dlbt_{_enc_dlbt}_slda_{_enc_slda}_s{len(SEEDS)}"
+_enc_dlbt = "frozen" if FREEZE_ENCODER else "attnpool"
+RUN_TAG   = f"ablations_dlbt_{_enc_dlbt}_s{N_SEEDS}"
 
 # ---------------------------------------------------------------------------
 # Plot options
@@ -115,12 +109,12 @@ LOG_Y = True
 # ---------------------------------------------------------------------------
 # Plot colours
 # ---------------------------------------------------------------------------
-C_DLBT    = "#C0392B"   # DLBT — strong red
-C_DETBT   = "#C95C48"   # DetBT — warm red-salmon
-C_RANDONT = "#D88A74"   # RandOnt — medium salmon
-C_ORACLE  = "#E8B5A5"   # Oracle — light salmon-pink (no behavioral supervision)
-C_SLDA    = "#7D3C98"   # SLDA — purple (unused in ablations plot)
-C_RNDINI  = "#999999"   # reference lines
+C_DLBT        = "#C0392B"   # DLBT — strong red
+C_DETBT       = "#C95C48"   # DetBT (perc. stochasticity) — warm red-salmon
+C_ONEHOT      = "#D4876A"   # OneHotBT (perc. uncertainty) — medium salmon
+C_ORACLE      = "#E8B5A5"   # Oracle (no beh. supervision, soft) — light pink
+C_BEHAV_SUPER = "#8E44AD"   # Behavioral supervision (ground-truth P=0/1) — purple
+C_RNDINI      = "#999999"   # reference lines — gray
 
 
 # ---------------------------------------------------------------------------
