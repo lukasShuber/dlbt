@@ -3,7 +3,7 @@
 #### SLURM JOB OPTIONS ##############################################
 #SBATCH --mail-user=lukas.s.huber@unibe.ch
 #SBATCH --mail-type=FAIL,END
-#SBATCH --job-name=both_frozen
+#SBATCH --job-name=task_gen_dlbt_fine_tune_test
 #SBATCH --output=logs/output_%j.txt
 #SBATCH --error=logs/error_%j.txt
 
@@ -46,12 +46,11 @@ if not avail:
 "
 
 # Run
-python experiments/behavior/run1/021_efficiency_main/run.py
-python experiments/behavior/run1/021_efficiency_main/analysis.py
-
+# python experiments/behavior/run1/021_efficiency_main/run.py
+# python experiments/behavior/run1/021_efficiency_main/analysis.py
 
 # python experiments/behavior/run1/05_ablations/run.py
 # python experiments/behavior/run1/05_ablations/analysis.py
 
-# python experiments/behavior/run1/07_task_generalization/run.py
-# python experiments/behavior/run1/07_task_generalization/analysis.py
+python experiments/behavior/run1/07_task_generalization/run.py
+python experiments/behavior/run1/07_task_generalization/analysis.py
