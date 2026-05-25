@@ -3,7 +3,7 @@
 #### SLURM JOB OPTIONS ##############################################
 #SBATCH --mail-user=lukas.s.huber@unibe.ch
 #SBATCH --mail-type=FAIL,END
-#SBATCH --job-name=fine_tune_dlbt_frozen_slda
+#SBATCH --job-name=ablations _smoke_test
 #SBATCH --output=logs/output_%j.txt
 #SBATCH --error=logs/error_%j.txt
 
@@ -31,6 +31,7 @@ export MKL_NUM_THREADS=$SLURM_CPUS_PER_TASK
 echo "===== Job $SLURM_JOB_ID starting on $(hostname) ====="
 echo "Running on GPU:" $(nvidia-smi --query-gpu=name --format=csv,noheader)
 echo "CPUs: $SLURM_CPUS_PER_TASK, Mem/CPU: $SLURM_MEM_PER_CPU"
+echo "===== Job $SLURM_JOB_NAME ($SLURM_JOB_ID) starting on $(hostname) ====="
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
