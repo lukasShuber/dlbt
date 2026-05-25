@@ -222,7 +222,7 @@ class DlbtAgent(nn.Module, Agent):
           Falls back to full fresh encode if backbone cache is not populated.
         """
         if self.freeze_encoder and all(r.uid in self._cache for r in image_refs):
-            return torch.stack([self._cache[r.uid] for r in image_refs])
+            return torch.stack([self._cache[r.uid] for r in image_refs]).to(self.device)
         if not self.freeze_encoder and all(r.uid in self._backbone_cache for r in image_refs):
             spatial = torch.stack([self._backbone_cache[r.uid] for r in image_refs]).to(self.device)
             return self.encoder.attnpool(spatial).float()

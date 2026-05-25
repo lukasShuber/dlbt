@@ -195,7 +195,7 @@ class SldaAgent(nn.Module, Agent):
         """
         if self.freeze_encoder:
             if all(r.uid in self._cache for r in image_refs):
-                return torch.stack([self._cache[r.uid] for r in image_refs])
+                return torch.stack([self._cache[r.uid] for r in image_refs]).to(self.device)
             imgs  = [Image.open(r.path).convert("RGB") for r in image_refs]
             batch = torch.stack([self.preprocess(img) for img in imgs]).to(self.device)
             with torch.no_grad():
