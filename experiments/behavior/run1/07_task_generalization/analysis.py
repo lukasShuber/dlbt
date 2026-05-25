@@ -103,9 +103,9 @@ def process_pkl(pkl_path: Path):
     # k tasks out of n_all_tasks, trials roughly uniform across tasks.
     if isinstance(k_tasks, int) and n_all_tasks > 0:
         pct = k_tasks / n_all_tasks * 100
-        data_label = f"~{pct:.0f}% of training data per condition  ({k_tasks} of {n_all_tasks} tasks)"
+        data_label = f"Models trained on ~{pct:.0f}% of training data"
     else:
-        data_label = f"{k_tasks} tasks per condition"
+        data_label = f"Models trained on {k_tasks} tasks"
 
     # ---- Reference line scalars (mean over seeds) -----------------------------
     ref_dlbt_mu_cmse, ref_dlbt_sem_cmse = _mean_sem(ref_dlbt_cmse)
@@ -133,9 +133,9 @@ def process_pkl(pkl_path: Path):
             ax.annotate("chance (P=0.5)",
                         xy=(1.0, random_cmse_nf),
                         xycoords=("axes fraction", "data"),
-                        xytext=(-4, 5), textcoords="offset points",
+                        xytext=(-4, -5), textcoords="offset points",
                         color=cfg.C_CHANCE, fontsize=8, style="italic",
-                        va="bottom", ha="right", zorder=6)
+                        va="top", ha="right", zorder=6)
 
         # Full DLBT — red, same as 021
         ref_dlbt_val = ref_dlbt_mu_cmse if is_cmse else ref_dlbt_mu_rho
@@ -178,14 +178,13 @@ def process_pkl(pkl_path: Path):
                         elinewidth=1.4, zorder=5)
 
         # ── Legend for reference lines ────────────────────────────────────────
-        ax.legend(loc="upper right", fontsize=8, framealpha=0.85,
-                  edgecolor="#cccccc", handlelength=2.0)
+        leg_anchor = (0.01, 0.88) if is_cmse else (0.01, 1.00)
+        ax.legend(loc="upper left", bbox_to_anchor=leg_anchor,
+                  fontsize=8, frameon=False, handlelength=2.0)
 
-        # ── Data-volume annotation ─────────────────────────────────────────────
-        ax.text(0.5, 0.02, data_label,
-                transform=ax.transAxes,
-                fontsize=7.5, color="#666666", style="italic",
-                ha="center", va="bottom", zorder=6)
+        # ── Data-volume annotation (as axes title / subtitle) ─────────────────
+        ax.set_title(data_label, fontsize=8, color="#666666",
+                     style="italic", pad=6)
 
         # ── X axis ───────────────────────────────────────────────────────────
         ax.set_xticks(x_pos)

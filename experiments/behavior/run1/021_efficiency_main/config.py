@@ -72,7 +72,7 @@ FAST_PASS = False
 # Encoder freeze flags
 # ---------------------------------------------------------------------------
 FREEZE_ENCODER_DLBT = False   # False → Phase 2 attnpool fine-tuning for DLBT
-FREEZE_ENCODER_SLDA = False   # False → Phase 2 attnpool fine-tuning for SLDA
+FREEZE_ENCODER_SLDA = True   # False → Phase 2 attnpool fine-tuning for SLDA
 
 # ---------------------------------------------------------------------------
 # Training — DLBT

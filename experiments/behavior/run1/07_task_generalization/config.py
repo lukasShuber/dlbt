@@ -78,6 +78,25 @@ NORMALIZED_UTILITY = True
 MAPPER_HIDDEN      = None
 
 # ---------------------------------------------------------------------------
+# Encoder freeze flags
+# ---------------------------------------------------------------------------
+FREEZE_ENCODER_DLBT = True   # False → Phase 2 attnpool fine-tuning for DLBT
+FREEZE_ENCODER_SLDA = True   # False → Phase 2 attnpool fine-tuning for SLDA
+
+# ---------------------------------------------------------------------------
+# Training — Phase 2 (attnpool fine-tuning)
+# ---------------------------------------------------------------------------
+N_EPOCHS_PHASE2 = 3000
+PATIENCE_PHASE2 = 50
+LR_ATTNPOOL     = 1e-5
+
+# ---------------------------------------------------------------------------
+# DLBT base model  (symmetric Dirichlet α = BASE_CONCENTRATION)
+# Under normalised utility SEU logit ≈ 0 → P(right) = 0.5.
+# ---------------------------------------------------------------------------
+BASE_CONCENTRATION = 1000.0
+
+# ---------------------------------------------------------------------------
 # Mapper initialisation
 # ---------------------------------------------------------------------------
 INIT_MODE       = "random"
@@ -96,9 +115,11 @@ SLDA_MAX_ITER = 1000
 ARITY_CONDITIONS = ["1-arity", "2-arity", "3-arity", "4-arity", "random"]
 
 # ---------------------------------------------------------------------------
-# Run tag
+# Run tag  (encodes encoder settings so different runs don't overwrite each other)
 # ---------------------------------------------------------------------------
-RUN_TAG = "task_generalization_s5"
+_enc_dlbt = "frozen" if FREEZE_ENCODER_DLBT else "attnpool"
+_enc_slda = "frozen" if FREEZE_ENCODER_SLDA else "attnpool"
+RUN_TAG = f"task_generalization_dlbt_{_enc_dlbt}_slda_{_enc_slda}"
 
 # ---------------------------------------------------------------------------
 # Plot colours

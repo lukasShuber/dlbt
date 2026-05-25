@@ -31,11 +31,13 @@ import torch
 from scipy.stats import spearmanr
 
 from dlbt.agents.dlbt import DlbtAgent
+from dlbt.agents.slda import SldaAgent
 from dlbt.data.dataset import BehavioralDataset
 from dlbt.data.image_ref import load_image_refs, image_refs_as_list
 from dlbt.data.task import get_task
 from dlbt.training.train_dlbt import train_dlbt
 from dlbt.training.train_slda import fit_slda_logreg, slda_probe_matrix
+from dlbt.training.train_slda_attnpool import finetune_slda_attnpool
 
 sys.path.insert(0, str(Path(__file__).parent))
 import config as cfg
@@ -213,9 +215,24 @@ frozen_clip = {uid: feat.clone() for uid, feat in _agent_tmp._cache.items()}
 del _agent_tmp
 print(f"CLIP cache ready ({len(frozen_clip)} images).")
 
-# Probe features for SLDA (numpy format)
-probe_features_np = {uid: frozen_clip[uid].cpu().numpy()
-                     for uid in probe_uids_ordered if uid in frozen_clip}
+# ---------------------------------------------------------------------------
+# DLBT base agent  (symmetric Dirichlet α = BASE_CONCENTRATION → P ≈ 0.5)
+# Used as fall-back for model selection.
+# ---------------------------------------------------------------------------
+base_agent = DlbtAgent(
+    freeze_encoder    = True,
+    n_mc_samples      = cfg.N_MC,
+    device            = device,
+    mapper_hidden     = cfg.MAPPER_HIDDEN,
+    normalize_utility = cfg.NORMALIZED_UTILITY,
+)
+base_agent._cache = {uid: feat.clone() for uid, feat in frozen_clip.items()}
+with torch.no_grad():
+    _lin = base_agent.mapper[0]
+    _lin.weight.zero_()
+    _lin.bias.fill_(cfg.BASE_CONCENTRATION)
+base_agent.eval()
+print(f"Base agent ready (α = {cfg.BASE_CONCENTRATION}).")
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -237,17 +254,8 @@ def _tasks_to_ds(task_subset: list[str]) -> BehavioralDataset:
     return BehavioralDataset(agg)
 
 
-def _set_mapper_bias(agent, seed: int):
-    _linear = agent.mapper[0] if cfg.MAPPER_HIDDEN is None else agent.mapper[2]
-    rng_init  = np.random.default_rng(seed)
-    alpha_rnd = rng_init.uniform(cfg.INIT_ALPHA_LOW, cfg.INIT_ALPHA_HIGH,
-                                 size=(_linear.bias.shape[0],)).astype(np.float32)
-    with torch.no_grad():
-        _linear.bias.copy_(
-            torch.from_numpy(np.log(np.exp(alpha_rnd) - 1.0)).to(device))
-
-
-def _init_dlbt(seed: int) -> DlbtAgent:
+def _init_agent(seed: int) -> DlbtAgent:
+    """Fresh DlbtAgent with CLIP cache and random mapper bias init."""
     torch.manual_seed(seed)
     agent = DlbtAgent(
         freeze_encoder    = True,
@@ -257,18 +265,108 @@ def _init_dlbt(seed: int) -> DlbtAgent:
         normalize_utility = cfg.NORMALIZED_UTILITY,
     )
     agent._cache = {uid: feat.clone() for uid, feat in frozen_clip.items()}
-    _set_mapper_bias(agent, seed)
+    rng_init  = np.random.default_rng(seed)
+    alpha_rnd = rng_init.uniform(cfg.INIT_ALPHA_LOW, cfg.INIT_ALPHA_HIGH,
+                                 size=(agent.mapper[0].bias.shape[0],)).astype(np.float32)
+    with torch.no_grad():
+        agent.mapper[0].bias.copy_(
+            torch.from_numpy(np.log(np.exp(alpha_rnd) - 1.0)).to(device))
     return agent
 
 
-def _train_dlbt(agent: DlbtAgent, train_ds: BehavioralDataset,
-                val_ds: BehavioralDataset) -> None:
+def _base_mse_on_ds(val_ds: BehavioralDataset) -> float:
+    """MSE of base model (P=0.5 everywhere) on val_ds — analytical."""
+    if val_ds.df.empty:
+        return float("nan")
+    totals = (val_ds.df["count_0"] + val_ds.df["count_1"]).values.astype(float)
+    p_obs  = val_ds.df["count_1"].values / np.clip(totals, 1, None)
+    return float(np.mean((0.5 - p_obs) ** 2))
+
+
+@torch.no_grad()
+def _ds_mse_dlbt(agent: DlbtAgent, val_ds: BehavioralDataset) -> float:
+    """MSE of agent predictions on val_ds."""
+    if val_ds.df.empty:
+        return float("nan")
+    agent.eval()
+    pred_list, true_list = [], []
+    for task_name, group in val_ds.df.groupby("task_name"):
+        task = get_task(task_name)
+        uids = [uid for uid in group["uid"].tolist() if uid in refs_by_uid]
+        if not uids:
+            continue
+        refs  = [refs_by_uid[uid] for uid in uids]
+        probs = agent.choice_probs(refs, task)[:, 1].cpu().numpy()
+        g_sub = group[group["uid"].isin(uids)]
+        tot   = (g_sub["count_0"] + g_sub["count_1"]).values.astype(float)
+        p_obs = g_sub["count_1"].values / np.clip(tot, 1, None)
+        pred_list.extend(probs.tolist())
+        true_list.extend(p_obs.tolist())
+    if not pred_list:
+        return float("nan")
+    return float(np.mean((np.array(pred_list) - np.array(true_list)) ** 2))
+
+
+def _run_dlbt(
+    agent: DlbtAgent,
+    train_ds: BehavioralDataset,
+    val_ds: BehavioralDataset,
+) -> DlbtAgent:
+    """
+    Train DLBT and return whichever of (trained, base) wins on val_ds.
+
+    Phase 1: train mapper with frozen CLIP encoder.
+    Phase 2: fine-tune attnpool jointly  [if FREEZE_ENCODER_DLBT=False].
+    """
+    # Phase 1 — mapper, frozen encoder
     train_dlbt(
         agent, train_ds, val_ds, refs_dict,
         n_epochs = cfg.N_EPOCHS,
         lr       = cfg.LR,
         patience = cfg.PATIENCE,
     )
+
+    if not cfg.FREEZE_ENCODER_DLBT:
+        # Phase 2 — unfreeze attnpool, freeze mapper
+        gc.collect(); torch.cuda.empty_cache()
+        for p in agent.mapper.parameters():
+            p.requires_grad_(False)
+        for p in agent.encoder.attnpool.parameters():
+            p.requires_grad_(True)
+        agent.freeze_encoder = False
+        agent._cache.clear()
+        opt2 = torch.optim.Adam(
+            agent.encoder.attnpool.parameters(), lr=cfg.LR_ATTNPOOL)
+        train_dlbt(
+            agent, train_ds, val_ds, refs_dict,
+            n_epochs  = cfg.N_EPOCHS_PHASE2,
+            patience  = cfg.PATIENCE_PHASE2,
+            optimizer = opt2,
+        )
+        # Repopulate cache with fine-tuned attnpool features
+        agent.eval()
+        agent.precompute_backbone_features(all_refs)
+        with torch.no_grad():
+            for i in range(0, len(all_refs), 16):
+                batch   = all_refs[i : i + 16]
+                spatial = torch.stack(
+                    [agent._backbone_cache[r.uid] for r in batch]
+                ).to(device)
+                feats = agent.encoder.attnpool(spatial).float()
+                for ref, feat in zip(batch, feats):
+                    agent._cache[ref.uid] = feat.cpu()
+        # Re-enable mapper gradients
+        for p in agent.mapper.parameters():
+            p.requires_grad_(True)
+        agent.freeze_encoder = True
+
+    # Model selection: use trained agent only if it beats base on val_ds
+    if not val_ds.df.empty:
+        trained_mse = _ds_mse_dlbt(agent, val_ds)
+        base_mse    = _base_mse_on_ds(val_ds)
+        if not np.isnan(base_mse) and base_mse < trained_mse:
+            return base_agent
+    return agent
 
 
 @torch.no_grad()
@@ -324,23 +422,63 @@ def _probe_stats_subset(pred_mat: np.ndarray,
     return cmse_nf, float(rho)
 
 
-def _run_slda_full(all_tasks: list[str],
-                   train_ds: BehavioralDataset,
-                   val_ds:   BehavioralDataset) -> np.ndarray:
-    """Fit SLDA on all tasks, return full probe matrix."""
-    scalers, models, use_base = fit_slda_logreg(
-        all_tasks, train_ds, val_ds,
-        clip_features = frozen_clip,
-        Cs            = cfg.SLDA_Cs,
-        max_iter      = cfg.SLDA_MAX_ITER,
+def _slda_features_for_probe(clip_feats: dict) -> dict:
+    """Extract probe image features as np.ndarray dict for slda_probe_matrix."""
+    return {uid: clip_feats[uid].cpu().numpy()
+            for uid in probe_uids_ordered if uid in clip_feats}
+
+
+def _run_slda(
+    tasks: list[str],
+    train_ds: BehavioralDataset,
+    val_ds: BehavioralDataset,
+    clip_feats: dict | None = None,
+) -> np.ndarray:
+    """
+    Full SLDA pipeline → probe prediction matrix.
+
+    Phase 1: fit LogReg per task on frozen (or provided) CLIP features.
+    Phase 2: fine-tune attnpool through fixed decoders  [if FREEZE_ENCODER_SLDA=False].
+    Phase 3: re-fit LogReg on fine-tuned features       [if FREEZE_ENCODER_SLDA=False].
+    """
+    if clip_feats is None:
+        clip_feats = frozen_clip
+
+    # Phase 1
+    scalers, models, ub = fit_slda_logreg(
+        tasks, train_ds, val_ds, clip_feats,
+        Cs=cfg.SLDA_Cs, max_iter=cfg.SLDA_MAX_ITER,
     )
-    return slda_probe_matrix(
-        scalers, models, use_base,
-        probe_features = probe_features_np,
-        tasks_ordered  = all_tasks,
-        uid_to_row     = uid_to_row,
-        n_probe        = n_probe,
-    )
+
+    if not cfg.FREEZE_ENCODER_SLDA:
+        # Phase 2 — fine-tune attnpool through fixed Phase-1 decoders
+        slda_agent = SldaAgent(freeze_encoder=False, device=device)
+        slda_agent.precompute_backbone_features(all_refs)
+        finetune_slda_attnpool(
+            slda_agent, scalers, models,
+            train_ds, val_ds, refs_dict,
+            n_epochs = cfg.N_EPOCHS_PHASE2,
+            patience = cfg.PATIENCE_PHASE2,
+            lr       = cfg.LR_ATTNPOOL,
+        )
+        # Phase 3 — re-fit LogReg on fine-tuned features
+        clip_feats = slda_agent.extract_features(all_refs)
+        scalers, models, ub = fit_slda_logreg(
+            tasks, train_ds, val_ds, clip_feats,
+            Cs=cfg.SLDA_Cs, max_iter=cfg.SLDA_MAX_ITER,
+        )
+        del slda_agent
+        gc.collect(); torch.cuda.empty_cache()
+
+    probe_feats = _slda_features_for_probe(clip_feats)
+    pred = slda_probe_matrix(scalers, models, ub, probe_feats,
+                             all_tasks_ordered, uid_to_row, n_probe)
+
+    n_fitted = sum(1 for t in tasks if t in models and not ub.get(t, False))
+    n_base   = sum(1 for t in tasks if t not in models or ub.get(t, False))
+    print(f"    SLDA model sel: fitted={n_fitted}/{len(tasks)}  base={n_base}/{len(tasks)}")
+
+    return pred
 
 
 # ===========================================================================
@@ -360,16 +498,17 @@ for s_i, seed_val in enumerate(cfg.SEEDS):
     print(f"\n  Ref seed {s_i+1}/{len(cfg.SEEDS)}  (seed_val={seed_val})")
 
     # Full DLBT
-    agent = _init_dlbt(seed_val)
-    _train_dlbt(agent, all_ds_full, eval_ds_global)
-    pred  = _probe_matrix_full(agent)
+    agent  = _init_agent(seed_val)
+    chosen = _run_dlbt(agent, all_ds_full, eval_ds_global)
+    pred   = _probe_matrix_full(chosen)
     ref_dlbt_cmse[s_i], ref_dlbt_rho[s_i] = _probe_stats_full(pred)
-    print(f"    Full DLBT  cMSE−NF={ref_dlbt_cmse[s_i]:+.5f}  ρ={ref_dlbt_rho[s_i]:.4f}")
-    del agent, pred
+    print(f"    Full DLBT  cMSE−NF={ref_dlbt_cmse[s_i]:+.5f}  ρ={ref_dlbt_rho[s_i]:.4f}"
+          f"  (base={'yes' if chosen is base_agent else 'no'})")
+    del agent, chosen, pred
     gc.collect(); torch.cuda.empty_cache()
 
-    # Full SLDA (uses global eval_ds for model selection)
-    pred_s = _run_slda_full(all_tasks_ordered, all_ds_full, eval_ds_global)
+    # Full SLDA
+    pred_s = _run_slda(all_tasks_ordered, all_ds_full, eval_ds_global)
     ref_slda_cmse[s_i], ref_slda_rho[s_i] = _probe_stats_full(pred_s)
     print(f"    Full SLDA  cMSE−NF={ref_slda_cmse[s_i]:+.5f}  ρ={ref_slda_rho[s_i]:.4f}")
     del pred_s
@@ -429,15 +568,16 @@ for s_i, seed_val in enumerate(cfg.SEEDS):
         # intentional; early stopping monitors held-out cells from training tasks.
 
         # ---- Train DLBT on selected tasks ----------------------------------
-        agent = _init_dlbt(seed_val)
-        _train_dlbt(agent, train_ds, eval_ds_global)
+        agent  = _init_agent(seed_val)
+        chosen = _run_dlbt(agent, train_ds, eval_ds_global)
 
         # ---- Evaluate on held-out tasks ------------------------------------
-        pred = _probe_matrix_subset(agent, held_out)
+        pred = _probe_matrix_subset(chosen, held_out)
         gen_cmse[cond][s_i], gen_rho[cond][s_i] = _probe_stats_subset(pred, held_out)
-        print(f"    cMSE−NF={gen_cmse[cond][s_i]:+.5f}  ρ={gen_rho[cond][s_i]:.4f}")
+        print(f"    cMSE−NF={gen_cmse[cond][s_i]:+.5f}  ρ={gen_rho[cond][s_i]:.4f}"
+              f"  (base={'yes' if chosen is base_agent else 'no'})")
 
-        del agent, train_ds, pred
+        del agent, chosen, train_ds, pred
         gc.collect(); torch.cuda.empty_cache()
 
 # ---------------------------------------------------------------------------
@@ -445,6 +585,8 @@ for s_i, seed_val in enumerate(cfg.SEEDS):
 # ---------------------------------------------------------------------------
 summary = {
     "run_tag":              cfg.RUN_TAG,
+    "freeze_encoder_dlbt":  cfg.FREEZE_ENCODER_DLBT,
+    "freeze_encoder_slda":  cfg.FREEZE_ENCODER_SLDA,
     "seeds":                cfg.SEEDS,
     "k_tasks":              k_tasks,
     "all_tasks_ordered":    all_tasks_ordered,
