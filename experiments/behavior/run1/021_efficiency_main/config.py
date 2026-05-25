@@ -112,9 +112,11 @@ INIT_ALPHA_LOW  = 0.6
 INIT_ALPHA_HIGH = 0.7
 
 # ---------------------------------------------------------------------------
-# Run tag
+# Run tag  (encodes encoder settings so different runs don't overwrite each other)
 # ---------------------------------------------------------------------------
-RUN_TAG = "efficiency_main_021"
+_enc_dlbt = "frozen" if FREEZE_ENCODER_DLBT else "attnpool"
+_enc_slda = "frozen" if FREEZE_ENCODER_SLDA else "attnpool"
+RUN_TAG   = f"efficiency_main_021_dlbt_{_enc_dlbt}_slda_{_enc_slda}"
 
 # ---------------------------------------------------------------------------
 # Plot options
