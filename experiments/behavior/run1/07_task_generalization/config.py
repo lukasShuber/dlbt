@@ -72,7 +72,7 @@ SEEDS   = [42, 43, 44, 45, 46]
 # ---------------------------------------------------------------------------
 N_EPOCHS           = 1000
 PATIENCE           = 200
-LR                 = 0.1
+LR                 = 0.01
 N_MC               = 1000
 NORMALIZED_UTILITY = True
 MAPPER_HIDDEN      = None
@@ -88,7 +88,7 @@ FREEZE_ENCODER_SLDA = True   # False → Phase 2 attnpool fine-tuning for SLDA
 # ---------------------------------------------------------------------------
 N_EPOCHS_PHASE2 = 3000
 PATIENCE_PHASE2 = 50
-LR_ATTNPOOL     = 1e-5
+LR_ATTNPOOL     = 1e-3
 
 # ---------------------------------------------------------------------------
 # DLBT base model  (symmetric Dirichlet α = BASE_CONCENTRATION)
