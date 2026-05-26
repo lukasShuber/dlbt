@@ -137,9 +137,15 @@ def process_pkl(pkl_path: Path):
     with open(pkl_path, "rb") as f:
         d = pickle.load(f)
 
-    trials_per_task  = np.array(d["trials_per_task"])
-    avg_pool_per_task = d.get("avg_pool_per_task", d["total_pool_size"])
-    seeds            = d["seeds"]
+    if "trials_per_task" in d:
+        trials_per_task   = np.array(d["trials_per_task"])
+        avg_pool_per_task = d.get("avg_pool_per_task", d["total_pool_size"])
+    else:
+        # legacy pkl: x-axis was total trial budget across all tasks
+        trials_per_task   = np.array(d["trial_budgets"])
+        avg_pool_per_task = d["total_pool_size"]
+        print("  [warn] legacy pkl — x-axis is total trial budget, not trials per task")
+    seeds = d["seeds"]
 
     dlbt_cmse   = d["dlbt_cmse"]
     dlbt_rho    = d["dlbt_rho"]
@@ -203,7 +209,7 @@ def process_pkl(pkl_path: Path):
         if not np.isnan(bsup_cmse if is_cmse else bsup_rho):
             bsup_val = bsup_cmse if is_cmse else bsup_rho
             ax.axhline(bsup_val, color=cfg.C_BEHAV_SUPER, lw=1.5,
-                       ls="--", zorder=2)
+                       ls="--", zorder=2, label="No beh. supervision")
 
         if not is_cmse and not np.isnan(rho_noise_ceiling):
             ax.axhline(rho_noise_ceiling, color="#555555", lw=1.5,
@@ -216,9 +222,9 @@ def process_pkl(pkl_path: Path):
                         va="bottom", ha="left", zorder=6)
 
         # ── Traces ───────────────────────────────────────────────────────────
-        _plot_trace(ax, trials_per_task, dlbt_mu,   dlbt_sem,   cfg.C_DLBT,   "", zorder=6)
-        _plot_trace(ax, trials_per_task, detbt_mu,  detbt_sem,  cfg.C_DETBT,  "", zorder=5)
-        _plot_trace(ax, trials_per_task, onehot_mu, onehot_sem, cfg.C_ONEHOT, "", zorder=4)
+        _plot_trace(ax, trials_per_task, dlbt_mu,   dlbt_sem,   cfg.C_DLBT,   "Full model",                  zorder=6)
+        _plot_trace(ax, trials_per_task, detbt_mu,  detbt_sem,  cfg.C_DETBT,  "No perceptual uncertainty",   zorder=5)
+        _plot_trace(ax, trials_per_task, onehot_mu, onehot_sem, cfg.C_ONEHOT, "No perceptual stochasticity", zorder=4)
 
         # ── All-data markers ─────────────────────────────────────────────────
         _plot_all_data_marker(ax, avg_pool_per_task,
@@ -245,21 +251,15 @@ def process_pkl(pkl_path: Path):
             ax.set_ylabel(r"Spearman $\rho$", fontsize=11, fontweight="bold")
             ax.set_ylim(-0.04, 1)
 
-        # ── Stacked annotations bottom-left (cMSE only) ──────────────────────
         if is_cmse:
-            _labels = [
-                ("no beh. supervision",  cfg.C_BEHAV_SUPER),
-                ("certain beliefs",      cfg.C_ONEHOT),
-                ("determ. beliefs",      cfg.C_DETBT),
-                ("DLBT",                 cfg.C_DLBT),
-            ]
-            _x  = 0.03
-            _dy = 0.045
-            for k, (lbl, col) in enumerate(_labels):
-                ax.text(_x, 0.03 + k * _dy, lbl,
-                        transform=ax.transAxes,
-                        color=col, fontsize=8, fontweight="bold", style="italic",
-                        va="bottom", ha="left", zorder=6)
+            _order = ["Full model", "No perceptual uncertainty",
+                      "No perceptual stochasticity", "No beh. supervision"]
+            _h, _l = ax.get_legend_handles_labels()
+            _lbl2h = dict(zip(_l, _h))
+            _sh = [_lbl2h[l] for l in _order if l in _lbl2h]
+            _sl = [l for l in _order if l in _lbl2h]
+            ax.legend(_sh, _sl, loc="upper left", bbox_to_anchor=(0.01, 0.97),
+                      fontsize=8, frameon=False, handlelength=2.0)
 
         sns.despine(top=True, right=True, left=False, bottom=False)
         plt.tight_layout()
@@ -279,9 +279,9 @@ def process_pkl(pkl_path: Path):
     print("  " + "-" * 78)
 
     for label, cmse_arr, rho_arr, cmse_all, rho_all in [
-        ("DLBT",              dlbt_cmse,   dlbt_rho,   dlbt_all_cmse,   dlbt_all_rho),
-        ("Determ. beliefs",   detbt_cmse,  detbt_rho,  detbt_all_cmse,  detbt_all_rho),
-        ("Certain beliefs",   onehot_cmse, onehot_rho, onehot_all_cmse, onehot_all_rho),
+        ("Full model",                dlbt_cmse,   dlbt_rho,   dlbt_all_cmse,   dlbt_all_rho),
+        ("No perc. uncertainty",      detbt_cmse,  detbt_rho,  detbt_all_cmse,  detbt_all_rho),
+        ("No perc. stochasticity",    onehot_cmse, onehot_rho, onehot_all_cmse, onehot_all_rho),
     ]:
         for b_i, tpt in enumerate(trials_per_task):
             mu_c, sem_c = _mean_sem_scalar(cmse_arr[:, b_i])

@@ -6,8 +6,8 @@ Pipeline
   Phase 1 — fit per-task LogReg decoders on frozen CLIP features
              (fit_slda_logreg in train_slda.py).
   Phase 2 — fine-tune attnpool through those FIXED decoders (this module).
-  Phase 3 — re-fit LogReg per task on the fine-tuned features
-             (fit_slda_logreg again, with updated clip_features dict).
+             Phase-1 scalers/models/use_base are kept unchanged after Phase 2;
+             fine-tuned features are used directly for probe prediction.
 
 Loss (Phase 2)
 --------------
@@ -18,12 +18,17 @@ For each training cell (image x, task t, counts c0/c1):
     p_xt   = σ(z_xt)
     ℓ_xt   = − [c1 · log p_xt  +  c0 · log(1 − p_xt)]
 
-where (μ_t, σ_t, w_t, b_t) are the FIXED Phase-1 LogReg artifacts and
+where (μ_t, σ_t, w_t, b_t) are the FIXED Phase-1 logistic decoder artifacts and
 φ (attnpool parameters) is the only thing being updated.
 
 The backbone (everything before attnpool) is frozen and pre-cached in
 agent._backbone_cache, so each training step is cheap: one attnpool forward
 per unique image in the batch.
+
+Epoch hook
+----------
+Pass `epoch_hook(epoch, agent) -> any` to evaluate the model (e.g. probe cMSE)
+periodically during training.  Results accumulate in SldaAttnpoolResult.
 """
 
 from __future__ import annotations
@@ -51,6 +56,8 @@ class SldaAttnpoolResult:
     best_val_nll: float
     train_nll:    list   # per-epoch training NLL (unnormalised sum)
     val_nll:      list   # per-epoch validation NLL
+    hook_epochs:  list = dataclasses.field(default_factory=list)
+    hook_results: list = dataclasses.field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -139,23 +146,22 @@ def _nll_on_dataset(
 # ---------------------------------------------------------------------------
 
 def finetune_slda_attnpool(
-    agent:      SldaAgent,
-    scalers:    dict,
-    models:     dict,
-    train_ds:   BehavioralDataset,
-    eval_ds:    BehavioralDataset,
-    refs_dict:  Dict[str, ImageRef],
-    n_epochs:   int   = 3000,
-    patience:   int   = 50,
-    lr:         float = 1e-5,
-    batch_size: int   = 128,
+    agent:       SldaAgent,
+    scalers:     dict,
+    models:      dict,
+    train_ds:    BehavioralDataset,
+    eval_ds:     BehavioralDataset,
+    refs_dict:   Dict[str, ImageRef],
+    n_epochs:    int   = 3000,
+    patience:    int   = 50,
+    lr:          float = 1e-5,
+    batch_size:  int   = 128,
+    epoch_hook   = None,
+    eval_every:  int   = 10,
 ) -> SldaAttnpoolResult:
     """
     Phase 2: fine-tune only the CLIP attention-pooling layer through fixed
-    Phase-1 ridge decoders.
-
-    Temperature is intentionally excluded from the loss — it will be fit
-    separately (Phase 3) on the final features after attnpool converges.
+    Phase-1 logistic decoders.
 
     The agent must have freeze_encoder=False and a populated _backbone_cache
     (call agent.precompute_backbone_features() before this function).
@@ -165,16 +171,20 @@ def finetune_slda_attnpool(
 
     Args
     ----
-    agent     : SldaAgent with freeze_encoder=False and backbone cache ready.
-    scalers   : Phase-1 StandardScaler per task.
-    models    : Phase-1 RidgeCV per task.
-    train_ds  : BehavioralDataset for gradient updates.
-    eval_ds   : BehavioralDataset for early stopping.
-    refs_dict : uid → ImageRef for all images.
-    n_epochs  : maximum training epochs.
-    patience  : early-stopping patience (epochs without val improvement).
-    lr        : Adam learning rate for attnpool parameters.
-    batch_size: number of (uid, task) cells per gradient step.
+    agent      : SldaAgent with freeze_encoder=False and backbone cache ready.
+    scalers    : Phase-1 StandardScaler per task.
+    models     : Phase-1 LogisticRegressionCV per task.
+    train_ds   : BehavioralDataset for gradient updates.
+    eval_ds    : BehavioralDataset for early stopping.
+    refs_dict  : uid → ImageRef for all images.
+    n_epochs   : maximum training epochs.
+    patience   : early-stopping patience (epochs without val improvement).
+    lr         : Adam learning rate for attnpool parameters.
+    batch_size : number of (uid, task) cells per gradient step.
+    epoch_hook : optional callable(epoch: int, agent: SldaAgent) → any.
+                 Called every eval_every epochs (after val NLL, agent in eval mode).
+                 Results stored in SldaAttnpoolResult.hook_results.
+    eval_every : interval (in epochs) between epoch_hook calls.
     """
     device = agent.device
 
@@ -200,8 +210,10 @@ def finetune_slda_attnpool(
     best_state    = {k: v.cpu().clone()
                      for k, v in agent.encoder.attnpool.state_dict().items()}
     no_improve    = 0
-    train_nll_log = []
-    val_nll_log   = []
+    train_nll_log  = []
+    val_nll_log    = []
+    hook_epochs_log  = []
+    hook_results_log = []
 
     pbar = tqdm(range(n_epochs), desc="slda-attnpool", unit="epoch")
     for epoch in pbar:
@@ -264,6 +276,12 @@ def finetune_slda_attnpool(
             val  =f"{val_nll:.1f}",
         )
 
+        # Epoch hook  (agent is in eval mode after _nll_on_dataset)
+        if epoch_hook is not None and epoch % eval_every == 0:
+            hook_result = epoch_hook(epoch, agent)
+            hook_epochs_log.append(epoch)
+            hook_results_log.append(hook_result)
+
         if val_nll < best_val_nll:
             best_val_nll = val_nll
             best_epoch   = epoch
@@ -287,4 +305,6 @@ def finetune_slda_attnpool(
         best_val_nll = best_val_nll,
         train_nll    = train_nll_log,
         val_nll      = val_nll_log,
+        hook_epochs  = hook_epochs_log,
+        hook_results = hook_results_log,
     )

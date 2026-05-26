@@ -1,20 +1,16 @@
 """
-Configuration for behavior run1 / 06_slda_finetuning.
+Configuration for behavior run1 / 06_slda_finetuning — SLDA Phase 2 sandbox.
 
-Compares two SLDA variants on a budget sweep:
+Diagnostic experiment to understand SLDA Phase 2 (attnpool fine-tuning).
+Trains on the full dataset (no budget sweep) and tracks training NLL and probe
+cMSE across epochs to diagnose whether attnpool fine-tuning helps and which
+learning rate works best.
 
-  Frozen SLDA (Phase 1 only):
-    1. Fit per-task ridge decoders on frozen CLIP features.
-    2. Optimize temperature τ per task on same frozen features.
-
-  Attnpool SLDA (three phases):
-    1. Fit per-task ridge decoders on frozen CLIP features (no τ).
-    2. Fine-tune CLIP attnpool through those fixed decoders (NLL, τ=1).
-    3. Re-optimize τ per task using the fine-tuned features.
-
-Temperature is always fit last — on whichever features are current at that
-point.  In the frozen path this is trivially the frozen CLIP features; in the
-attnpool path the features have been updated by Phase 2, so τ is meaningful.
+Conditions:
+  Phase 1 only          — fit LogReg on frozen CLIP features (reference)
+  Phase 2 (lr=X)        — fine-tune attnpool through fixed Phase-1 decoders
+  Phase 2 + refit scaler — same, but refit StandardScaler on fine-tuned features
+                           after Phase 2 converges
 
 Run from repo root:
     python experiments/behavior/run1/06_slda_finetuning/run.py
@@ -50,53 +46,46 @@ MAIN_PERF_QUANTILE   = _run1_cfg.MAIN_PERF_QUANTILE
 MIN_TASK_ASSIGNMENTS = _run1_cfg.MIN_TASK_ASSIGNMENTS
 
 # ---------------------------------------------------------------------------
-# Budget grid  (same as 02)
+# Seeds  (single seed — diagnostic run, not intended for statistical analysis)
 # ---------------------------------------------------------------------------
-TRIAL_BUDGETS: list[int] = sorted({
-    int(round(10 ** (lo + k / 3)))
-    for lo in range(2, 5)
-    for k in range(3)
-} | {100_000})
+N_SEEDS = 1
+SEEDS   = [42]
 
 # ---------------------------------------------------------------------------
-# Seeds
+# Phase 1 — LogisticRegressionCV  (matches 021_efficiency_main)
 # ---------------------------------------------------------------------------
-N_SEEDS = 5
-SEEDS   = [42, 43, 44, 45, 46]
-
-# ---------------------------------------------------------------------------
-# Fast-pass mode
-# ---------------------------------------------------------------------------
-FAST_PASS = False
+SLDA_Cs       = [0.001, 0.01, 0.1, 1.0, 10.0, 100.0]
+SLDA_MAX_ITER = 1000
 
 # ---------------------------------------------------------------------------
 # Phase 2 — attnpool fine-tuning
 # ---------------------------------------------------------------------------
-N_EPOCHS_ATTNPOOL   = 3000
-PATIENCE_ATTNPOOL   = 50
-LR_ATTNPOOL         = 1e-5
-BATCH_SIZE_ATTNPOOL = 128
+LR_ATTNPOOL_VARIANTS: list[float] = [1e-6, 1e-5, 1e-4]
+N_EPOCHS_ATTNPOOL    = 3000
+PATIENCE_ATTNPOOL    = 100
+BATCH_SIZE_ATTNPOOL  = 128
+EVAL_EVERY           = 25   # call probe cMSE hook every N epochs
 
 # ---------------------------------------------------------------------------
 # Run tag
 # ---------------------------------------------------------------------------
-RUN_TAG = "slda_finetuning"
-
-# ---------------------------------------------------------------------------
-# Plot options
-# ---------------------------------------------------------------------------
-LOG_Y = True
+RUN_TAG = "slda_sandbox"
 
 # ---------------------------------------------------------------------------
 # Plot colours
 # ---------------------------------------------------------------------------
-C_FROZEN   = "#7D3C98"   # frozen SLDA  — saturated purple
-C_ATTNPOOL = "#A569BD"   # attnpool SLDA — lighter purple
-C_RNDINI   = "#999999"   # reference lines
+C_PHASE1  = "#7D3C98"   # Phase 1 only — purple (consistent with 021)
+C_RNDINI  = "#999999"   # chance reference — gray
+
+# Colors for Phase 2 LR variants: blue → teal gradient (3 shades)
+C_PHASE2  = ["#1565C0", "#0097A7", "#2E7D32"]   # LR 1e-6, 1e-5, 1e-4
+
+# Refit-scaler variant: same hues, slightly lighter / different marker
+C_REFIT   = ["#5C9CE6", "#4DD0E1", "#81C784"]   # LR 1e-6, 1e-5, 1e-4
 
 
 # ---------------------------------------------------------------------------
-# Helper: eligible tasks  (same filter as 02)
+# Helper: eligible tasks
 # ---------------------------------------------------------------------------
 def eligible_tasks(df_filtered):
     tasks = _run1_cfg.eligible_tasks(df_filtered, MIN_TASK_ASSIGNMENTS)

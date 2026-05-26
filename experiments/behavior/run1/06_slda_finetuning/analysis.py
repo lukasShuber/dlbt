@@ -1,19 +1,12 @@
 """
-run1/06_slda_finetuning/analysis.py — frozen vs. attnpool SLDA budget-sweep plots.
+run1/06_slda_finetuning/analysis.py — SLDA Phase 2 diagnostic plots.
 
-Produces two figures (cMSE−NF and Spearman ρ vs. trial budget) for every
-slda_finetuning*.pkl found in results/.
+Reads results/slda_sandbox.pkl (or any pkl passed via --pkl) and produces:
 
-  Traces (mean ± SEM):
-    • Frozen SLDA   — saturated purple, solid
-    • Attnpool SLDA — lighter purple, solid
-
-  Reference lines:
-    • chance (P=0.5)  — gray dashed, annotated at right edge (cMSE only)
-    • Noise ceiling   — dark gray dotted, annotated at left edge (ρ only)
-
-  All-data markers:
-    • Filled marker (disconnected from trace) for both conditions.
+  plot_nll.png        — Training + validation NLL across epochs (one subplot per LR).
+  plot_cmse_curve.png — Probe cMSE-NF across epochs per LR variant (from epoch hook),
+                        with Phase 1 reference line.
+  plot_final_bar.png  — Final cMSE-NF and ρ bar chart for all conditions.
 
 Run from repo root:
     python experiments/behavior/run1/06_slda_finetuning/analysis.py
@@ -29,9 +22,9 @@ from pathlib import Path
 warnings.filterwarnings("ignore")
 
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import numpy as np
 import seaborn as sns
-from scipy.stats import spearmanr as _spearmanr
 
 sys.path.insert(0, str(Path(__file__).parent))
 import config as cfg
@@ -41,240 +34,205 @@ import config as cfg
 # ---------------------------------------------------------------------------
 parser = argparse.ArgumentParser()
 parser.add_argument("--pkl", default=None,
-                    help="Path to a specific pkl. Default: all slda_finetuning*.pkl.")
-parser.add_argument("--log-y", action="store_true",
-                    help="Log-scale y-axis on cMSE plot (also set via cfg.LOG_Y).")
+                    help="Path to a specific pkl.  Default: results/slda_sandbox.pkl.")
 args = parser.parse_args()
 
-_log_y = cfg.LOG_Y or args.log_y
-
-# ---------------------------------------------------------------------------
-# Collect pkl paths
-# ---------------------------------------------------------------------------
 if args.pkl:
-    pkl_paths = [Path(args.pkl)]
+    pkl_path = Path(args.pkl)
 else:
-    pkl_paths = sorted(cfg.RESULTS_DIR.glob("slda_finetuning*.pkl"))
-    if not pkl_paths:
-        raise FileNotFoundError(f"No slda_finetuning*.pkl found in {cfg.RESULTS_DIR}")
+    pkl_path = cfg.RESULTS_DIR / f"{cfg.RUN_TAG}.pkl"
+    if not pkl_path.exists():
+        raise FileNotFoundError(f"No pkl found at {pkl_path}.  Run run.py first.")
 
-print(f"Processing {len(pkl_paths)} pkl(s):")
-for p in pkl_paths:
-    print(f"  {p.name}")
+print(f"Loading: {pkl_path.name}")
+with open(pkl_path, "rb") as f:
+    d = pickle.load(f)
+
+variants          = d["variants"]
+phase1_cmse       = d["phase1_cmse"]
+phase1_rho        = d["phase1_rho"]
+random_cmse_net   = d["random_cmse_net"]
+rho_noise_ceiling = d.get("rho_noise_ceiling", float("nan"))
+
+plots_dir = cfg.RESULTS_DIR / "plots" / pkl_path.stem
+plots_dir.mkdir(parents=True, exist_ok=True)
+
+n_variants = len(variants)
+lrs        = [v["lr"] for v in variants]
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _mean_sem(arr: np.ndarray):
-    mu  = np.nanmean(arr, axis=0)
-    n   = np.sum(~np.isnan(arr), axis=0).astype(float)
-    sem = np.nanstd(arr, axis=0, ddof=1) / np.sqrt(np.maximum(n, 1))
-    return mu, sem
+def _lr_label(lr: float) -> str:
+    exp = int(round(np.log10(lr)))
+    return rf"$lr=10^{{{exp}}}$"
 
 
-def _mean_sem_scalar(arr: np.ndarray):
-    n   = float(np.sum(~np.isnan(arr)))
-    mu  = float(np.nanmean(arr))
-    sem = float(np.nanstd(arr, ddof=1) / np.sqrt(max(n, 1)))
-    return mu, sem
-
-
-def _plot_trace(ax, budgets, mu, sem, color, ls="-", zorder=3):
-    ax.fill_between(budgets, mu - sem, mu + sem,
-                    color=color, alpha=0.15, zorder=zorder - 1)
-    ax.plot(budgets, mu, color=color, lw=2.0, ls=ls, zorder=zorder)
-    ax.plot(budgets, mu, "o", color=color, ms=5, mfc="none",
-            mew=1.4, zorder=zorder + 1)
-
-
-def _plot_all_data_marker(ax, x, mu, sem, color, zorder=5):
-    ax.errorbar(x, mu, yerr=sem, fmt="o", color=color,
-                ms=7, mfc=color, mew=1.4, capsize=3,
-                elinewidth=1.2, zorder=zorder)
-
-
-def _xaxis_setup(ax):
-    ax.set_xscale("log")
-    ax.set_xlim(70, 1e5)
-    ax.set_xticks([100, 1_000, 10_000, 100_000])
-    ax.set_xticklabels([r"$10^2$", r"$10^3$", r"$10^4$", r"$10^5$"])
-    ax.set_xlabel("Total trial budget", fontsize=11, fontweight="bold")
-
-
-def _rho_nc_from_counts(true_mat, count_mat, n_splits=200, seed=0):
-    mask    = count_mat > 1
-    totals  = count_mat[mask].astype(int)
-    count1s = np.round(true_mat[mask] * totals).astype(int)
-    n1s     = totals // 2
-    n2s     = totals - n1s
-    if len(totals) < 2:
-        return float("nan")
-    rng = np.random.default_rng(seed)
-    vals = []
-    for _ in range(n_splits):
-        k1 = np.array([rng.hypergeometric(c1, t - c1, n1)
-                       for c1, t, n1 in zip(count1s, totals, n1s)], dtype=float)
-        p1 = k1 / n1s
-        p2 = (count1s - k1) / n2s
-        rh, _ = _spearmanr(p1, p2)
-        if not np.isnan(rh) and rh > -1:
-            vals.append((2 * rh) / (1 + rh))
-    return float(np.mean(vals)) if vals else float("nan")
+def _despine(ax):
+    sns.despine(ax=ax, top=True, right=True)
 
 
 # ---------------------------------------------------------------------------
-# Per-pkl processing
+# Plot 1: NLL curves  (train + val per LR)
 # ---------------------------------------------------------------------------
+fig, axes = plt.subplots(1, n_variants, figsize=(4.5 * n_variants, 4.0),
+                         sharey=False)
+if n_variants == 1:
+    axes = [axes]
 
-def process_pkl(pkl_path: Path):
-    print(f"\n{'='*60}")
-    print(f"Loading: {pkl_path.name}")
+for ax, v, c in zip(axes, variants, cfg.C_PHASE2):
+    epochs     = list(range(len(v["train_nll"])))
+    train_nll  = v["train_nll"]
+    val_nll    = v["val_nll"]
+    best_ep    = v["best_epoch"]
 
-    with open(pkl_path, "rb") as f:
-        d = pickle.load(f)
+    ax.plot(epochs, train_nll, color=c,       lw=1.5, label="train NLL", zorder=3)
+    ax.plot(epochs, val_nll,   color=c, ls="--", lw=1.5, label="val NLL",   zorder=3)
+    ax.axvline(best_ep, color="#999999", lw=1.0, ls=":", zorder=2)
+    ax.text(best_ep + max(1, len(epochs) * 0.01), ax.get_ylim()[1] * 0.98,
+            f"best={best_ep}", color="#999999", fontsize=7, va="top")
 
-    budgets         = np.array(d["trial_budgets"])
-    total_pool_size = d["total_pool_size"]
-    seeds           = d["seeds"]
+    ax.set_title(_lr_label(v["lr"]), fontsize=11)
+    ax.set_xlabel("Epoch", fontsize=10)
+    ax.set_ylabel("NLL (total)", fontsize=10)
+    ax.legend(fontsize=8, frameon=False)
+    _despine(ax)
 
-    frozen_cmse   = d["frozen_cmse"]
-    frozen_rho    = d["frozen_rho"]
-    attnpool_cmse = d["attnpool_cmse"]
-    attnpool_rho  = d["attnpool_rho"]
-
-    frozen_all_cmse   = d["frozen_all_cmse"]
-    frozen_all_rho    = d["frozen_all_rho"]
-    attnpool_all_cmse = d["attnpool_all_cmse"]
-    attnpool_all_rho  = d["attnpool_all_rho"]
-
-    random_cmse_nf    = d["random_cmse_net"]
-    rho_noise_ceiling = d.get("rho_noise_ceiling", float("nan"))
-
-    if np.isnan(rho_noise_ceiling) and "count_matrix" in d:
-        print("  Computing ρ noise ceiling from count_matrix...")
-        rho_noise_ceiling = _rho_nc_from_counts(d["true_matrix"], d["count_matrix"])
-        print(f"  ρ noise ceiling: {rho_noise_ceiling:.4f}")
-
-    print(f"  Seeds: {len(seeds)}  Budgets: {list(budgets)}")
-
-    plots_dir = cfg.RESULTS_DIR / "plots" / pkl_path.stem
-    plots_dir.mkdir(parents=True, exist_ok=True)
-
-    def _make_figure(metric: str):
-        is_cmse = metric == "cmse"
-
-        frozen_mu,   frozen_sem   = _mean_sem(frozen_cmse   if is_cmse else frozen_rho)
-        attnpool_mu, attnpool_sem = _mean_sem(attnpool_cmse if is_cmse else attnpool_rho)
-
-        frozen_all_mu,   frozen_all_sem   = _mean_sem_scalar(
-            frozen_all_cmse   if is_cmse else frozen_all_rho)
-        attnpool_all_mu, attnpool_all_sem = _mean_sem_scalar(
-            attnpool_all_cmse if is_cmse else attnpool_all_rho)
-
-        fig, ax = plt.subplots(figsize=(5.0, 4.5))
-
-        # ── Reference lines ──────────────────────────────────────────────────
-        if is_cmse:
-            ax.axhline(random_cmse_nf, color=cfg.C_RNDINI, lw=1.5,
-                       ls=(0, (4, 3)), zorder=1)
-            ax.annotate("chance (P=0.5)",
-                        xy=(1.0, random_cmse_nf),
-                        xycoords=("axes fraction", "data"),
-                        xytext=(-4, 5), textcoords="offset points",
-                        color=cfg.C_RNDINI, fontsize=8, style="italic",
-                        va="bottom", ha="right", zorder=6)
-
-        if not is_cmse and not np.isnan(rho_noise_ceiling):
-            ax.axhline(rho_noise_ceiling, color="#555555", lw=1.5,
-                       ls=(0, (2, 2)), zorder=2)
-            ax.annotate("noise ceiling",
-                        xy=(0.0, rho_noise_ceiling),
-                        xycoords=("axes fraction", "data"),
-                        xytext=(4, 5), textcoords="offset points",
-                        color="#555555", fontsize=8, style="italic",
-                        va="bottom", ha="left", zorder=6)
-
-        # ── Traces ───────────────────────────────────────────────────────────
-        _plot_trace(ax, budgets, attnpool_mu, attnpool_sem,
-                    cfg.C_ATTNPOOL, zorder=4)
-        _plot_trace(ax, budgets, frozen_mu,   frozen_sem,
-                    cfg.C_FROZEN,   zorder=5)
-
-        # ── All-data markers ─────────────────────────────────────────────────
-        _plot_all_data_marker(ax, total_pool_size,
-                              attnpool_all_mu, attnpool_all_sem,
-                              cfg.C_ATTNPOOL, zorder=6)
-        _plot_all_data_marker(ax, total_pool_size,
-                              frozen_all_mu,   frozen_all_sem,
-                              cfg.C_FROZEN,   zorder=7)
-
-        _xaxis_setup(ax)
-
-        # ── Y axis ───────────────────────────────────────────────────────────
-        if is_cmse:
-            ax.set_ylabel("cMSE − noise floor", fontsize=11, fontweight="bold")
-            if _log_y:
-                ax.set_yscale("log")
-                ax.set_yticks([0.01, 0.1, 1])
-                ax.set_yticklabels([r"$10^{-2}$", r"$10^{-1}$", r"$10^{0}$"])
-                ax.yaxis.set_minor_locator(plt.NullLocator())
-                ax.set_ylim(0.008, 1.0)
-            else:
-                ax.set_ylim(0, 0.34)
-
-            # Stacked annotations bottom-left
-            for k, (lbl, col) in enumerate([
-                ("Attnpool SLDA", cfg.C_ATTNPOOL),
-                ("Frozen SLDA",   cfg.C_FROZEN),
-            ]):
-                ax.text(0.03, 0.03 + k * 0.045, lbl,
-                        transform=ax.transAxes,
-                        color=col, fontsize=8, fontweight="bold", style="italic",
-                        va="bottom", ha="left", zorder=6)
-        else:
-            ax.set_ylabel(r"Spearman $\rho$", fontsize=11, fontweight="bold")
-            ax.set_ylim(-0.04, 1)
-
-        sns.despine(top=True, right=True, left=False, bottom=False)
-        plt.tight_layout()
-
-        tag = "cmse" if is_cmse else "rho"
-        out = plots_dir / f"plot_{tag}.png"
-        fig.savefig(out, dpi=300, bbox_inches="tight")
-        plt.close(fig)
-        print(f"  Saved: {out.relative_to(cfg.RESULTS_DIR)}")
-
-    _make_figure("cmse")
-    _make_figure("rho")
-
-    # ── Summary table ────────────────────────────────────────────────────────
-    print()
-    print(f"  {'Model':<18}  {'budget':>10}  {'cMSE-NF (mean±SEM)':>22}  {'ρ (mean±SEM)':>16}")
-    print("  " + "-" * 70)
-    for label, cmse_arr, rho_arr, cmse_all, rho_all in [
-        ("Frozen SLDA",   frozen_cmse,   frozen_rho,
-                          frozen_all_cmse,   frozen_all_rho),
-        ("Attnpool SLDA", attnpool_cmse, attnpool_rho,
-                          attnpool_all_cmse, attnpool_all_rho),
-    ]:
-        for b_i, b in enumerate(budgets):
-            mu_c, sem_c = _mean_sem_scalar(cmse_arr[:, b_i])
-            mu_r, sem_r = _mean_sem_scalar(rho_arr[:, b_i])
-            print(f"  {label:<18}  {b:>10,}  "
-                  f"{mu_c:+.5f} ± {sem_c:.5f}  "
-                  f"{mu_r:+.4f} ± {sem_r:.4f}")
-        mu_c, sem_c = _mean_sem_scalar(cmse_all)
-        mu_r, sem_r = _mean_sem_scalar(rho_all)
-        print(f"  {label:<18}  {'all data':>10}  "
-              f"{mu_c:+.5f} ± {sem_c:.5f}  "
-              f"{mu_r:+.4f} ± {sem_r:.4f}")
-        print()
-    print("=" * 72)
-
+plt.suptitle("Phase 2 — NLL training curves", fontsize=12, y=1.01)
+plt.tight_layout()
+out = plots_dir / "plot_nll.png"
+fig.savefig(out, dpi=300, bbox_inches="tight")
+plt.close(fig)
+print(f"Saved: {out.relative_to(cfg.RESULTS_DIR)}")
 
 # ---------------------------------------------------------------------------
-# Run
+# Plot 2: probe cMSE-NF curves across epochs
 # ---------------------------------------------------------------------------
-for pkl_path in pkl_paths:
-    process_pkl(pkl_path)
+fig, ax = plt.subplots(figsize=(6.0, 4.5))
+
+# Phase 1 reference
+ax.axhline(phase1_cmse, color=cfg.C_PHASE1, lw=1.8, ls="--", zorder=2,
+           label="Phase 1 (frozen CLIP)")
+
+for v, c in zip(variants, cfg.C_PHASE2):
+    hook_ep   = v["hook_epochs"]
+    hook_cmse = v["hook_cmse"]
+    if not hook_ep:
+        continue
+    ax.plot(hook_ep, hook_cmse, color=c, lw=1.8, zorder=3,
+            label=_lr_label(v["lr"]))
+    # Mark final value
+    ax.plot(hook_ep[-1], hook_cmse[-1], "o", color=c, ms=6,
+            mfc=c, mew=1.4, zorder=4)
+
+# Chance reference
+ax.axhline(random_cmse_net, color=cfg.C_RNDINI, lw=1.2,
+           ls=(0, (4, 3)), zorder=1)
+ax.annotate("chance (P=0.5)",
+            xy=(1.0, random_cmse_net),
+            xycoords=("axes fraction", "data"),
+            xytext=(-4, -5), textcoords="offset points",
+            color=cfg.C_RNDINI, fontsize=8, style="italic",
+            va="top", ha="right", zorder=6)
+
+ax.set_xlabel("Epoch", fontsize=11, fontweight="bold")
+ax.set_ylabel("cMSE − noise floor", fontsize=11, fontweight="bold")
+ax.legend(loc="upper right", fontsize=8, frameon=False)
+_despine(ax)
+plt.tight_layout()
+
+out = plots_dir / "plot_cmse_curve.png"
+fig.savefig(out, dpi=300, bbox_inches="tight")
+plt.close(fig)
+print(f"Saved: {out.relative_to(cfg.RESULTS_DIR)}")
+
+# ---------------------------------------------------------------------------
+# Plot 3: final bar chart (cMSE-NF and ρ)
+# ---------------------------------------------------------------------------
+# Build condition labels and values
+cond_labels  = ["Phase 1\n(frozen CLIP)"]
+cmse_vals    = [phase1_cmse]
+rho_vals     = [phase1_rho]
+bar_colors   = [cfg.C_PHASE1]
+bar_hatches  = [""]
+
+for v, c_solid, c_light in zip(variants, cfg.C_PHASE2, cfg.C_REFIT):
+    lr_str = _lr_label(v["lr"])
+    # Phase 2, frozen scaler
+    cond_labels.append(f"Phase 2\n{lr_str}\n(frozen sc.)")
+    cmse_vals.append(v["phase2_cmse"])
+    rho_vals.append(v["phase2_rho"])
+    bar_colors.append(c_solid)
+    bar_hatches.append("")
+    # Phase 2, refit scaler
+    cond_labels.append(f"Phase 2\n{lr_str}\n(refit sc.)")
+    cmse_vals.append(v["refit_scaler_cmse"])
+    rho_vals.append(v["refit_scaler_rho"])
+    bar_colors.append(c_light)
+    bar_hatches.append("//")
+
+n_bars = len(cond_labels)
+xs     = np.arange(n_bars)
+
+fig, (ax_c, ax_r) = plt.subplots(1, 2, figsize=(max(7, n_bars * 1.1), 4.5))
+
+# ── cMSE-NF bars ──
+for x, h, c, hatch in zip(xs, cmse_vals, bar_colors, bar_hatches):
+    ax_c.bar(x, h, color=c, hatch=hatch, edgecolor="white",
+             linewidth=0.8, width=0.7, zorder=3)
+ax_c.axhline(random_cmse_net, color=cfg.C_RNDINI, lw=1.2,
+             ls=(0, (4, 3)), zorder=2)
+ax_c.annotate("chance",
+              xy=(1.0, random_cmse_net),
+              xycoords=("axes fraction", "data"),
+              xytext=(-4, -5), textcoords="offset points",
+              color=cfg.C_RNDINI, fontsize=7, style="italic",
+              va="top", ha="right", zorder=6)
+ax_c.set_xticks(xs)
+ax_c.set_xticklabels(cond_labels, fontsize=7)
+ax_c.set_ylabel("cMSE − noise floor", fontsize=10, fontweight="bold")
+ax_c.set_ylim(0, max(cmse_vals + [random_cmse_net]) * 1.15)
+_despine(ax_c)
+
+# ── ρ bars ──
+for x, h, c, hatch in zip(xs, rho_vals, bar_colors, bar_hatches):
+    ax_r.bar(x, h, color=c, hatch=hatch, edgecolor="white",
+             linewidth=0.8, width=0.7, zorder=3)
+if not np.isnan(rho_noise_ceiling):
+    ax_r.axhline(rho_noise_ceiling, color="#555555", lw=1.2,
+                 ls=(0, (2, 2)), zorder=2)
+    ax_r.annotate("noise ceiling",
+                  xy=(0.0, rho_noise_ceiling),
+                  xycoords=("axes fraction", "data"),
+                  xytext=(4, 5), textcoords="offset points",
+                  color="#555555", fontsize=7, style="italic",
+                  va="bottom", ha="left", zorder=6)
+ax_r.set_xticks(xs)
+ax_r.set_xticklabels(cond_labels, fontsize=7)
+ax_r.set_ylabel(r"Spearman $\rho$", fontsize=10, fontweight="bold")
+ax_r.set_ylim(0, 1.05)
+_despine(ax_r)
+
+plt.suptitle("Phase 2 — final performance comparison", fontsize=12)
+plt.tight_layout()
+out = plots_dir / "plot_final_bar.png"
+fig.savefig(out, dpi=300, bbox_inches="tight")
+plt.close(fig)
+print(f"Saved: {out.relative_to(cfg.RESULTS_DIR)}")
+
+# ---------------------------------------------------------------------------
+# Summary table
+# ---------------------------------------------------------------------------
+print(f"\n{'='*60}")
+print(f"  {'Condition':<35}  {'cMSE-NF':>10}  {'ρ':>8}")
+print("  " + "-" * 57)
+print(f"  {'Phase 1 (frozen CLIP)':<35}  {phase1_cmse:+10.5f}  {phase1_rho:8.4f}")
+for v in variants:
+    lr_str = f"lr={v['lr']:.0e}"
+    print(f"  {'Phase 2 ('+lr_str+', frozen sc.)':<35}  "
+          f"{v['phase2_cmse']:+10.5f}  {v['phase2_rho']:8.4f}"
+          f"  [best_ep={v['best_epoch']}]")
+    print(f"  {'Phase 2 ('+lr_str+', refit sc.)':<35}  "
+          f"{v['refit_scaler_cmse']:+10.5f}  {v['refit_scaler_rho']:8.4f}")
+print("=" * 60)

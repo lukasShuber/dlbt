@@ -106,13 +106,13 @@ RUN_TAG   = f"ablations_dlbt_{_enc_dlbt}_s{N_SEEDS}"
 LOG_Y = True
 
 # ---------------------------------------------------------------------------
-# Plot colours
+# Plot colours  (seaborn "dark" qualitative palette)
 # ---------------------------------------------------------------------------
-C_DLBT        = "#C0392B"   # DLBT — strong red
-C_DETBT       = "#C95C48"   # DetBT (perc. stochasticity) — warm red-salmon
-C_ONEHOT      = "#D4876A"   # OneHotBT (perc. uncertainty) — medium salmon
-C_BEHAV_SUPER = "#8E44AD"   # No beh. supervision (ground-truth P=0/1) — purple
-C_RNDINI      = "#999999"   # reference lines — gray
+C_DLBT        = "#8c0800"   # DLBT — dark[3] dark red
+C_DETBT       = "#a23582"   # DetBT — dark[6] dark pink
+C_ONEHOT      = "#006374"   # OneHotBT — dark[9] dark turquoise
+C_BEHAV_SUPER = "#b8850a"   # No beh. supervision — dark[8] dark yellow
+C_RNDINI      = "#999999"   # chance reference line — gray
 
 
 # ---------------------------------------------------------------------------
