@@ -88,7 +88,7 @@ FREEZE_ENCODER_SLDA = True   # False → Phase 2 attnpool fine-tuning for SLDA
 # ---------------------------------------------------------------------------
 N_EPOCHS_PHASE2 = 3000
 PATIENCE_PHASE2 = 50
-LR_ATTNPOOL     = 1e-3
+LR_ATTNPOOL     = 1e-2
 
 # ---------------------------------------------------------------------------
 # DLBT base model  (symmetric Dirichlet α = BASE_CONCENTRATION)
