@@ -27,6 +27,8 @@ from pathlib import Path
 warnings.filterwarnings("ignore", message="QuickGELU mismatch")
 warnings.filterwarnings("ignore", message="invalid value encountered in divide",
                         category=RuntimeWarning)
+warnings.filterwarnings("ignore", category=UserWarning)    # sklearn convergence
+warnings.filterwarnings("ignore", category=FutureWarning, module="sklearn")
 
 import numpy as np
 import pandas as pd

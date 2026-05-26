@@ -60,9 +60,9 @@ SLDA_MAX_ITER = 1000
 # ---------------------------------------------------------------------------
 # Phase 2 — attnpool fine-tuning
 # ---------------------------------------------------------------------------
-LR_ATTNPOOL_VARIANTS: list[float] = [1e-6, 1e-5, 1e-4]
+LR_ATTNPOOL_VARIANTS: list[float] = [1e-9, 1e-8, 1e-7]
 N_EPOCHS_ATTNPOOL    = 3000
-PATIENCE_ATTNPOOL    = 100
+PATIENCE_ATTNPOOL    = 50
 BATCH_SIZE_ATTNPOOL  = 128
 EVAL_EVERY           = 25   # call probe cMSE hook every N epochs
 
