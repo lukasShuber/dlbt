@@ -3,7 +3,7 @@
 #### SLURM JOB OPTIONS ##############################################
 #SBATCH --mail-user=lukas.s.huber@unibe.ch
 #SBATCH --mail-type=FAIL,END
-#SBATCH --job-name=slda_finetuning_2
+#SBATCH --job-name=slda_finetuning_3
 #SBATCH --output=logs/output_%j.txt
 #SBATCH --error=logs/error_%j.txt
 
