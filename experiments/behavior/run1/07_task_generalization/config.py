@@ -72,7 +72,7 @@ SEEDS   = [42, 43, 44, 45, 46]
 # ---------------------------------------------------------------------------
 N_EPOCHS           = 1000
 PATIENCE           = 200
-LR                 = 0.01
+LR                 = 0.1
 N_MC               = 1000
 NORMALIZED_UTILITY = True
 MAPPER_HIDDEN      = None
@@ -80,7 +80,7 @@ MAPPER_HIDDEN      = None
 # ---------------------------------------------------------------------------
 # Encoder freeze flags
 # ---------------------------------------------------------------------------
-FREEZE_ENCODER_DLBT = True   # False → Phase 2 attnpool fine-tuning for DLBT
+FREEZE_ENCODER_DLBT = False   # False → Phase 2 attnpool fine-tuning for DLBT
 FREEZE_ENCODER_SLDA = True   # False → Phase 2 attnpool fine-tuning for SLDA
 
 # ---------------------------------------------------------------------------

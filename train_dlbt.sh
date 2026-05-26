@@ -3,7 +3,7 @@
 #### SLURM JOB OPTIONS ##############################################
 #SBATCH --mail-user=lukas.s.huber@unibe.ch
 #SBATCH --mail-type=FAIL,END
-#SBATCH --job-name=slda_finetuning_4
+#SBATCH --job-name=task_gen
 #SBATCH --output=logs/output_%j.txt
 #SBATCH --error=logs/error_%j.txt
 
@@ -52,8 +52,8 @@ if not avail:
 # python experiments/behavior/run1/05_ablations/run.py
 # python experiments/behavior/run1/05_ablations/analysis.py
 
-python experiments/behavior/run1/06_slda_finetuning/run.py
-python experiments/behavior/run1/06_slda_finetuning/analysis.py
+# python experiments/behavior/run1/06_slda_finetuning/run.py
+# python experiments/behavior/run1/06_slda_finetuning/analysis.py
 
 # python experiments/behavior/run1/07_task_generalization/run.py
 # python experiments/behavior/run1/07_task_generalization/analysis.py
