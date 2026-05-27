@@ -81,14 +81,15 @@ MAPPER_HIDDEN      = None
 # Encoder freeze flags
 # ---------------------------------------------------------------------------
 FREEZE_ENCODER_DLBT = False   # False → Phase 2 attnpool fine-tuning for DLBT
-FREEZE_ENCODER_SLDA = True   # False → Phase 2 attnpool fine-tuning for SLDA
+FREEZE_ENCODER_SLDA = False   # False → Phase 2 attnpool fine-tuning for SLDA
 
 # ---------------------------------------------------------------------------
 # Training — Phase 2 (attnpool fine-tuning)
 # ---------------------------------------------------------------------------
-N_EPOCHS_PHASE2 = 3000
-PATIENCE_PHASE2 = 50
-LR_ATTNPOOL     = 1e-5
+N_EPOCHS_PHASE2  = 3000
+PATIENCE_PHASE2  = 50
+LR_ATTNPOOL_DLBT = 1e-5   # attnpool lr for DLBT Phase 2
+LR_ATTNPOOL_SLDA = 1e-6   # attnpool lr for SLDA Phase 2
 
 # ---------------------------------------------------------------------------
 # DLBT base model  (symmetric Dirichlet α = BASE_CONCENTRATION)
@@ -117,8 +118,8 @@ ARITY_CONDITIONS = ["1-arity", "2-arity", "3-arity", "4-arity", "random"]
 # ---------------------------------------------------------------------------
 # Run tag  (encodes encoder settings so different runs don't overwrite each other)
 # ---------------------------------------------------------------------------
-_enc_dlbt = "frozen" if FREEZE_ENCODER_DLBT else "attnpool"
-_enc_slda = "frozen" if FREEZE_ENCODER_SLDA else "attnpool"
+_enc_dlbt = "frozen" if FREEZE_ENCODER_DLBT else f"attnpool_lr{LR_ATTNPOOL_DLBT:.0e}"
+_enc_slda = "frozen" if FREEZE_ENCODER_SLDA else f"attnpool_lr{LR_ATTNPOOL_SLDA:.0e}"
 RUN_TAG = f"task_generalization_dlbt_{_enc_dlbt}_slda_{_enc_slda}"
 
 # ---------------------------------------------------------------------------
