@@ -3,7 +3,7 @@
 #### SLURM JOB OPTIONS ##############################################
 #SBATCH --mail-user=lukas.s.huber@unibe.ch
 #SBATCH --mail-type=FAIL,END
-#SBATCH --job-name=main_both_finetuned_4seeds
+#SBATCH --job-name=slda_finetune_frozen_comp
 #SBATCH --output=logs/output_%j.txt
 #SBATCH --error=logs/error_%j.txt
 
@@ -46,14 +46,17 @@ if not avail:
 "
 
 # Run
-python experiments/behavior/run1/021_efficiency_main/run.py
-python experiments/behavior/run1/021_efficiency_main/analysis.py
+# python experiments/behavior/run1/021_efficiency_main/run.py
+# python experiments/behavior/run1/021_efficiency_main/analysis.py
 
 # python experiments/behavior/run1/05_ablations/run.py
 # python experiments/behavior/run1/05_ablations/analysis.py
 
 # python experiments/behavior/run1/06_slda_finetuning/run.py
 # python experiments/behavior/run1/06_slda_finetuning/analysis.py
+
+python experiments/behavior/run1/061_slda_finetuning_sweep/run.py
+python experiments/behavior/run1/061_slda_finetuning_sweep/analysis.py
 
 # python experiments/behavior/run1/07_task_generalization/run.py
 # python experiments/behavior/run1/07_task_generalization/analysis.py
