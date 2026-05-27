@@ -64,8 +64,8 @@ MIN_TASK_ASSIGNMENTS = _run1_cfg.MIN_TASK_ASSIGNMENTS
 # ---------------------------------------------------------------------------
 # Seeds
 # ---------------------------------------------------------------------------
-N_SEEDS = 1
-SEEDS   = [42]
+N_SEEDS = 5
+SEEDS   = [42, 43, 44, 45, 46]
 
 # ---------------------------------------------------------------------------
 # Training (DLBT, frozen encoder)
@@ -88,7 +88,7 @@ FREEZE_ENCODER_SLDA = True   # False → Phase 2 attnpool fine-tuning for SLDA
 # ---------------------------------------------------------------------------
 N_EPOCHS_PHASE2 = 3000
 PATIENCE_PHASE2 = 50
-LR_ATTNPOOL     = 1e-2
+LR_ATTNPOOL     = 1e-5
 
 # ---------------------------------------------------------------------------
 # DLBT base model  (symmetric Dirichlet α = BASE_CONCENTRATION)
