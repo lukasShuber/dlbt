@@ -438,11 +438,18 @@ def _dlbt_ckpt(agent: DlbtAgent, used_base: bool) -> dict:
 
 
 def _save_ckpt(label: str, dlbt: dict, slda: dict) -> None:
-    """Write one checkpoint pkl for a (seed, budget) pair."""
-    path = models_dir / f"{label}.pkl"
-    with open(path, "wb") as fh:
-        pickle.dump({"dlbt": dlbt, "slda": slda}, fh)
-    print(f"    Ckpt → {path.name}")
+    """
+    Write per-(seed, budget) model checkpoints.
+
+    DLBT  → <label>_dlbt.pt   (torch.save — state dicts only)
+    SLDA  → <label>_slda.pkl  (pickle    — sklearn objects + optional attnpool sd)
+    """
+    dlbt_path = models_dir / f"{label}_dlbt.pt"
+    slda_path = models_dir / f"{label}_slda.pkl"
+    torch.save(dlbt, dlbt_path)
+    with open(slda_path, "wb") as fh:
+        pickle.dump(slda, fh)
+    print(f"    Ckpt → {dlbt_path.name}  {slda_path.name}")
 
 
 def _run_dlbt(
