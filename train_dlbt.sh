@@ -3,7 +3,7 @@
 #### SLURM JOB OPTIONS ##############################################
 #SBATCH --mail-user=lukas.s.huber@unibe.ch
 #SBATCH --mail-type=FAIL,END
-#SBATCH --job-name=task_gen_full_run
+#SBATCH --job-name=main_both_finetuned_4seeds
 #SBATCH --output=logs/output_%j.txt
 #SBATCH --error=logs/error_%j.txt
 
