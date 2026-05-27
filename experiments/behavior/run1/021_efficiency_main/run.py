@@ -676,17 +676,20 @@ for s_i, seed_val in enumerate(cfg.SEEDS):
     chosen_all = _run_dlbt(agent_all, all_tr, eval_ds_global)
     pred_all   = _dlbt_probe_matrix(chosen_all)
     dlbt_all_cmse[s_i], dlbt_all_rho[s_i] = _probe_stats(pred_all)
+    used_base_all = (chosen_all is base_agent)
     print(f"    DLBT all  cMSE−NF={dlbt_all_cmse[s_i]:+.5f}  ρ={dlbt_all_rho[s_i]:.3f}"
-          f"  (base={'yes' if chosen_all is base_agent else 'no'})")
-    del agent_all, chosen_all, all_tr, pred_all
+          f"  (base={'yes' if used_base_all else 'no'})")
+    dlbt_ck_all = _dlbt_ckpt(agent_all, used_base_all)
+    del chosen_all, all_tr, pred_all, agent_all
     gc.collect(); torch.cuda.empty_cache()
 
     # SLDA all  — train on 90 % pool, model selection on fixed 10 % eval split
     all_tr_s = _all_data_ds(all_tasks_ordered)
-    pred_sa  = _run_slda(all_tasks_ordered, all_tr_s, eval_ds_global)
+    pred_sa, slda_art_all = _run_slda(all_tasks_ordered, all_tr_s, eval_ds_global)
     slda_all_cmse[s_i], slda_all_rho[s_i] = _probe_stats(pred_sa)
     print(f"    SLDA all  cMSE−NF={slda_all_cmse[s_i]:+.5f}  ρ={slda_all_rho[s_i]:.3f}")
-    del all_tr_s, pred_sa
+    _save_ckpt(f"seed{seed_val}_all", dlbt_ck_all, slda_art_all)
+    del all_tr_s, pred_sa, dlbt_ck_all, slda_art_all
 
     # Anti all  — train on 90 % pool (flipped), val on fixed anti eval split
     all_tr_a = _all_data_ds(all_tasks_ordered, flip=True)
