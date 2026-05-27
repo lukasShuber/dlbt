@@ -60,16 +60,16 @@ SLDA_MAX_ITER = 1000
 # ---------------------------------------------------------------------------
 # Phase 2 — attnpool fine-tuning
 # ---------------------------------------------------------------------------
-LR_ATTNPOOL_VARIANTS: list[float] = [1e-7, 1e-8, 1e-9]
+LR_ATTNPOOL_VARIANTS: list[float] = [1.5e-8]
 N_EPOCHS_ATTNPOOL    = 3000
 PATIENCE_ATTNPOOL    = 50
-BATCH_SIZE_ATTNPOOL  = 128
+BATCH_SIZE_ATTNPOOL  = 254
 EVAL_EVERY           = 25   # call probe cMSE hook every N epochs
 
 # ---------------------------------------------------------------------------
 # Run tag
 # ---------------------------------------------------------------------------
-RUN_TAG = "slda_sandbox"
+RUN_TAG = "slda_sandbox_1_5e-8"
 
 # ---------------------------------------------------------------------------
 # Plot colours
