@@ -63,8 +63,10 @@ from preprocess import filter_assignments, aggregate_counts
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
-_REPO_ROOT = Path(__file__).parents[4]
+_REPO_ROOT  = Path(__file__).parents[4]
 cfg.RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+models_dir  = cfg.RESULTS_DIR / "models" / cfg.RUN_TAG
+models_dir.mkdir(parents=True, exist_ok=True)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}" +
@@ -422,6 +424,27 @@ def _ds_mse_dlbt(agent: DlbtAgent, val_ds: BehavioralDataset) -> float:
     return float(np.mean((np.array(pred_list) - np.array(true_list)) ** 2))
 
 
+def _dlbt_ckpt(agent: DlbtAgent, used_base: bool) -> dict:
+    """Snapshot trained DLBT weights (mapper + attnpool if fine-tuned)."""
+    ckpt = {
+        "used_base":          used_base,
+        "mapper_state_dict":  {k: v.cpu() for k, v in agent.mapper.state_dict().items()},
+    }
+    if not cfg.FREEZE_ENCODER_DLBT:
+        ckpt["attnpool_state_dict"] = {
+            k: v.cpu() for k, v in agent.encoder.attnpool.state_dict().items()
+        }
+    return ckpt
+
+
+def _save_ckpt(label: str, dlbt: dict, slda: dict) -> None:
+    """Write one checkpoint pkl for a (seed, budget) pair."""
+    path = models_dir / f"{label}.pkl"
+    with open(path, "wb") as fh:
+        pickle.dump({"dlbt": dlbt, "slda": slda}, fh)
+    print(f"    Ckpt → {path.name}")
+
+
 def _run_dlbt(
     agent: DlbtAgent,
     train_ds: BehavioralDataset,
@@ -510,14 +533,18 @@ def _run_slda(
     train_ds: BehavioralDataset,
     val_ds: BehavioralDataset,
     clip_feats: dict | None = None,
-) -> np.ndarray:
+) -> tuple[np.ndarray, dict]:
     """
-    Full SLDA pipeline → probe prediction matrix.
+    Full SLDA pipeline → (probe prediction matrix, artifacts dict).
 
     Phase 1: fit LogReg per task on frozen (or provided) CLIP features.
     Phase 2: fine-tune attnpool through fixed Phase-1 decoders  [if FREEZE_ENCODER_SLDA=False].
 
     clip_feats defaults to frozen_clip.
+
+    artifacts dict keys:
+        scalers, models, use_base       — Phase-1 sklearn objects
+        attnpool_state_dict             — attnpool weights after Phase 2 (None if frozen)
     """
     if clip_feats is None:
         clip_feats = frozen_clip
@@ -528,6 +555,7 @@ def _run_slda(
         Cs=cfg.SLDA_Cs, max_iter=cfg.SLDA_MAX_ITER,
     )
 
+    attnpool_sd = None
     if not cfg.FREEZE_ENCODER_SLDA:
         # Phase 2 — fine-tune attnpool through fixed Phase-1 decoders
         slda_agent = SldaAgent(freeze_encoder=False, device=device)
@@ -539,6 +567,8 @@ def _run_slda(
             patience   = cfg.PATIENCE_PHASE2,
             lr         = cfg.LR_ATTNPOOL_SLDA,
         )
+        attnpool_sd = {k: v.cpu()
+                       for k, v in slda_agent.encoder.attnpool.state_dict().items()}
         clip_feats = slda_agent.extract_features(all_refs)
         del slda_agent
         gc.collect(); torch.cuda.empty_cache()
@@ -552,7 +582,13 @@ def _run_slda(
     n_base   = sum(1 for t in tasks if t not in models or ub.get(t, False))
     print(f"    SLDA model sel: fitted={n_fitted}/{len(tasks)}  base={n_base}/{len(tasks)}")
 
-    return pred
+    artifacts = {
+        "scalers":             scalers,
+        "models":              models,
+        "use_base":            ub,
+        "attnpool_state_dict": attnpool_sd,
+    }
+    return pred, artifacts
 
 
 # ---------------------------------------------------------------------------
@@ -605,17 +641,20 @@ for s_i, seed_val in enumerate(cfg.SEEDS):
         chosen = _run_dlbt(agent, train_ds, val_ds)
         pred   = _dlbt_probe_matrix(chosen)
         dlbt_cmse[s_i, b_i], dlbt_rho[s_i, b_i] = _probe_stats(pred)
+        used_base_dlbt = (chosen is base_agent)
         print(f"    DLBT   cMSE−NF={dlbt_cmse[s_i,b_i]:+.5f}  ρ={dlbt_rho[s_i,b_i]:.3f}"
-              f"  (base={'yes' if chosen is base_agent else 'no'})")
-        del agent, chosen, train_ds, val_ds, pred
+              f"  (base={'yes' if used_base_dlbt else 'no'})")
+        dlbt_ck = _dlbt_ckpt(agent, used_base_dlbt)
+        del chosen, train_ds, val_ds, pred, agent
         gc.collect(); torch.cuda.empty_cache()
 
         # SLDA
         train_ds_s, val_ds_s = _sample_and_split(all_tasks_ordered, tpt, rng_slda)
-        pred_s = _run_slda(all_tasks_ordered, train_ds_s, val_ds_s)
+        pred_s, slda_art = _run_slda(all_tasks_ordered, train_ds_s, val_ds_s)
         slda_cmse[s_i, b_i], slda_rho[s_i, b_i] = _probe_stats(pred_s)
         print(f"    SLDA   cMSE−NF={slda_cmse[s_i,b_i]:+.5f}  ρ={slda_rho[s_i,b_i]:.3f}")
-        del train_ds_s, val_ds_s, pred_s
+        _save_ckpt(f"seed{seed_val}_tpt{tpt}", dlbt_ck, slda_art)
+        del train_ds_s, val_ds_s, pred_s, dlbt_ck, slda_art
 
         # Anti-human DLBT (label-flipped)
         train_ds_a, val_ds_a = _sample_and_split(all_tasks_ordered, tpt, rng_anti, flip=True)
