@@ -60,8 +60,8 @@ TRIALS_PER_TASK: list[int] = sorted({
 # ---------------------------------------------------------------------------
 # Seeds
 # ---------------------------------------------------------------------------
-N_SEEDS = 5
-SEEDS   = [42, 43, 44, 45, 46]
+N_SEEDS = 4
+SEEDS   = [42, 43, 44, 45]
 
 # ---------------------------------------------------------------------------
 # Fast-pass mode  (quick smoke-test: smallest budget only)
@@ -84,11 +84,12 @@ N_MC              = 1000
 NORMALIZED_UTILITY = True
 
 # ---------------------------------------------------------------------------
-# Training — Phase 2 (attnpool fine-tuning, DLBT and SLDA)
+# Training — Phase 2 (attnpool fine-tuning)
 # ---------------------------------------------------------------------------
-N_EPOCHS_PHASE2 = 3000
-PATIENCE_PHASE2 = 50
-LR_ATTNPOOL     = 1e-5
+N_EPOCHS_PHASE2    = 3000
+PATIENCE_PHASE2    = 50
+LR_ATTNPOOL_DLBT   = 1e-5
+LR_ATTNPOOL_SLDA   = 1e-6
 
 # ---------------------------------------------------------------------------
 # DLBT base model

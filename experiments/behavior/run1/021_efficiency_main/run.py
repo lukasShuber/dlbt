@@ -451,7 +451,7 @@ def _run_dlbt(
         agent.freeze_encoder = False
         agent._cache.clear()
         opt2 = torch.optim.Adam(
-            agent.encoder.attnpool.parameters(), lr=cfg.LR_ATTNPOOL)
+            agent.encoder.attnpool.parameters(), lr=cfg.LR_ATTNPOOL_DLBT)
         train_dlbt(
             agent, train_ds, val_ds, refs_dict,
             n_epochs  = cfg.N_EPOCHS_PHASE2,
@@ -537,7 +537,7 @@ def _run_slda(
             train_ds, val_ds, refs_dict,
             n_epochs   = cfg.N_EPOCHS_PHASE2,
             patience   = cfg.PATIENCE_PHASE2,
-            lr         = cfg.LR_ATTNPOOL,
+            lr         = cfg.LR_ATTNPOOL_SLDA,
         )
         clip_feats = slda_agent.extract_features(all_refs)
         del slda_agent

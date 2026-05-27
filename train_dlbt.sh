@@ -46,8 +46,8 @@ if not avail:
 "
 
 # Run
-# python experiments/behavior/run1/021_efficiency_main/run.py
-# python experiments/behavior/run1/021_efficiency_main/analysis.py
+python experiments/behavior/run1/021_efficiency_main/run.py
+python experiments/behavior/run1/021_efficiency_main/analysis.py
 
 # python experiments/behavior/run1/05_ablations/run.py
 # python experiments/behavior/run1/05_ablations/analysis.py
@@ -55,5 +55,5 @@ if not avail:
 # python experiments/behavior/run1/06_slda_finetuning/run.py
 # python experiments/behavior/run1/06_slda_finetuning/analysis.py
 
-python experiments/behavior/run1/07_task_generalization/run.py
-python experiments/behavior/run1/07_task_generalization/analysis.py
+# python experiments/behavior/run1/07_task_generalization/run.py
+# python experiments/behavior/run1/07_task_generalization/analysis.py
