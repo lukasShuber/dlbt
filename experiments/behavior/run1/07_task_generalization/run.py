@@ -202,6 +202,15 @@ total_pool_size = sum(pool_sizes.values())
 print(f"\n  Trial pool — total: {total_pool_size:,}  "
       f"min/task: {min(pool_sizes.values())}  max/task: {max(pool_sizes.values())}")
 
+# Reference trial budget = total trials across all 1-arity tasks.
+# All conditions are equalized to this count (sample w/o replacement if more,
+# w/ replacement if fewer).
+_arity1_tasks    = arity_groups.get(1, [])
+ref_total_trials = sum(pool_sizes[t] for t in _arity1_tasks)
+_ref_per_task    = ref_total_trials / len(_arity1_tasks) if _arity1_tasks else 0.0
+print(f"  Reference trial budget (1-arity): {ref_total_trials:,} trials  "
+      f"({_ref_per_task:.1f}/task over {len(_arity1_tasks)} tasks)")
+
 # ---------------------------------------------------------------------------
 # CLIP feature cache
 # ---------------------------------------------------------------------------
@@ -253,6 +262,34 @@ def _tasks_to_ds(task_subset: list[str]) -> BehavioralDataset:
     df  = pd.DataFrame(rows)
     agg = (df.groupby(["uid", "task_name"])[["count_0", "count_1"]]
               .sum().reset_index())
+    return BehavioralDataset(agg)
+
+
+def _build_equalized_ds(train_tasks: list[str], ref_total: int,
+                        rng: np.random.Generator) -> BehavioralDataset:
+    """
+    Build a BehavioralDataset for train_tasks with exactly ref_total trials.
+
+    Combines all individual trial observations for the selected tasks, then:
+      - samples without replacement if combined total > ref_total
+      - samples with    replacement if combined total < ref_total
+    This equalizes training data volume across arity conditions.
+    """
+    combined: list[tuple] = []   # (uid, task_name, outcome)
+    for tn in train_tasks:
+        for uid, outcome in task_trial_pools[tn]:
+            combined.append((uid, tn, outcome))
+    n = len(combined)
+    if n == 0:
+        return BehavioralDataset(pd.DataFrame(
+            columns=["uid", "task_name", "count_0", "count_1"]))
+    replace = n < ref_total
+    idx     = rng.choice(n, size=ref_total, replace=replace)
+    rows = [{"uid": combined[i][0], "task_name": combined[i][1],
+             "count_0": 1 - combined[i][2], "count_1": combined[i][2]}
+            for i in idx]
+    df  = pd.DataFrame(rows)
+    agg = df.groupby(["uid", "task_name"])[["count_0", "count_1"]].sum().reset_index()
     return BehavioralDataset(agg)
 
 
@@ -550,15 +587,17 @@ for s_i, seed_val in enumerate(cfg.SEEDS):
         held_out = [t for t in all_tasks_ordered if t not in set(train_tasks)]
         gen_train_tasks[cond].append(train_tasks)
 
-        print(f"\n  [{cond}] training on {len(train_tasks)} tasks, "
+        raw_trials = sum(pool_sizes[t] for t in train_tasks)
+        print(f"\n  [{cond}] training on {len(train_tasks)} tasks  "
+              f"(raw trials: {raw_trials:,} → equalized to {ref_total_trials:,}), "
               f"held-out: {len(held_out)} tasks")
 
         if not held_out:
             print(f"    No held-out tasks — skipping evaluation")
             continue
 
-        # ---- Build training dataset (all trials for selected tasks) --------
-        train_ds = _tasks_to_ds(train_tasks)
+        # ---- Build training dataset equalized to 1-arity trial budget ------
+        train_ds = _build_equalized_ds(train_tasks, ref_total_trials, rng)
         # Use eval_ds_global (10% global split) for DLBT early stopping
         # Note: eval_ds may contain cells from training tasks only — this is
         # intentional; early stopping monitors held-out cells from training tasks.

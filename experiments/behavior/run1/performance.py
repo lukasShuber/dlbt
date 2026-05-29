@@ -190,7 +190,8 @@ df_raw = pd.concat(
     ignore_index=True,
 )
 print(f"  Combined raw trials: {len(df_raw):,}  "
-      f"({df_raw['assignment_id'].nunique()} assignments)")
+      f"({df_raw['assignment_id'].nunique()} assignments, "
+      f"{df_raw['worker_id'].nunique()} unique workers)")
 
 all_assignments = set(df_raw["assignment_id"].unique())
 
@@ -240,9 +241,15 @@ full_assignments = set(df_filt_full["assignment_id"].unique())
 n_all   = len(all_assignments)
 n_catch = len(catch_only_assignments)
 n_full  = len(full_assignments)
-print(f"\n  Unfiltered:   {n_all} assignments")
-print(f"  Catch only:   {n_catch} assignments  ({n_all - n_catch} dropped)")
-print(f"  Full filter:  {n_full} assignments  ({n_all - n_full} dropped)")
+w_all   = df_raw["worker_id"].nunique()
+w_catch = df_raw[df_raw["assignment_id"].isin(catch_only_assignments)]["worker_id"].nunique()
+w_full  = df_filt_full["worker_id"].nunique()
+
+print(f"\n  Unfiltered:   {n_all} assignments  ({w_all} workers)")
+print(f"  Catch only:   {n_catch} assignments  ({w_catch} workers)  "
+      f"({n_all - n_catch} assignments / {w_all - w_catch} workers dropped)")
+print(f"  Full filter:  {n_full} assignments  ({w_full} workers)  "
+      f"({n_all - n_full} assignments / {w_all - w_full} workers dropped)")
 
 # ---------------------------------------------------------------------------
 # Build and plot each condition
@@ -273,7 +280,8 @@ for label, keep, title, out_path in conditions:
     print(f"\n--- {label} ---")
     df_c, per_task_c, task_order_c = _prepare_df(df_raw, keep_assignments=keep)
     print(f"  {len(df_c):,} trials  |  {df_c['task_name'].nunique()} tasks  "
-          f"|  {df_c['assignment_id'].nunique()} assignments")
+          f"|  {df_c['assignment_id'].nunique()} assignments  "
+          f"|  {df_c['worker_id'].nunique()} workers")
     _make_figure(df_c, per_task_c, task_order_c, title, out_path)
 
     count_path = out_path.with_name(out_path.stem + "_trial_counts.png")

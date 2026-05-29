@@ -62,6 +62,17 @@ for p in pkl_paths:
     print(f"  {p.name}")
 
 # ---------------------------------------------------------------------------
+# Colors (local override — sequential red scale for arity, green for random)
+# ---------------------------------------------------------------------------
+COND_COLOR = {
+    "1-arity": "#fcbba1",
+    "2-arity": "#fb6a4a",
+    "3-arity": "#cb181d",
+    "4-arity": "#67000d",
+    "random":  "#1b9e77",
+}
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -116,96 +127,139 @@ def process_pkl(pkl_path: Path):
     plots_dir = cfg.RESULTS_DIR / "plots" / pkl_path.stem
     plots_dir.mkdir(parents=True, exist_ok=True)
 
-    x_pos    = np.arange(len(conditions))
-    x_labels = conditions
-    bar_w    = 0.55
+    bar_w = 0.55
 
     def _make_figure(metric: str):
         is_cmse = metric == "cmse"
         data    = gen_cmse if is_cmse else gen_rho
 
-        fig, ax = plt.subplots(figsize=(6.5, 4.5))
+        arity_conds  = [c for c in conditions if c != "random"]
+        has_random   = "random" in conditions
+
+        # ── Two-panel broken x-axis (arity | random) ─────────────────────────
+        n_arity   = len(arity_conds)
+        r_ratio   = 1.1 if has_random else 0     # width ratio of random panel
+        ratios    = [n_arity, r_ratio] if has_random else [n_arity]
+        ncols     = 2 if has_random else 1
+
+        fig, axes = plt.subplots(
+            1, ncols,
+            figsize=(6.5, 4.5),
+            gridspec_kw={"width_ratios": ratios, "wspace": 0.07},
+            sharey=True,
+        )
+        ax_l = axes[0] if has_random else axes
+        ax_r = axes[1] if has_random else None
+
+        def _axhline_both(val, **kw):
+            ax_l.axhline(val, **kw)
+            if ax_r is not None:
+                ax_r.axhline(val, **kw)
 
         # ── Reference lines ──────────────────────────────────────────────────
         if is_cmse:
-            ax.axhline(random_cmse_nf, color=cfg.C_CHANCE, lw=1.5,
-                       ls=(0, (4, 3)), zorder=1)
-            ax.annotate("chance (P=0.5)",
-                        xy=(1.0, random_cmse_nf),
-                        xycoords=("axes fraction", "data"),
-                        xytext=(-4, -5), textcoords="offset points",
-                        color=cfg.C_CHANCE, fontsize=8, style="italic",
-                        va="top", ha="right", zorder=6)
+            _axhline_both(random_cmse_nf, color=cfg.C_CHANCE, lw=1.5,
+                          ls=(0, (4, 3)), zorder=1)
+            ax_l.annotate("chance (P=0.5)",
+                          xy=(1.0, random_cmse_nf),
+                          xycoords=("axes fraction", "data"),
+                          xytext=(-4, -5), textcoords="offset points",
+                          color=cfg.C_CHANCE, fontsize=8, style="italic",
+                          va="top", ha="right", zorder=6)
 
-        # Full DLBT — red, same as 021
         ref_dlbt_val = ref_dlbt_mu_cmse if is_cmse else ref_dlbt_mu_rho
         if not np.isnan(ref_dlbt_val):
-            ax.axhline(ref_dlbt_val, color="#C0392B", lw=1.5, ls="--", zorder=2,
-                       label="Full DLBT (all tasks)")
+            _axhline_both(ref_dlbt_val, color="#C0392B", lw=1.5, ls="--",
+                          zorder=2, label="Full DLBT (all tasks)")
 
-        # Full SLDA — purple, same as 021
         ref_slda_val = ref_slda_mu_cmse if is_cmse else ref_slda_mu_rho
         if not np.isnan(ref_slda_val):
-            ax.axhline(ref_slda_val, color="#7D3C98", lw=1.5, ls="--", zorder=2,
-                       label="Full SLDA (all tasks)")
+            _axhline_both(ref_slda_val, color="#7D3C98", lw=1.5, ls="--",
+                          zorder=2, label="Full SLDA (all tasks)")
 
         if not is_cmse and not np.isnan(rho_nc):
-            ax.axhline(rho_nc, color="#555555", lw=1.5, ls=(0, (2, 2)), zorder=2)
-            ax.annotate("noise ceiling",
-                        xy=(1.0, rho_nc),
-                        xycoords=("axes fraction", "data"),
-                        xytext=(-4, 5), textcoords="offset points",
-                        color="#555555", fontsize=8, style="italic",
-                        va="bottom", ha="right", zorder=6)
+            _axhline_both(rho_nc, color="#555555", lw=1.5,
+                          ls=(0, (2, 2)), zorder=2)
+            ax_l.annotate("noise ceiling",
+                          xy=(1.0, rho_nc),
+                          xycoords=("axes fraction", "data"),
+                          xytext=(-4, 5), textcoords="offset points",
+                          color="#555555", fontsize=8, style="italic",
+                          va="bottom", ha="right", zorder=6)
 
-        # ── Bars ─────────────────────────────────────────────────────────────
-        for x_i, cond in enumerate(conditions):
+        # ── Bars — arity conditions on ax_l ──────────────────────────────────
+        for x_i, cond in enumerate(arity_conds):
             mu, sem = _mean_sem(data[cond])
             if np.isnan(mu):
                 continue
+            color = COND_COLOR.get(cond, "#888888")
+            ax_l.bar(x_i, mu, width=bar_w, color=color, alpha=0.88,
+                     zorder=3, linewidth=0.8, edgecolor="white")
+            ax_l.errorbar(x_i, mu, yerr=sem, fmt="none", color="#333333",
+                          capsize=5, capthick=1.4, elinewidth=1.4, zorder=5)
 
-            if cond == "random":
-                color = cfg.ARITY_COLOR["random"]
-            else:
-                color = cfg.ARITY_COLOR.get(int(cond[0]), "#888888")
+        # ── Bar — random on ax_r ──────────────────────────────────────────────
+        if ax_r is not None and "random" in data:
+            mu, sem = _mean_sem(data["random"])
+            if not np.isnan(mu):
+                color = COND_COLOR["random"]
+                ax_r.bar(0, mu, width=bar_w, color=color, alpha=0.88,
+                         zorder=3, linewidth=0.8, edgecolor="white")
+                ax_r.errorbar(0, mu, yerr=sem, fmt="none", color="#333333",
+                              capsize=5, capthick=1.4, elinewidth=1.4, zorder=5)
 
-            ax.bar(x_i, mu, width=bar_w,
-                   color=color, alpha=0.82, zorder=3,
-                   linewidth=0.8, edgecolor="white")
-            ax.errorbar(x_i, mu, yerr=sem,
-                        fmt="none", color="#333333",
-                        capsize=5, capthick=1.4,
-                        elinewidth=1.4, zorder=5)
+        # ── Broken-axis styling ───────────────────────────────────────────────
+        ax_l.spines["right"].set_visible(False)
+        sns.despine(ax=ax_l, top=True, right=True)
 
-        # ── Legend for reference lines ────────────────────────────────────────
-        leg_anchor = (0.01, 0.88) if is_cmse else (0.01, 1.00)
-        ax.legend(loc="upper left", bbox_to_anchor=leg_anchor,
-                  fontsize=8, frameon=False, handlelength=2.0)
+        if ax_r is not None:
+            ax_r.spines["left"].set_visible(False)
+            sns.despine(ax=ax_r, top=True, right=True, left=True)
+            ax_r.tick_params(left=False)
 
-        # ── Data-volume annotation (as axes title / subtitle) ─────────────────
-        ax.set_title(data_label, fontsize=8, color="#666666",
-                     style="italic", pad=6)
+            # Diagonal break marks — bottom only
+            d    = 0.022
+            bkw  = dict(color="k", clip_on=False, lw=1.2,
+                        transform=ax_l.transAxes)
+            ax_l.plot([1 - d, 1 + d], [-d, +d], **bkw)
+            bkw2 = dict(color="k", clip_on=False, lw=1.2,
+                        transform=ax_r.transAxes)
+            ax_r.plot([-d, +d], [-d, +d], **bkw2)
 
-        # ── X axis ───────────────────────────────────────────────────────────
-        ax.set_xticks(x_pos)
-        ax.set_xticklabels(x_labels, fontsize=10)
-        ax.set_xlabel("Training task type", fontsize=11, fontweight="bold")
-        ax.set_xlim(-0.6, len(conditions) - 0.4)
+        # ── X axes ───────────────────────────────────────────────────────────
+        ax_l.set_xticks(range(n_arity))
+        # Short numeric labels (1, 2, 3, 4) instead of "1-arity" etc.
+        ax_l.set_xticklabels([str(i + 1) for i in range(n_arity)], fontsize=10)
+        ax_l.set_xlim(-0.6, n_arity - 0.4)
+        # X-label centred under the arity bars only
+        ax_l.set_xlabel("Task complexity", fontsize=11, fontweight="bold")
+
+        if ax_r is not None:
+            ax_r.set_xticks([0])
+            ax_r.set_xticklabels(["random"], fontsize=10)
+            ax_r.set_xlim(-0.6, 0.6)
 
         # ── Y axis ───────────────────────────────────────────────────────────
         if is_cmse:
-            ax.set_ylabel("cMSE − noise floor\n(held-out tasks)",
-                          fontsize=11, fontweight="bold")
+            ax_l.set_ylabel("cMSE − noise floor\n(held-out tasks)",
+                            fontsize=11, fontweight="bold")
             if args.log_y:
-                ax.set_yscale("log")
+                ax_l.set_yscale("log")
             else:
-                ax.set_ylim(bottom=0)
+                ax_l.set_ylim(bottom=0)
         else:
-            ax.set_ylabel(r"Spearman $\rho$" + "\n(held-out tasks)",
-                          fontsize=11, fontweight="bold")
-            ax.set_ylim(-0.04, 1)
+            ax_l.set_ylabel(r"Spearman $\rho$" + "\n(held-out tasks)",
+                            fontsize=11, fontweight="bold")
+            ax_l.set_ylim(0, 1)
 
-        sns.despine(top=True, right=True)
+        # ── Legend & title ────────────────────────────────────────────────────
+        leg_anchor = (0.01, 0.88) if is_cmse else (0.01, 1.00)
+        ax_l.legend(loc="upper left", bbox_to_anchor=leg_anchor,
+                    fontsize=8, frameon=False, handlelength=2.0)
+
+        ax_l.set_title(data_label, fontsize=8, color="#666666",
+                       style="italic", pad=6)
+
         plt.tight_layout()
 
         tag = "cmse" if is_cmse else "rho"
