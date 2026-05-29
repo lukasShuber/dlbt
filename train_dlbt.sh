@@ -55,8 +55,8 @@ if not avail:
 # python experiments/behavior/run1/06_slda_finetuning/run.py
 # python experiments/behavior/run1/06_slda_finetuning/analysis.py
 
-# python experiments/behavior/run1/061_slda_finetuning_sweep/run.py
-# python experiments/behavior/run1/061_slda_finetuning_sweep/analysis.py
+python experiments/behavior/run1/061_slda_finetuning_sweep/run.py
+python experiments/behavior/run1/061_slda_finetuning_sweep/analysis.py
 
-python experiments/behavior/run1/07_task_generalization/run.py
-python experiments/behavior/run1/07_task_generalization/analysis.py
+# python experiments/behavior/run1/07_task_generalization/run.py
+# python experiments/behavior/run1/07_task_generalization/analysis.py
