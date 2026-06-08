@@ -139,7 +139,7 @@ def plot_highdim_cloud_boundaries(
     # Axes
     # ------------------------------------------------------------------
     axes = [
-        (np.array([0.0, 3.15]), r"$d_1$", (0.00, 0.28)),
+        (np.array([0.0, 2.55]), r"$d_1$", (0.00, 0.28)),
         (np.array([3.35, 0.0]), r"$d_2$", (0.28, 0.02)),
         (np.array([2.45, -0.55]), r"$d_3$", (0.28, -0.03)),
         (np.array([1.75, -0.95]), r"$d_4$", (0.22, -0.14)),
@@ -184,7 +184,7 @@ def plot_highdim_cloud_boundaries(
     fig.savefig(
         save_path,
         bbox_inches="tight",
-        dpi=400,
+        dpi=600,
     )
     plt.close(fig)
 

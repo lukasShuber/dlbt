@@ -1,23 +1,17 @@
 """
 visualizations/slda/dirichlet_surface_hyperplane.py
 
-Dirichlet PDF surface with one *or more* translucent decision-cut hyperplanes,
-rendered with a rotatable pseudo-3D camera.
+Dirichlet PDF surface with one *or more* translucent decision-cut hyperplanes.
 
-Geometry
---------
-The simplex lives on a horizontal floor (an equilateral triangle); the density
-is the vertical axis. A vertical rotation axis is placed at the *mean* of the
-distribution (Dirichlet mean = alpha / alpha.sum()). The ``azimuth`` knob spins
-the whole scene about that axis — because we project with an oblique camera that
-maps the vertical (density) axis straight up on screen, rotating only swings the
-floor around while density stays vertical.
+Each hyperplane is a constant-z2 cut at position ``z2c`` drawn as a vertical
+parallelogram. Multiple planes are supported via the ``planes`` argument; their
+default colours match the SLDA task panels (see slda_task_panels.py).
 
-Occlusion (front/back) is handled by keying every drawn quad's matplotlib
-*zorder* to its camera depth, so it stays correct at any azimuth and for any
-number of planes.
-
-Colours of the default planes match the SLDA task panels (slda_task_panels.py).
+Correct front/back occlusion with an arbitrary number of planes is handled by
+keying the matplotlib *zorder* of every surface strip and every plane to its
+depth (the z2 coordinate). Strips nearer the viewer (small z2) get a higher
+zorder than strips/planes farther back, so they paint on top — this interleaves
+surface and planes correctly no matter how many cuts are added.
 
 Run from repo root:
     python visualizations/slda/dirichlet_surface_hyperplane.py
@@ -34,7 +28,7 @@ os.makedirs(OUT_DIR, exist_ok=True)
 
 # ---------------------------------------------------------------------------
 # Default hyperplane styling — colours match the SLDA task panels
-# (Task 1 green, Task 2 purple, Task T orange)
+# (slda_task_panels.py: Task 1 green, Task 2 purple, Task T orange)
 # ---------------------------------------------------------------------------
 TASK_PLANE_COLORS = [
     dict(color="#5ab85a", edge="#3a9a3a"),   # Task 1
@@ -44,16 +38,12 @@ TASK_PLANE_COLORS = [
 
 # A plane is a dict: {"z2c": float, "color": str, "edge": str|None,
 #                     "alpha": float|None, "edge_alpha": float|None}
+# Only "z2c" and "color" are required; the rest fall back to globals.
 DEFAULT_PLANES = [
     dict(z2c=0.62, **TASK_PLANE_COLORS[0]),
     dict(z2c=0.44, **TASK_PLANE_COLORS[1]),
     dict(z2c=0.26, **TASK_PLANE_COLORS[2]),
 ]
-
-# zorder bookkeeping
-_Z_AXES = 1.0       # axis arrows / labels (behind the surface)
-_Z_BASE = 50.0      # surface/plane quads: zorder = _Z_BASE - depth
-_Z_DOTS = 200.0     # ellipsis dots (always on top)
 
 
 def _logpdf(bary: np.ndarray, alpha: np.ndarray) -> np.ndarray:
@@ -87,77 +77,61 @@ def soften_rgba(rgba, mix_with=(1, 1, 1), amount=0.0):
 
 
 # ---------------------------------------------------------------------------
-# Camera: rotate the simplex floor about a vertical axis at the mean, then
-# project with an oblique camera (density → straight up on screen).
+# zorder bookkeeping — everything is keyed on depth so N planes interleave.
 # ---------------------------------------------------------------------------
-def _make_camera(alpha, azimuth_deg=0.0, tilt=0.50, dens_scale=3.0,
-                 r_floor=2.2, base_angle_deg=90.0):
-    angs = np.radians(base_angle_deg + np.array([0.0, 120.0, 240.0]))
-    V = np.stack([r_floor * np.cos(angs), r_floor * np.sin(angs)], axis=1)  # (3,2)
+_Z_BASE = 2.0          # surface strips live in [_Z_BASE, _Z_BASE + 1]
+_Z_AXES = 1.0          # axis arrows / labels (behind the surface)
+_Z_DOTS = 12.0         # ellipsis dots (on top of everything)
 
-    mean_b = alpha / alpha.sum()
-    pivot = mean_b @ V                       # rotation axis foot (world floor xy)
 
-    th = np.radians(azimuth_deg)
-    c, s = np.cos(th), np.sin(th)
-    R = np.array([[c, -s], [s, c]])
+def _strip_zorder(z2v: float) -> float:
+    """Nearer strips (small z2) paint later → higher zorder."""
+    return _Z_BASE + (1.0 - z2v)
 
-    def project(bary, dens):
-        """bary: (M,3) barycentric, dens: (M,) density height.
-        Returns sx, sy (screen) and depth (camera depth, smaller = nearer)."""
-        w = np.asarray(bary) @ V                       # (M,2) world floor
-        wr = (w - pivot) @ R.T + pivot                 # rotate about pivot
-        sx = wr[:, 0]
-        depth = wr[:, 1]
-        sy = depth * tilt + np.asarray(dens) * dens_scale
-        return sx, sy, depth
 
-    return dict(project=project, V=V, pivot=pivot, R=R, tilt=tilt,
-                dens_scale=dens_scale)
+def _plane_zorder(z2c: float) -> float:
+    """A plane sits just *behind* the surface at its own depth (embedded look),
+    but in front of everything deeper than it."""
+    return _Z_BASE + (1.0 - z2c) - 0.05
 
 
 def plot_dirichlet_surface_hyperplane(
     save_path: str = "visualizations/slda/dirichlet_surface_hyperplane.png",
     alpha: np.ndarray | None = None,
     planes: list[dict] | None = None,
-    # ── camera knobs ──────────────────────────────────────────────
-    azimuth_deg: float = 35.0,
-    tilt: float = 0.50,
-    dens_scale: float = 3.0,
-    r_floor: float = 2.2,
-    base_angle_deg: float = 90.0,
-    # ── surface resolution ────────────────────────────────────────
     n_strips: int = 220,
     n_sub: int = 140,
-    d_scale: float = 1.0,
+    d_scale: float = 0.95,
     cmap_back: str = "YlOrRd",
     cmap_front: str = "YlOrRd",
-    # ── plane styling ─────────────────────────────────────────────
     plane_alpha: float = 0.24,
     plane_edge_alpha: float = 0.55,
-    plane_height: float = 1.15,
-    n_plane_seg: int = 60,
+    shade_split: float | None = None,
     front_alpha: float = 0.18,
     back_alpha: float = 0.085,
-    show_axes: bool = True,
 ):
     """
     Parameters
     ----------
-    azimuth_deg : float
-        Rotation about the vertical axis at the distribution mean (degrees).
-    tilt : float
-        Camera elevation foreshortening of the floor (0 = edge-on, 1 = top-down).
     planes : list of dict, optional
-        Each {z2c, color, edge?, alpha?, edge_alpha?}. Defaults to three
-        task-coloured cuts (DEFAULT_PLANES).
+        Each dict describes one hyperplane:
+            z2c        : position of the constant-z2 cut (required)
+            color      : fill colour (required)
+            edge       : outline colour (defaults to ``color``)
+            alpha      : fill alpha (defaults to ``plane_alpha``)
+            edge_alpha : outline alpha (defaults to ``plane_edge_alpha``)
+        Defaults to three task-coloured cuts (see DEFAULT_PLANES).
+    shade_split : float, optional
+        z2 boundary used purely for the front/back colour muting of the
+        surface. Defaults to the frontmost plane position so the single-plane
+        appearance is preserved.
     """
     if alpha is None:
         alpha = np.array([4.0, 4.0, 3.0])
-    alpha = np.asarray(alpha, dtype=float)
     if planes is None:
         planes = DEFAULT_PLANES
 
+    # Fill in per-plane style defaults
     planes = [
         dict(
             z2c=p["z2c"],
@@ -169,12 +143,14 @@ def plot_dirichlet_surface_hyperplane(
         for p in planes
     ]
 
-    cam = _make_camera(alpha, azimuth_deg, tilt, dens_scale, r_floor, base_angle_deg)
-    project = cam["project"]
-    pivot = cam["pivot"]
-    pivot_depth = pivot[1]   # rotation pivot is fixed under rotation → depth = pivot_y
+    if shade_split is None:
+        shade_split = min(p["z2c"] for p in planes) if planes else 0.38
 
-    # density normalisation
+    e_dens = np.array([0.00, 3.15])
+    e_z1 = np.array([3.35, 0.00])
+    e_z2 = np.array([-1.80, -1.20])
+    e_z3 = np.array([1.75, -0.95])
+
     t_g = np.linspace(0.005, 0.995, 100)
     g1, g2 = np.meshgrid(t_g, t_g)
     ok = (g1 + g2) <= 0.995
@@ -187,134 +163,147 @@ def plot_dirichlet_surface_hyperplane(
     fig, ax = plt.subplots(figsize=(5.2, 4.8))
     ax.set_aspect("equal")
     ax.axis("off")
+    origin = np.array([0.0, 0.0])
 
-    bounds = {"xmin": np.inf, "xmax": -np.inf, "ymin": np.inf, "ymax": -np.inf}
+    axes_spec = [
+        (e_dens, "density", (0.00, 0.30), 13, True),
+        (e_z1, r"$z_1$", (0.28, 0.02), 18, False),
+        (e_z3, r"$z_2$", (0.28, -0.12), 18, False),
+        (np.array([0.55, -1.25]), r"$z_3$", (0.25, -0.18), 18, False),
+        (np.array([-1.30, -0.80]), r"$z_K$", (-0.38, -0.10), 18, False),
+    ]
 
-    def _track(xs, ys):
-        bounds["xmin"] = min(bounds["xmin"], np.min(xs))
-        bounds["xmax"] = max(bounds["xmax"], np.max(xs))
-        bounds["ymin"] = min(bounds["ymin"], np.min(ys))
-        bounds["ymax"] = max(bounds["ymax"], np.max(ys))
+    for end, label, offset, fs, italic in axes_spec:
+        draw_arrow(ax, origin, end, color="black", lw=1.45, mutation_scale=13, zorder=_Z_AXES)
+        ax.text(
+            end[0] + offset[0],
+            end[1] + offset[1],
+            label,
+            fontsize=fs,
+            ha="center",
+            va="center",
+            zorder=_Z_AXES,
+            style="italic" if italic else "normal",
+        )
 
     # ------------------------------------------------------------------
-    # Surface — one quad ribbon per (z2 strip, z1 sub-interval).
-    # zorder per quad from its camera depth → correct at any azimuth.
+    # Build surface strips (one per z2 value)
     # ------------------------------------------------------------------
     z2_vals = np.linspace(0.005, 0.975, n_strips)
-    for z2v in z2_vals:
+    strips = []
+
+    for z2v in sorted(z2_vals, reverse=True):
         z1_max = 1.0 - z2v - 0.005
         if z1_max < 0.02:
             continue
+
         z1 = np.linspace(0.005, z1_max, n_sub + 1)
         z3 = 1.0 - z1 - z2v
         bary = np.column_stack([z1, np.full_like(z1, z2v), z3])
-        pdf = np.exp(_logpdf(bary, alpha) - lpdf_max) * d_scale
 
-        sx_t, sy_t, dep_t = project(bary, pdf)
-        sx_f, sy_f, dep_f = project(bary, np.zeros_like(pdf))
+        pdf = np.exp(_logpdf(bary, alpha) - lpdf_max)
+        dv = pdf * d_scale
+
+        sx_f = z1 * e_z1[0] + z2v * e_z2[0] + z3 * e_z3[0]
+        sy_f = z1 * e_z1[1] + z2v * e_z2[1] + z3 * e_z3[1]
+
+        sx = sx_f + dv * e_dens[0]
+        sy = sy_f + dv * e_dens[1]
+
+        strips.append((z2v, z1, z3, pdf, sx_f, sy_f, sx, sy))
+
+    # ------------------------------------------------------------------
+    # Draw surface strips — zorder keyed on depth so planes interleave.
+    # ------------------------------------------------------------------
+    for z2v, z1, z3, pdf, sx_f, sy_f, sx, sy in strips:
+        is_front = z2v < shade_split
+        cmap_fn = cmap_front_fn if is_front else cmap_back_fn
+        zq = _strip_zorder(z2v)
 
         for k in range(n_sub):
             avg_pdf = 0.5 * (pdf[k] + pdf[k + 1])
-            depth = 0.25 * (dep_t[k] + dep_t[k + 1] + dep_f[k] + dep_f[k + 1])
-            is_front = depth < pivot_depth
+            color = cmap_fn(avg_pdf)
 
-            cmap_fn = cmap_front_fn if is_front else cmap_back_fn
-            color = cmap_fn(min(avg_pdf, 1.0))
             if is_front:
                 color = soften_rgba(color, mix_with=(1.0, 0.40, 0.40), amount=0.11)
-                a_quad = front_alpha
+                alpha_quad = front_alpha
             else:
                 color = soften_rgba(color, mix_with=(1.0, 1.0, 1.0), amount=0.18)
-                a_quad = back_alpha
+                alpha_quad = back_alpha
 
-            px = [sx_t[k], sx_t[k + 1], sx_f[k + 1], sx_f[k]]
-            py = [sy_t[k], sy_t[k + 1], sy_f[k + 1], sy_f[k]]
-            _track(px, py)
-            ax.add_patch(MplPoly(list(zip(px, py)), facecolor=color,
-                                 edgecolor="none", linewidth=0, alpha=a_quad,
-                                 zorder=_Z_BASE - depth))
+            px = [sx[k], sx[k + 1], sx_f[k + 1], sx_f[k]]
+            py = [sy[k], sy[k + 1], sy_f[k + 1], sy_f[k]]
+
+            ax.add_patch(
+                MplPoly(
+                    list(zip(px, py)),
+                    facecolor=color,
+                    edgecolor="none",
+                    linewidth=0,
+                    alpha=alpha_quad,
+                    zorder=zq,
+                )
+            )
 
     # ------------------------------------------------------------------
-    # Hyperplanes — each a constant-z2 vertical sheet, segmented along z1
-    # so each segment z-orders independently against the surface.
+    # Draw each hyperplane as a full constant-z2 parallelogram.
+    # zorder places it at its own depth between the surrounding strips.
     # ------------------------------------------------------------------
     t_lo, t_hi = -0.45, 1.15
+    h = d_scale * e_dens * 1.15
+
+    def _floor_pt(z1v, z2c):
+        z3v = 1.0 - z1v - z2c
+        return np.array(
+            [
+                z1v * e_z1[0] + z2c * e_z2[0] + z3v * e_z3[0],
+                z1v * e_z1[1] + z2c * e_z2[1] + z3v * e_z3[1],
+            ]
+        )
+
     for p in planes:
         z2c = p["z2c"]
-        t = np.linspace(t_lo, t_hi, n_plane_seg + 1)
-        z3 = 1.0 - t - z2c
-        bary = np.column_stack([t, np.full_like(t, z2c), z3])
-        sx_t, sy_t, dep_t = project(bary, np.full_like(t, plane_height))
-        sx_b, sy_b, dep_b = project(bary, np.zeros_like(t))
+        p_bl = _floor_pt(t_lo, z2c)
+        p_br = _floor_pt(t_hi, z2c)
+        plane_pts = [p_bl, p_br, p_br + h, p_bl + h]
+        zp = _plane_zorder(z2c)
 
-        for k in range(n_plane_seg):
-            depth = 0.25 * (dep_t[k] + dep_t[k + 1] + dep_b[k] + dep_b[k + 1])
-            px = [sx_b[k], sx_b[k + 1], sx_t[k + 1], sx_t[k]]
-            py = [sy_b[k], sy_b[k + 1], sy_t[k + 1], sy_t[k]]
-            _track(px, py)
-            ax.add_patch(MplPoly(list(zip(px, py)), facecolor=p["color"],
-                                 edgecolor="none", alpha=p["alpha"],
-                                 zorder=_Z_BASE - depth - 0.02))
+        ax.add_patch(
+            MplPoly(
+                plane_pts,
+                facecolor=p["color"],
+                edgecolor="none",
+                alpha=p["alpha"],
+                zorder=zp,
+            )
+        )
+        ax.add_patch(
+            MplPoly(
+                plane_pts,
+                facecolor="none",
+                edgecolor=p["edge"],
+                linewidth=1.0,
+                alpha=p["edge_alpha"],
+                zorder=zp + 0.01,
+            )
+        )
 
-        # outline (single border at the sheet's mean depth)
-        depth_mean = 0.5 * (dep_t.mean() + dep_b.mean())
-        outline = [(sx_b[0], sy_b[0]), (sx_b[-1], sy_b[-1]),
-                   (sx_t[-1], sy_t[-1]), (sx_t[0], sy_t[0])]
-        ax.add_patch(MplPoly(outline, facecolor="none", edgecolor=p["edge"],
-                             linewidth=1.0, alpha=p["edge_alpha"],
-                             zorder=_Z_BASE - depth_mean + 0.01))
+    # Ellipsis dots — on top of everything
+    ax.scatter(
+        [-0.05, -0.20, -0.35],
+        [-1.38, -1.38, -1.38],
+        s=15,
+        color="black",
+        zorder=_Z_DOTS,
+    )
 
-    # ------------------------------------------------------------------
-    # Axis frame — z1/z2/z3 to the simplex vertices + vertical density axis,
-    # all emanating from the back-most simplex vertex (so density rises behind
-    # the surface, as in the original look). Rotates with the scene.
-    # ------------------------------------------------------------------
-    if show_axes:
-        V = cam["V"]
-        verts_b = np.eye(3)                       # z1, z2, z3 unit corners
-        vx, vy, vdep = project(verts_b, np.zeros(3))
-        back = int(np.argmax(vdep))               # farthest vertex = origin
-        o = np.array([vx[back], vy[back]])
-
-        labels = {0: r"$z_1$", 1: r"$z_2$", 2: r"$z_3$"}
-        for j in range(3):
-            if j == back:
-                continue
-            end = np.array([vx[j], vy[j]])
-            d = end - o
-            end = o + d * 1.12                     # slight overshoot for arrowhead
-            draw_arrow(ax, o, end, color="black", lw=1.45, mutation_scale=13,
-                       zorder=_Z_AXES)
-            lab = o + d * 1.22
-            ax.text(lab[0], lab[1], labels[j], fontsize=18, ha="center",
-                    va="center", zorder=_Z_AXES)
-            _track([end[0], lab[0]], [end[1], lab[1]])
-
-        # vertical density axis from the back vertex
-        dens_top = o + np.array([0.0, cam["dens_scale"] * (plane_height + 0.15)])
-        draw_arrow(ax, o, dens_top, color="black", lw=1.45, mutation_scale=13,
-                   zorder=_Z_AXES)
-        ax.text(dens_top[0], dens_top[1] + 0.18, "density", fontsize=13,
-                ha="center", va="center", style="italic", zorder=_Z_AXES)
-        _track([dens_top[0]], [dens_top[1] + 0.3])
-
-        # decorative "...  z_K" hint near the back vertex
-        ax.scatter(o[0] + np.array([-0.18, -0.33, -0.48]),
-                   o[1] + np.array([-0.30, -0.30, -0.30]),
-                   s=15, color="black", zorder=_Z_DOTS)
-        ax.text(o[0] - 0.70, o[1] - 0.30, r"$z_K$", fontsize=18,
-                ha="center", va="center", zorder=_Z_AXES)
-
-    # ------------------------------------------------------------------
-    # Limits
-    # ------------------------------------------------------------------
-    mx = 0.35
-    ax.set_xlim(bounds["xmin"] - mx, bounds["xmax"] + mx)
-    ax.set_ylim(bounds["ymin"] - mx, bounds["ymax"] + mx)
+    ax.set_xlim(-2.55, 4.05)
+    ax.set_ylim(-1.85, 3.65)
 
     fig.savefig(save_path, bbox_inches="tight", dpi=400)
     plt.close(fig)
-    print(f"Saved → {save_path}  ({len(planes)} plane(s), azimuth={azimuth_deg}°)")
+
+    print(f"Saved → {save_path}  ({len(planes)} plane(s))")
 
 
 if __name__ == "__main__":
