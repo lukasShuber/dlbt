@@ -66,8 +66,8 @@ FAST_PASS = True
 # ---------------------------------------------------------------------------
 # Encoder freeze flags
 # ---------------------------------------------------------------------------
-FREEZE_ENCODER_DLBT = True    # True → frozen CLIP, mapper only
-FREEZE_ENCODER_SLDA = True    # True → frozen CLIP, logistic regression only
+FREEZE_ENCODER_DLBT = False    # True → frozen CLIP, mapper only
+FREEZE_ENCODER_SLDA = False    # True → frozen CLIP, logistic regression only
 
 # ---------------------------------------------------------------------------
 # Training — DLBT
