@@ -45,7 +45,11 @@ if not avail:
     raise SystemExit('ERROR: CUDA not available — aborting job to avoid silent CPU fallback.')
 "
 
-# Run7
+# Run
+
+python experiments/behavior/run2/01_efficiency_main/run.py
+python experiments/behavior/run2/01_efficiency_main/analysis.py
+
 # python experiments/behavior/run1/021_efficiency_main/run.py
 # python experiments/behavior/run1/021_efficiency_main/analysis.py
 
@@ -58,5 +62,5 @@ if not avail:
 # python experiments/behavior/run1/061_slda_finetuning_sweep/run.py
 # python experiments/behavior/run1/061_slda_finetuning_sweep/analysis.py
 
-python experiments/behavior/run1/07_task_generalization/run.py
-python experiments/behavior/run1/07_task_generalization/analysis.py
+# python experiments/behavior/run1/07_task_generalization/run.py
+# python experiments/behavior/run1/07_task_generalization/analysis.py

@@ -31,8 +31,10 @@ from pathlib import Path
 warnings.filterwarnings("ignore")
 
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 import numpy as np
 import seaborn as sns
+import torch
 from scipy.stats import spearmanr as _spearmanr
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -124,6 +126,220 @@ def _rho_nc_from_counts(true_mat, count_mat, n_splits=200, seed=0):
         if not np.isnan(rh) and rh > -1:
             vals.append((2 * rh) / (1 + rh))
     return float(np.mean(vals)) if vals else float("nan")
+
+
+# ---------------------------------------------------------------------------
+# Scatter-plot helpers: predicted vs. empirical, from saved checkpoints
+# ---------------------------------------------------------------------------
+
+_REPO_ROOT = Path(__file__).parents[4]   # …/run1/021_efficiency_main → repo root
+
+
+def _task_arity(name: str) -> int:
+    return name.count("_and_") + 1
+
+
+def _try_load_pred_matrices(pkl_path: Path, d: dict):
+    """
+    Load saved all-data DLBT and SLDA checkpoints, reconstruct probe-matrix
+    predictions, and return their seed-averaged means.
+
+    Returns (dlbt_mean, slda_mean) — each [n_probe × n_tasks] or None.
+    """
+    models_dir = cfg.RESULTS_DIR / "models" / pkl_path.stem
+    if not models_dir.exists():
+        print(f"  [scatter] no models dir '{models_dir.name}' — skipping")
+        return None, None
+
+    seeds              = d["seeds"]
+    all_tasks_ordered  = d["all_tasks_ordered"]
+    probe_uids_ordered = d["probe_uids_ordered"]
+    uid_to_row         = {uid: i for i, uid in enumerate(probe_uids_ordered)}
+    n_probe            = len(probe_uids_ordered)
+    n_tasks            = len(all_tasks_ordered)
+
+    first_dlbt = models_dir / f"seed{seeds[0]}_all_dlbt.pt"
+    first_slda = models_dir / f"seed{seeds[0]}_all_slda.pkl"
+    if not first_dlbt.exists():
+        print(f"  [scatter] {first_dlbt.name} not found — skipping")
+        return None, None
+
+    # Peek to detect whether attnpool was fine-tuned
+    ck0 = torch.load(first_dlbt, map_location="cpu", weights_only=False)
+    has_attnpool_dlbt = ("attnpool_state_dict" in ck0
+                         and ck0["attnpool_state_dict"] is not None)
+    del ck0
+    has_attnpool_slda = False
+    if first_slda.exists():
+        with open(first_slda, "rb") as fh:
+            art0 = pickle.load(fh)
+        has_attnpool_slda = art0.get("attnpool_state_dict") is not None
+        del art0
+
+    try:
+        from dlbt.agents.dlbt import DlbtAgent as _DLBT
+        from dlbt.agents.slda import SldaAgent as _SLDA
+        from dlbt.data.image_ref import load_image_refs as _lir, image_refs_as_list as _iral
+        from dlbt.data.task import get_task as _get_task
+        from dlbt.training.train_slda import slda_probe_matrix as _slda_pm
+    except ImportError as exc:
+        print(f"  [scatter] dlbt import failed ({exc}) — skipping")
+        return None, None
+
+    _dev    = torch.device("cpu")
+    by_uid  = {r.uid: r for r in _iral(_lir(_REPO_ROOT / cfg.METADATA))}
+    p_refs  = [by_uid[uid] for uid in probe_uids_ordered if uid in by_uid]
+
+    # ── Shared backbone features (frozen backbone — same for both models) ──
+    backbone_cache: dict = {}
+    frozen_clip:    dict = {}
+    needs_backbone = has_attnpool_dlbt or has_attnpool_slda
+
+    if needs_backbone:
+        print(f"  [scatter] computing backbone features for {len(p_refs)} probe images…")
+        _tmp = _DLBT(freeze_encoder=False, n_mc_samples=1, device=_dev,
+                     normalize_utility=cfg.NORMALIZED_UTILITY)
+        _tmp.precompute_backbone_features(p_refs)
+        backbone_cache = dict(_tmp._backbone_cache)
+        del _tmp
+
+    if not has_attnpool_dlbt or not has_attnpool_slda:
+        cache_p = _REPO_ROOT / cfg.CACHE_PATH
+        if cache_p.exists():
+            frozen_clip = torch.load(str(cache_p), map_location="cpu")
+
+    def _attnpool_feats(module, refs):
+        """Apply an attnpool module to cached backbone maps → {uid: tensor}."""
+        spatial = torch.stack([backbone_cache[r.uid] for r in refs]).to(_dev)
+        with torch.no_grad():
+            out = module(spatial).float()
+        return {r.uid: out[i].cpu() for i, r in enumerate(refs)}
+
+    # ── DLBT: one prediction matrix per seed ─────────────────────────────
+    dlbt_preds = []
+    for seed in seeds:
+        ckpt_p = models_dir / f"seed{seed}_all_dlbt.pt"
+        if not ckpt_p.exists():
+            continue
+        ckpt = torch.load(ckpt_p, map_location="cpu", weights_only=False)
+
+        if ckpt["used_base"]:
+            dlbt_preds.append(np.full((n_probe, n_tasks), 0.5))
+            continue
+
+        agent = _DLBT(freeze_encoder=True, n_mc_samples=cfg.N_MC, device=_dev,
+                      normalize_utility=cfg.NORMALIZED_UTILITY)
+        agent.mapper.load_state_dict(ckpt["mapper_state_dict"])
+
+        if has_attnpool_dlbt:
+            agent.encoder.attnpool.load_state_dict(ckpt["attnpool_state_dict"])
+            agent._cache = _attnpool_feats(agent.encoder.attnpool, p_refs)
+        else:
+            agent._cache = {uid: frozen_clip[uid].clone()
+                            for uid in probe_uids_ordered if uid in frozen_clip}
+
+        agent.eval()
+        pred = np.full((n_probe, n_tasks), np.nan)
+        with torch.no_grad():
+            for j, tn in enumerate(all_tasks_ordered):
+                pred[:, j] = agent.choice_probs(p_refs, _get_task(tn))[:, 1].cpu().numpy()
+        dlbt_preds.append(pred)
+        del agent
+
+    # ── SLDA: one prediction matrix per seed ─────────────────────────────
+    slda_preds = []
+    for seed in seeds:
+        ckpt_p = models_dir / f"seed{seed}_all_slda.pkl"
+        if not ckpt_p.exists():
+            continue
+        with open(ckpt_p, "rb") as fh:
+            art = pickle.load(fh)
+
+        ap_sd = art.get("attnpool_state_dict")
+        if has_attnpool_slda and ap_sd is not None:
+            slda_tmp = _SLDA(freeze_encoder=False, device=_dev)
+            slda_tmp.encoder.attnpool.load_state_dict(ap_sd)
+            probe_feats = {uid: t.numpy()
+                           for uid, t in _attnpool_feats(
+                               slda_tmp.encoder.attnpool, p_refs).items()}
+            del slda_tmp
+        else:
+            probe_feats = {uid: frozen_clip[uid].numpy()
+                           for uid in probe_uids_ordered if uid in frozen_clip}
+
+        pred = _slda_pm(art["scalers"], art["models"], art["use_base"],
+                        probe_feats, all_tasks_ordered, uid_to_row, n_probe)
+        slda_preds.append(pred)
+
+    print(f"  [scatter] loaded {len(dlbt_preds)} DLBT seeds, {len(slda_preds)} SLDA seeds")
+
+    dlbt_mean = np.nanmean(np.array(dlbt_preds), axis=0) if dlbt_preds else None
+    slda_mean = np.nanmean(np.array(slda_preds), axis=0) if slda_preds else None
+    return dlbt_mean, slda_mean
+
+
+def _make_scatter(d: dict, pred_dlbt, pred_slda, plots_dir: Path):
+    """
+    Two-panel scatter (DLBT | SLDA): predicted vs. empirical P(right) for
+    every valid probe × task pair, coloured by task arity.
+    """
+    true_matrix       = d["true_matrix"]
+    all_tasks         = d["all_tasks_ordered"]
+    probe_noise_floor = d["probe_noise_floor"]
+
+    arities   = np.array([_task_arity(t) for t in all_tasks])
+    ar_vals   = sorted(set(arities))
+    AR_COLOR  = getattr(cfg, "ARITY_COLOR",
+                        {1: "#2a6fb5", 2: "#43AA8B", 3: "#E76F51", 4: "#9B5DE5"})
+
+    model_list = [(nm, pr, col) for nm, pr, col in [
+        ("DLBT", pred_dlbt, cfg.C_DLBT),
+        ("SLDA", pred_slda, cfg.C_SLDA),
+    ] if pr is not None]
+    if not model_list:
+        return
+
+    ncols      = len(model_list)
+    fig, axes  = plt.subplots(1, ncols, figsize=(4.2 * ncols, 4.2))
+    if ncols == 1:
+        axes = [axes]
+
+    for ax, (name, pred, line_col) in zip(axes, model_list):
+        row_i, col_i = np.where(~np.isnan(pred) & ~np.isnan(true_matrix))
+        x = pred[row_i, col_i]
+        y = true_matrix[row_i, col_i]
+        task_ar = arities[col_i]
+
+        for ar in ar_vals:
+            m = task_ar == ar
+            ax.scatter(x[m], y[m], s=3, alpha=0.30, linewidths=0,
+                       color=AR_COLOR.get(ar, "#888"),
+                       rasterized=True, zorder=3)
+
+        ax.plot([0, 1], [0, 1], color="#bbbbbb", lw=1.0, ls="--", zorder=2)
+
+        rho, _ = _spearmanr(x, y)
+        cmse   = float(np.mean((x - y) ** 2)) - probe_noise_floor
+
+        ax.set_xlim(0, 1); ax.set_ylim(0, 1)
+        ax.set_xlabel("Predicted P(right)", fontsize=10, fontweight="bold")
+        ax.set_ylabel("Empirical P(right)", fontsize=10, fontweight="bold")
+        ax.set_title(name, fontsize=11, fontweight="bold", color=line_col)
+        ax.text(0.04, 0.96,
+                f"ρ = {rho:.3f}\ncMSE−NF = {cmse:.4f}",
+                transform=ax.transAxes, fontsize=8.5,
+                va="top", ha="left", color="#333333")
+        sns.despine(ax=ax, top=True, right=True)
+
+    handles = [mpatches.Patch(color=AR_COLOR[a], label=f"{a}-way") for a in ar_vals]
+    axes[0].legend(handles=handles, fontsize=7, frameon=False,
+                   loc="lower right", title="arity", title_fontsize=7)
+
+    plt.tight_layout()
+    out = plots_dir / "plot_scatter.png"
+    fig.savefig(out, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {out.relative_to(cfg.RESULTS_DIR)}")
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +476,10 @@ def process_pkl(pkl_path: Path):
 
     _make_figure("cmse")
     _make_figure("rho")
+
+    # ── Scatter: predicted vs. empirical (all-data / full model) ─────────────
+    pred_dlbt, pred_slda = _try_load_pred_matrices(pkl_path, d)
+    _make_scatter(d, pred_dlbt, pred_slda, plots_dir)
 
     # ── Summary table ────────────────────────────────────────────────────────
     print()
