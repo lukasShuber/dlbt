@@ -15,6 +15,7 @@ analyses_legacy/
 **/*.png
 **/*.jpg
 **/*.jpeg
+**/*.svg
 
 # CLIP feature cache
 **/*.pt
