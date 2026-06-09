@@ -19,6 +19,9 @@ analyses_legacy/
 # CLIP feature cache
 **/*.pt
 
+# PKL files
+**/*.pkl
+
 # Python
 __pycache__/
 **/__pycache__/

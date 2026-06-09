@@ -1,11 +1,12 @@
 """
 visualizations/slda/slda_task_panels.py — per-task decision-boundary panels.
 
-For each task produces a small figure with:
-  • top    : styled box with 3D-style point cloud + one translucent hyperplane
-  • bottom : logistic sigmoid curve
+For each task the hyperplane panel and the sigmoid are saved as *separate*
+figures:
+  • task_hyperplane_<tag>.png : styled box with 3D-style cloud + one hyperplane
+  • task_sigmoid_<tag>.png     : logistic sigmoid curve
 
-Colors match the three planes in slda_visuals.py.
+Colors match the planes in slda_visuals.py.
 
 Run from repo root:
     python visualizations/slda/slda_task_panels.py
@@ -31,11 +32,11 @@ _CLOUD_X = _rng_cloud.multivariate_normal(
 )
 
 # ---------------------------------------------------------------------------
-# Axis arrows — same geometry as slda_visuals.py
+# Axis arrows — same geometry as slda_visuals.py (d_1 shortened, cf. feature_space.py)
 # ---------------------------------------------------------------------------
 _ORIGIN = np.array([0.0, 0.0])
 _AXES = [
-    (np.array([0.0,  3.15]), r"$d_1$",     ( 0.00,  0.28)),
+    (np.array([0.0,  2.55]), r"$d_1$",     ( 0.00,  0.28)),
     (np.array([3.35, 0.0 ]), r"$d_2$",     ( 0.28,  0.02)),
     (np.array([2.45,-0.55]), r"$d_3$",     ( 0.28, -0.03)),
     (np.array([1.75,-0.95]), r"$d_4$",     ( 0.22, -0.14)),
@@ -56,13 +57,31 @@ _PLANES = {
 }
 
 # ---------------------------------------------------------------------------
-# Task definitions — colors match the planes in slda_visuals.py
+# Task definitions — colors match the planes in slda_visuals.py.
+# Each sigmoid is  p(z) = lo + (hi - lo) / (1 + exp(-k * (z - x0)))
+#   k  : steepness        x0 : horizontal offset (decision threshold)
+#   lo : lower asymptote  hi : upper asymptote
+# The three are made deliberately distinct (offset / bias / clipped range).
 # ---------------------------------------------------------------------------
 TASKS = [
-    dict(name="Task 1", color="#5ab85a", edge="#3a9a3a", k=0.8,  seed=42),
-    dict(name="Task 2", color="#9b7fbf", edge="#7a5eaa", k=2.5,  seed=43),
-    dict(name="Task T", color="#f5a050", edge="#d07830", k=1.4,  seed=44),
+    # gentle slope, shifted left, full 0→1 range
+    dict(name="Task 1", color="#5ab85a", edge="#3a9a3a",
+         k=0.9, x0=-1.4, lo=0.00, hi=1.00, seed=42),
+    # steep, shifted right, full 0→1 range
+    dict(name="Task 2", color="#9b7fbf", edge="#7a5eaa",
+         k=2.6, x0=1.5,  lo=0.00, hi=1.00, seed=43),
+    # medium slope, centred, compressed range (never reaches 0 or 1)
+    dict(name="Task T", color="#f5a050", edge="#d07830",
+         k=1.5, x0=0.2,  lo=0.14, hi=0.86, seed=44),
 ]
+
+
+def _save(fig, stem):
+    """Save a figure as both PNG and SVG under OUT_DIR."""
+    for ext in ("png", "svg"):
+        out = os.path.join(OUT_DIR, f"{stem}.{ext}")
+        fig.savefig(out, dpi=600, bbox_inches="tight", facecolor="white")
+        print(f"Saved → {out}")
 
 
 def _draw_arrow(ax, start, end, color="black", lw=1.1, mutation_scale=7):
@@ -77,31 +96,30 @@ def _draw_arrow(ax, start, end, color="black", lw=1.1, mutation_scale=7):
     )
 
 
-def make_panel(name, color, edge, k, seed):
-    fig = plt.figure(figsize=(2.0, 3.8))
+# ---------------------------------------------------------------------------
+# Hyperplane panel (cloud + one translucent slicing plane)
+# ---------------------------------------------------------------------------
+def make_hyperplane_panel(name, color, edge, **_):
+    fig, ax_s = plt.subplots(figsize=(2.2, 2.2))
+    fig.subplots_adjust(left=0.04, right=0.96, top=0.96, bottom=0.04)
 
-    ax_s = fig.add_axes([0.08, 0.50, 0.86, 0.42])
-    ax_g = fig.add_axes([0.18, 0.07, 0.70, 0.32])
-
-    # ── 3D-style point cloud + hyperplane ────────────────────────────
     ax_s.set_aspect("equal")
     ax_s.set_xticks([])
     ax_s.set_yticks([])
 
-    # Point cloud (half of 1200 = 600 points, larger markers)
+    # Point cloud (half of 1200 = 600 points)
     ax_s.scatter(
         _CLOUD_X[:600, 0], _CLOUD_X[:600, 1],
         s=26, color="0.35", alpha=0.17, linewidths=0, zorder=3,
     )
 
     # Translucent hyperplane for this task only
-    patch = Polygon(
+    ax_s.add_patch(Polygon(
         _PLANES[name], closed=True,
         facecolor=color, edgecolor=edge,
         alpha=0.30, linewidth=1.1,
         joinstyle="round", zorder=2,
-    )
-    ax_s.add_patch(patch)
+    ))
 
     # Axis arrows + labels
     for end, label, offset in _AXES:
@@ -118,7 +136,7 @@ def make_panel(name, color, edge, k, seed):
     ax_s.set_xlim(-2.55, 4.05)
     ax_s.set_ylim(-1.85, 3.65)
 
-    # Styled border box with rounded corners
+    # Styled border box with rounded corners (no title)
     for sp in ax_s.spines.values():
         sp.set_visible(False)
     ax_s.set_facecolor("none")
@@ -132,21 +150,32 @@ def make_panel(name, color, edge, k, seed):
         clip_on=False,
         zorder=0,
     ))
-    ax_s.set_title(name, color=edge, fontsize=11, fontweight="bold", pad=6)
 
-    # ── Sigmoid — steepness k varies per task ────────────────────────
+    tag = name.replace(" ", "_").lower()
+    _save(fig, f"task_hyperplane_{tag}")
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# Sigmoid panel (offset + bias + optional clipped range)
+# ---------------------------------------------------------------------------
+def make_sigmoid_panel(name, color, edge, k, x0=0.0, lo=0.0, hi=1.0, **_):
+    fig, ax_g = plt.subplots(figsize=(2.2, 1.5))
+    fig.subplots_adjust(left=0.16, right=0.94, top=0.90, bottom=0.10)
+
     z = np.linspace(-4.5, 4.5, 400)
-    p = 1.0 / (1.0 + np.exp(-k * z))
+    p = lo + (hi - lo) / (1.0 + np.exp(-k * (z - x0)))
 
-    ax_g.plot(z, p, color=color, lw=2.0)
-    ax_g.axvline(0, color="0.55", lw=0.8, ls="--")
+    ax_g.plot(z, p, color=color, lw=2.0, zorder=4)
+    # decision threshold (sigmoid midpoint) sits at x0
+    ax_g.axvline(x0, color="0.55", lw=0.8, ls="--", zorder=2)
 
     ax_g.set_xlim(-4.5, 4.5)
     ax_g.set_ylim(-0.05, 1.05)
     ax_g.set_xticks([])
     ax_g.set_yticks([])
 
-    # Schematic y-axis arrow with just 0/1 labels
+    # Schematic y-axis arrow with 0/1 reference labels
     ax_g.annotate("", xy=(0, 1.08), xytext=(0, -0.08),
                   xycoords=("axes fraction", "data"),
                   textcoords=("axes fraction", "data"),
@@ -168,14 +197,12 @@ def make_panel(name, color, edge, k, seed):
 
     sns.despine(ax=ax_g, top=True, right=True, bottom=True, left=True)
 
-    # ── Save ─────────────────────────────────────────────────────────
     tag = name.replace(" ", "_").lower()
-    out = os.path.join(OUT_DIR, f"task_panel_{tag}.png")
-    fig.savefig(out, dpi=300, bbox_inches="tight", facecolor="white")
+    _save(fig, f"task_sigmoid_{tag}")
     plt.close(fig)
-    print(f"Saved → {out}")
 
 
 if __name__ == "__main__":
     for task in TASKS:
-        make_panel(**task)
+        make_hyperplane_panel(**task)
+        make_sigmoid_panel(**task)

@@ -590,6 +590,7 @@ slda_all_cmse = np.full(n_seeds, np.nan)
 slda_all_rho  = np.full(n_seeds, np.nan)
 anti_all_cmse = np.full(n_seeds, np.nan)
 anti_all_rho  = np.full(n_seeds, np.nan)
+anti_all_pred_matrices: list[np.ndarray] = []   # [n_probe × n_tasks] per seed
 
 for s_i, seed_val in enumerate(cfg.SEEDS):
     print(f"\n{'='*60}")
@@ -662,9 +663,10 @@ for s_i, seed_val in enumerate(cfg.SEEDS):
     chosen_aa = _run_dlbt(agent_aa, all_tr_a, eval_ds_anti_global)
     pred_aa   = _dlbt_probe_matrix(chosen_aa)
     anti_all_cmse[s_i], anti_all_rho[s_i] = _probe_stats(pred_aa)
+    anti_all_pred_matrices.append(pred_aa)
     print(f"    Anti all  cMSE−NF={anti_all_cmse[s_i]:+.5f}  ρ={anti_all_rho[s_i]:.3f}"
           f"  (base={'yes' if chosen_aa is base_agent else 'no'})")
-    del agent_aa, chosen_aa, all_tr_a, pred_aa
+    del agent_aa, chosen_aa, all_tr_a
     gc.collect(); torch.cuda.empty_cache()
 
 # ---------------------------------------------------------------------------
@@ -697,6 +699,7 @@ summary = {
     "slda_all_rho":        slda_all_rho,
     "anti_all_cmse":       anti_all_cmse,
     "anti_all_rho":        anti_all_rho,
+    "anti_all_pred_matrices": anti_all_pred_matrices,
 }
 
 out_path = cfg.RESULTS_DIR / f"{cfg.RUN_TAG}.pkl"

@@ -31,7 +31,6 @@ from pathlib import Path
 warnings.filterwarnings("ignore")
 
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 import numpy as np
 import seaborn as sns
 import torch
@@ -141,10 +140,15 @@ def _task_arity(name: str) -> int:
 
 def _try_load_pred_matrices(pkl_path: Path, d: dict):
     """
-    Load saved all-data DLBT and SLDA checkpoints, reconstruct probe-matrix
-    predictions, and return their seed-averaged means.
+    Load saved all-data DLBT and SLDA checkpoints, reconstruct per-seed
+    probe-matrix predictions.
 
-    Returns (dlbt_mean, slda_mean) — each [n_probe × n_tasks] or None.
+    Because each seed may have a different fine-tuned attnpool, backbone spatial
+    maps are computed once (shared — the ResNet trunk is frozen) and each seed's
+    attnpool weights are applied individually, giving genuinely per-seed features.
+
+    Returns (dlbt_preds, slda_preds) — each a list of [n_probe × n_tasks]
+    arrays (one per seed), or None if checkpoints are unavailable.
     """
     models_dir = cfg.RESULTS_DIR / "models" / pkl_path.stem
     if not models_dir.exists():
@@ -186,37 +190,64 @@ def _try_load_pred_matrices(pkl_path: Path, d: dict):
         print(f"  [scatter] dlbt import failed ({exc}) — skipping")
         return None, None
 
-    _dev    = torch.device("cpu")
-    by_uid  = {r.uid: r for r in _iral(_lir(_REPO_ROOT / cfg.METADATA))}
-    p_refs  = [by_uid[uid] for uid in probe_uids_ordered if uid in by_uid]
+    _dev   = torch.device("cpu")
+    by_uid = {r.uid: r for r in _iral(_lir(_REPO_ROOT / cfg.METADATA))}
+    p_refs = [by_uid[uid] for uid in probe_uids_ordered if uid in by_uid]
 
-    # ── Shared backbone features (frozen backbone — same for both models) ──
-    backbone_cache: dict = {}
-    frozen_clip:    dict = {}
-    needs_backbone = has_attnpool_dlbt or has_attnpool_slda
+    # ── Pre-attnpool backbone maps (ResNet trunk is frozen → identical across
+    #    seeds; each seed's attnpool transforms them differently).
+    #
+    #    DLBT backbone: computed in EVAL mode — matches run.py which calls
+    #      agent.eval() at line 492 BEFORE precompute_backbone_features().
+    #    SLDA backbone: computed in TRAINING mode — run.py has no explicit
+    #      eval() before the SLDA precompute_backbone_features() call (line 569),
+    #      so training-mode BatchNorm statistics are used in both training and here.
+    # ─────────────────────────────────────────────────────────────────────────
+    dlbt_backbone_cache: dict = {}
+    slda_backbone_cache: dict = {}
+    frozen_clip:         dict = {}
 
-    if needs_backbone:
-        print(f"  [scatter] computing backbone features for {len(p_refs)} probe images…")
-        _tmp = _DLBT(freeze_encoder=False, n_mc_samples=1, device=_dev,
-                     normalize_utility=cfg.NORMALIZED_UTILITY)
-        _tmp.precompute_backbone_features(p_refs)
-        backbone_cache = dict(_tmp._backbone_cache)
-        del _tmp
+    if has_attnpool_dlbt:
+        print(f"  [scatter] computing DLBT backbone maps (eval mode) "
+              f"for {len(p_refs)} probe images…")
+        _tmp_dlbt = _DLBT(freeze_encoder=False, n_mc_samples=1, device=_dev,
+                          normalize_utility=cfg.NORMALIZED_UTILITY)
+        _tmp_dlbt.eval()   # CRITICAL: matches run.py agent.eval() before backbone
+        _tmp_dlbt.precompute_backbone_features(p_refs)
+        dlbt_backbone_cache = dict(_tmp_dlbt._backbone_cache)
+        del _tmp_dlbt
+
+    if has_attnpool_slda:
+        print(f"  [scatter] computing SLDA backbone maps (training mode) "
+              f"for {len(p_refs)} probe images…")
+        _tmp_slda = _DLBT(freeze_encoder=False, n_mc_samples=1, device=_dev,
+                          normalize_utility=cfg.NORMALIZED_UTILITY)
+        # No .eval() — training mode matches run.py SLDA backbone precomputation
+        _tmp_slda.precompute_backbone_features(p_refs)
+        slda_backbone_cache = dict(_tmp_slda._backbone_cache)
+        del _tmp_slda
 
     if not has_attnpool_dlbt or not has_attnpool_slda:
         cache_p = _REPO_ROOT / cfg.CACHE_PATH
         if cache_p.exists():
             frozen_clip = torch.load(str(cache_p), map_location="cpu")
 
-    def _attnpool_feats(module, refs):
-        """Apply an attnpool module to cached backbone maps → {uid: tensor}."""
-        spatial = torch.stack([backbone_cache[r.uid] for r in refs]).to(_dev)
+    def _seed_clip_feats_dlbt(attnpool_module, refs):
+        """Apply this seed's attnpool to eval-mode backbone maps → {uid: tensor}."""
+        spatial = torch.stack([dlbt_backbone_cache[r.uid] for r in refs]).to(_dev)
         with torch.no_grad():
-            out = module(spatial).float()
+            out = attnpool_module(spatial).float()
         return {r.uid: out[i].cpu() for i, r in enumerate(refs)}
 
-    # ── DLBT: one prediction matrix per seed ─────────────────────────────
-    dlbt_preds = []
+    def _seed_clip_feats_slda(attnpool_module, refs):
+        """Apply this seed's attnpool to training-mode backbone maps → {uid: np}."""
+        spatial = torch.stack([slda_backbone_cache[r.uid] for r in refs]).to(_dev)
+        with torch.no_grad():
+            out = attnpool_module(spatial).float()
+        return {r.uid: out[i].cpu().numpy() for i, r in enumerate(refs)}
+
+    # ── DLBT: one prediction matrix per seed ─────────────────────────────────
+    dlbt_preds: list[np.ndarray] = []
     for seed in seeds:
         ckpt_p = models_dir / f"seed{seed}_all_dlbt.pt"
         if not ckpt_p.exists():
@@ -232,8 +263,9 @@ def _try_load_pred_matrices(pkl_path: Path, d: dict):
         agent.mapper.load_state_dict(ckpt["mapper_state_dict"])
 
         if has_attnpool_dlbt:
+            # Apply this seed's fine-tuned attnpool to eval-mode backbone maps
             agent.encoder.attnpool.load_state_dict(ckpt["attnpool_state_dict"])
-            agent._cache = _attnpool_feats(agent.encoder.attnpool, p_refs)
+            agent._cache = _seed_clip_feats_dlbt(agent.encoder.attnpool, p_refs)
         else:
             agent._cache = {uid: frozen_clip[uid].clone()
                             for uid in probe_uids_ordered if uid in frozen_clip}
@@ -246,8 +278,8 @@ def _try_load_pred_matrices(pkl_path: Path, d: dict):
         dlbt_preds.append(pred)
         del agent
 
-    # ── SLDA: one prediction matrix per seed ─────────────────────────────
-    slda_preds = []
+    # ── SLDA: one prediction matrix per seed ─────────────────────────────────
+    slda_preds: list[np.ndarray] = []
     for seed in seeds:
         ckpt_p = models_dir / f"seed{seed}_all_slda.pkl"
         if not ckpt_p.exists():
@@ -259,9 +291,8 @@ def _try_load_pred_matrices(pkl_path: Path, d: dict):
         if has_attnpool_slda and ap_sd is not None:
             slda_tmp = _SLDA(freeze_encoder=False, device=_dev)
             slda_tmp.encoder.attnpool.load_state_dict(ap_sd)
-            probe_feats = {uid: t.numpy()
-                           for uid, t in _attnpool_feats(
-                               slda_tmp.encoder.attnpool, p_refs).items()}
+            # Apply this seed's fine-tuned attnpool to training-mode backbone maps
+            probe_feats = _seed_clip_feats_slda(slda_tmp.encoder.attnpool, p_refs)
             del slda_tmp
         else:
             probe_feats = {uid: frozen_clip[uid].numpy()
@@ -271,75 +302,104 @@ def _try_load_pred_matrices(pkl_path: Path, d: dict):
                         probe_feats, all_tasks_ordered, uid_to_row, n_probe)
         slda_preds.append(pred)
 
-    print(f"  [scatter] loaded {len(dlbt_preds)} DLBT seeds, {len(slda_preds)} SLDA seeds")
+    print(f"  [scatter] loaded {len(dlbt_preds)} DLBT seeds, "
+          f"{len(slda_preds)} SLDA seeds")
+    return (dlbt_preds if dlbt_preds else None,
+            slda_preds if slda_preds else None)
 
-    dlbt_mean = np.nanmean(np.array(dlbt_preds), axis=0) if dlbt_preds else None
-    slda_mean = np.nanmean(np.array(slda_preds), axis=0) if slda_preds else None
-    return dlbt_mean, slda_mean
 
-
-def _make_scatter(d: dict, pred_dlbt, pred_slda, plots_dir: Path):
+def _make_scatter(d: dict,
+                  dlbt_preds: list | None,
+                  slda_preds: list | None,
+                  plots_dir: Path):
     """
-    Two-panel scatter (DLBT | SLDA): predicted vs. empirical P(right) for
-    every valid probe × task pair, coloured by task arity.
+    One file per model (DLBT, SLDA, Anti-human): predicted vs. empirical P(right).
+    Points in gray; transparent error bars (SEM over seeds / binomial SE).
+    Saved as both PNG and SVG.
     """
     true_matrix       = d["true_matrix"]
+    count_matrix      = d["count_matrix"]          # [n_probe × n_tasks] int
     all_tasks         = d["all_tasks_ordered"]
     probe_noise_floor = d["probe_noise_floor"]
 
-    arities   = np.array([_task_arity(t) for t in all_tasks])
-    ar_vals   = sorted(set(arities))
-    AR_COLOR  = getattr(cfg, "ARITY_COLOR",
-                        {1: "#2a6fb5", 2: "#43AA8B", 3: "#E76F51", 4: "#9B5DE5"})
+    # Anti-human prediction matrices are stored directly in the pkl
+    anti_preds = d.get("anti_all_pred_matrices") or None
 
-    model_list = [(nm, pr, col) for nm, pr, col in [
-        ("DLBT", pred_dlbt, cfg.C_DLBT),
-        ("SLDA", pred_slda, cfg.C_SLDA),
-    ] if pr is not None]
+    model_list = []
+    for nm, preds, col in [("DLBT",  dlbt_preds, cfg.C_DLBT),
+                            ("SLDA",  slda_preds, cfg.C_SLDA),
+                            ("Anti",  anti_preds, cfg.C_ANTI)]:
+        if preds is not None and len(preds) > 0:
+            arr      = np.array(preds)             # [n_seeds, n_probe, n_tasks]
+            mean_mat = np.nanmean(arr, axis=0)
+            n_s      = np.sum(~np.isnan(arr), axis=0).astype(float)
+            sem_mat  = (np.nanstd(arr, axis=0, ddof=1)
+                        / np.sqrt(np.maximum(n_s, 1)))
+            model_list.append((nm, mean_mat, sem_mat, col))
+
     if not model_list:
         return
 
-    ncols      = len(model_list)
-    fig, axes  = plt.subplots(1, ncols, figsize=(4.2 * ncols, 4.2))
-    if ncols == 1:
-        axes = [axes]
+    # Empirical binomial SE:  sqrt(p*(1-p)/n),  NaN where n==0
+    with np.errstate(invalid="ignore", divide="ignore"):
+        binom_se = np.where(
+            count_matrix > 0,
+            np.sqrt(true_matrix * (1 - true_matrix)
+                    / np.maximum(count_matrix, 1)),
+            np.nan,
+        )
 
-    for ax, (name, pred, line_col) in zip(axes, model_list):
-        row_i, col_i = np.where(~np.isnan(pred) & ~np.isnan(true_matrix))
-        x = pred[row_i, col_i]
-        y = true_matrix[row_i, col_i]
-        task_ar = arities[col_i]
+    for name, mean_mat, sem_mat, line_col in model_list:
+        valid = ~np.isnan(mean_mat) & ~np.isnan(true_matrix)
+        ri, ci = np.where(valid)
 
-        for ar in ar_vals:
-            m = task_ar == ar
-            ax.scatter(x[m], y[m], s=3, alpha=0.30, linewidths=0,
-                       color=AR_COLOR.get(ar, "#888"),
-                       rasterized=True, zorder=3)
+        x     = mean_mat[ri, ci]
+        x_err = sem_mat[ri, ci]
+        y     = true_matrix[ri, ci]
+        y_err = binom_se[ri, ci]
 
-        ax.plot([0, 1], [0, 1], color="#bbbbbb", lw=1.0, ls="--", zorder=2)
+        fig, ax = plt.subplots(figsize=(3.0, 3.0))
 
+        # Transparent error bars (no caps, thin lines)
+        ax.errorbar(
+            x, y,
+            xerr=x_err, yerr=np.where(np.isnan(y_err), 0, y_err),
+            fmt="none",
+            ecolor=line_col, elinewidth=0.5, capsize=0,
+            alpha=0.08, zorder=2,
+        )
+        # Solid scatter points on top (plot() keeps vector paths in SVG)
+        ax.plot(
+            x, y,
+            ls="none", marker="o", ms=2.8, color=line_col, alpha=0.40,
+            markeredgewidth=0, zorder=3,
+        )
+
+        # Identity line
+        ax.plot([0, 1], [0, 1], color="#bbbbbb", lw=1.0, ls="--", zorder=1)
+
+        # Annotation: ρ and cMSE
         rho, _ = _spearmanr(x, y)
         cmse   = float(np.mean((x - y) ** 2)) - probe_noise_floor
-
-        ax.set_xlim(0, 1); ax.set_ylim(0, 1)
-        ax.set_xlabel("Predicted P(right)", fontsize=10, fontweight="bold")
-        ax.set_ylabel("Empirical P(right)", fontsize=10, fontweight="bold")
-        ax.set_title(name, fontsize=11, fontweight="bold", color=line_col)
         ax.text(0.04, 0.96,
-                f"ρ = {rho:.3f}\ncMSE−NF = {cmse:.4f}",
-                transform=ax.transAxes, fontsize=8.5,
+                f"ρ = {rho:.3f}\ncMSE = {cmse:.4f}",
+                transform=ax.transAxes, fontsize=8,
                 va="top", ha="left", color="#333333")
+
+        ax.set_xlim(-0.03, 1.03); ax.set_ylim(-0.03, 1.03)
+        ax.set_xlabel("Predicted P(right)", fontsize=9, fontweight="bold")
+        ax.set_ylabel("Empirical P(right)",  fontsize=9, fontweight="bold")
         sns.despine(ax=ax, top=True, right=True)
+        ax.spines["left"].set_bounds(0, 1)
+        ax.spines["bottom"].set_bounds(0, 1)
 
-    handles = [mpatches.Patch(color=AR_COLOR[a], label=f"{a}-way") for a in ar_vals]
-    axes[0].legend(handles=handles, fontsize=7, frameon=False,
-                   loc="lower right", title="arity", title_fontsize=7)
-
-    plt.tight_layout()
-    out = plots_dir / "plot_scatter.png"
-    fig.savefig(out, dpi=300, bbox_inches="tight")
-    plt.close(fig)
-    print(f"  Saved: {out.relative_to(cfg.RESULTS_DIR)}")
+        plt.tight_layout()
+        stem = f"plot_scatter_{name.lower()}"
+        for ext in ("png", "svg"):
+            out = plots_dir / f"{stem}.{ext}"
+            fig.savefig(out, dpi=600, bbox_inches="tight")
+            print(f"  Saved: {out.relative_to(cfg.RESULTS_DIR)}")
+        plt.close(fig)
 
 
 # ---------------------------------------------------------------------------
@@ -400,7 +460,7 @@ def process_pkl(pkl_path: Path):
         anti_all_mu, anti_all_sem = _mean_sem_scalar(
             anti_all_cmse if is_cmse else anti_all_rho)
 
-        fig, ax = plt.subplots(figsize=(5.0, 4.5))
+        fig, ax = plt.subplots(figsize=(4.5, 4.5))
 
         # ── Reference lines ──────────────────────────────────────────────────
         if is_cmse:
@@ -440,12 +500,13 @@ def process_pkl(pkl_path: Path):
 
         # ── Y axis ───────────────────────────────────────────────────────────
         if is_cmse:
-            ax.set_ylabel("cMSE − noise floor", fontsize=11, fontweight="bold")
+            ax.set_ylabel("cMSE", fontsize=11, fontweight="bold")
             if _log_y:
                 ax.set_yscale("log")
                 ax.set_yticks([0.01, 0.1, 1])
                 ax.set_yticklabels([r"$10^{-2}$", r"$10^{-1}$", r"$10^{0}$"])
-                ax.yaxis.set_minor_locator(plt.NullLocator())
+                ax.yaxis.set_minor_locator(plt.LogLocator(base=10, subs="auto", numticks=10))
+                ax.yaxis.set_minor_formatter(plt.NullFormatter())
                 ax.set_ylim(0.008, 1.0)
             else:
                 ax.set_ylim(0, 0.34)
@@ -469,17 +530,18 @@ def process_pkl(pkl_path: Path):
         plt.tight_layout()
 
         tag = "cmse" if is_cmse else "rho"
-        out = plots_dir / f"plot_{tag}.png"
-        fig.savefig(out, dpi=300, bbox_inches="tight")
+        for ext in ("png", "svg"):
+            out = plots_dir / f"plot_{tag}.{ext}"
+            fig.savefig(out, dpi=300, bbox_inches="tight")
+            print(f"  Saved: {out.relative_to(cfg.RESULTS_DIR)}")
         plt.close(fig)
-        print(f"  Saved: {out.relative_to(cfg.RESULTS_DIR)}")
 
     _make_figure("cmse")
     _make_figure("rho")
 
     # ── Scatter: predicted vs. empirical (all-data / full model) ─────────────
-    pred_dlbt, pred_slda = _try_load_pred_matrices(pkl_path, d)
-    _make_scatter(d, pred_dlbt, pred_slda, plots_dir)
+    dlbt_preds, slda_preds = _try_load_pred_matrices(pkl_path, d)
+    _make_scatter(d, dlbt_preds, slda_preds, plots_dir)
 
     # ── Summary table ────────────────────────────────────────────────────────
     print()

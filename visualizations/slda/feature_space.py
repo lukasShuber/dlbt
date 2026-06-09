@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon
@@ -181,13 +183,15 @@ def plot_highdim_cloud_boundaries(
     ax.set_xlim(-2.55, 4.05)
     ax.set_ylim(-1.85, 3.65)
 
-    fig.savefig(
-        save_path,
-        bbox_inches="tight",
-        dpi=600,
-    )
+    stem, _ = os.path.splitext(save_path)
+    for ext in ("png", "svg"):
+        out = f"{stem}.{ext}"
+        fig.savefig(out, bbox_inches="tight", dpi=600)
+        print(f"Saved → {out}")
     plt.close(fig)
 
 
 if __name__ == "__main__":
-    plot_highdim_cloud_boundaries()
+    # Two versions with different point-cloud coordinates (different seeds)
+    plot_highdim_cloud_boundaries(save_path="visualizations/slda/clip_reps_slda.png", seed=13)
+    plot_highdim_cloud_boundaries(save_path="visualizations/slda/clip_reps_dlbt.png", seed=42)
